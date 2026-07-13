@@ -52,30 +52,37 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
           tenantId: user.tenantId,
           tenantSlug: user.tenant.slug,
           tenantName: user.tenant.name,
-          avatar: user.avatar,
+          // Prisma models a missing avatar as null; the augmented NextAuth `User` models it as
+          // optional. Normalising here keeps the two in agreement without widening the session type.
+          avatar: user.avatar ?? undefined,
         };
       },
     }),
   ],
   callbacks: {
+    // `user` is only present on the sign-in pass; on every later call the claims are already on
+    // the token. The augmented User/JWT interfaces in types/next-auth.d.ts carry the tenant claims,
+    // so no casts are needed — asserting `any` here would have silently discarded that contract.
     async jwt({ token, user }) {
       if (user) {
-        token.id = user.id;
-        token.role = (user as any).role;
-        token.tenantId = (user as any).tenantId;
-        token.tenantSlug = (user as any).tenantSlug;
-        token.tenantName = (user as any).tenantName;
-        token.avatar = (user as any).avatar;
+        token.id = user.id ?? token.id;
+        token.role = user.role;
+        token.tenantId = user.tenantId;
+        token.tenantSlug = user.tenantSlug;
+        token.tenantName = user.tenantName;
+        token.avatar = user.avatar;
       }
       return token;
     },
+    // Every tenant-scoped query in the app reads `session.user.tenantId`, so the claims are
+    // projected from the token onto the session on each request.
     async session({ session, token }) {
-      session.user.id = token.id as string;
-      session.user.role = token.role as string;
-      session.user.tenantId = token.tenantId as string;
-      session.user.tenantSlug = token.tenantSlug as string;
-      session.user.tenantName = token.tenantName as string;
-      session.user.avatar = token.avatar as string | undefined;
+      session.user.id = token.id;
+      session.user.role = token.role;
+      session.user.tenantId = token.tenantId;
+      session.user.tenantSlug = token.tenantSlug;
+      session.user.tenantName = token.tenantName;
+      session.user.avatar = token.avatar;
       return session;
     },
   },

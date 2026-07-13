@@ -1,14 +1,17 @@
 import { auth } from "@/lib/auth";
 import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
+import type { Session } from "next-auth";
 
 // Routes that don't need authentication
 const PUBLIC_ROUTES = ["/", "/pricing", "/features", "/about", "/blog", "/contact", "/industries", "/privacy-policy", "/terms", "/refund-policy"];
 const AUTH_ROUTES = ["/login", "/register", "/forgot-password"];
-const ADMIN_ROUTES = ["/admin"];
+const ADMIN_ROUTE_PREFIX = "/admin";
 
 export default auth((req) => {
-  const { nextUrl, auth: session } = req as NextRequest & { auth: any };
+  // `auth()` attaches the resolved session to the request. Typing it as Session rather than `any`
+  // is what makes the role check below a checked comparison instead of a guess.
+  const { nextUrl, auth: session } = req as NextRequest & { auth: Session | null };
   const pathname = nextUrl.pathname;
   const isLoggedIn = !!session?.user;
 
@@ -18,7 +21,7 @@ export default auth((req) => {
   }
 
   // Block admin routes for non super-admins
-  if (pathname.startsWith("/admin")) {
+  if (pathname.startsWith(ADMIN_ROUTE_PREFIX)) {
     if (!isLoggedIn) {
       return NextResponse.redirect(new URL("/login", nextUrl));
     }

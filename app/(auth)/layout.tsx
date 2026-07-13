@@ -14,7 +14,7 @@ export default function AuthLayout({ children }: { children: ReactNode }) {
         <Link href="/" className="text-2xl font-bold">WhatsCRM</Link>
         <div>
           <blockquote className="text-lg italic">
-            "WhatsCRM helped us qualify 3x more leads without adding a single agent."
+            &ldquo;WhatsCRM helped us qualify 3x more leads without adding a single agent.&rdquo;
           </blockquote>
           <p className="mt-4 font-medium">— Rajesh Kumar, Director at TechSales India</p>
         </div>
