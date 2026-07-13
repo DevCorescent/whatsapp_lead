@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Megaphone,
   Plus,
@@ -27,7 +27,6 @@ import {
 } from "@/components/ui";
 import { cn, formatCompact, formatDate } from "@/lib/utils";
 
-// TODO [GAURANSH]: GET /api/campaigns + POST /api/campaigns (currently 501).
 
 const STATUS_STYLE: Record<CampaignStatus, string> = {
   DRAFT: "bg-slate-100 text-slate-600 ring-slate-500/20",
@@ -93,11 +92,30 @@ function RateBar({ value, total }: { value: number; total: number }) {
 }
 
 export default function CampaignsPage() {
+  const queryClient = useQueryClient();
   const [tab, setTab] = useState<"ALL" | CampaignStatus>("ALL");
   const [open, setOpen] = useState(false);
   const { data, isLoading, isError } = useCampaigns(tab);
 
   const campaigns = useMemo(() => data ?? [], [data]);
+
+  const invalidate = () => queryClient.invalidateQueries({ queryKey: ["campaigns"] });
+
+  const toggleStatus = async (id: string, current: CampaignStatus) => {
+    const status = current === "RUNNING" ? "PAUSED" : "RUNNING";
+    await fetch(`/api/campaigns/${id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ status }),
+    });
+    invalidate();
+  };
+
+  const deleteCampaign = async (id: string, name: string) => {
+    if (!confirm(`Delete campaign "${name}"? This cannot be undone.`)) return;
+    await fetch(`/api/campaigns/${id}`, { method: "DELETE" });
+    invalidate();
+  };
 
   return (
     <div>
@@ -206,7 +224,13 @@ export default function CampaignsPage() {
                     </td>
                     <td className="px-4 py-3">
                       <div className="flex items-center justify-end gap-1">
-                        <Button variant="ghost" size="sm" aria-label="Resume campaign">
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          aria-label={c.status === "RUNNING" ? "Pause campaign" : "Launch campaign"}
+                          onClick={() => toggleStatus(c.id, c.status)}
+                          disabled={c.status === "COMPLETED" || c.status === "FAILED"}
+                        >
                           {c.status === "RUNNING" ? (
                             <Pause className="h-4 w-4" />
                           ) : (
@@ -221,6 +245,8 @@ export default function CampaignsPage() {
                           size="sm"
                           aria-label="Delete campaign"
                           className="text-rose-600 hover:bg-rose-50"
+                          onClick={() => deleteCampaign(c.id, c.name)}
+                          disabled={c.status !== "DRAFT"}
                         >
                           <Trash2 className="h-4 w-4" />
                         </Button>
@@ -240,10 +266,31 @@ export default function CampaignsPage() {
 }
 
 function CreateCampaignModal({ open, onClose }: { open: boolean; onClose: () => void }) {
+  const queryClient = useQueryClient();
   const [name, setName] = useState("");
   const [message, setMessage] = useState("");
   const [audience, setAudience] = useState("all");
   const [schedule, setSchedule] = useState("");
+  const [error, setError] = useState<string | null>(null);
+
+  const create = useMutation({
+    mutationFn: async (data: { name: string; message: string; all?: boolean }) => {
+      const res = await fetch("/api/campaigns", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(data),
+      });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error ?? "Failed to create campaign");
+      return json;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["campaigns"] });
+      setName(""); setMessage(""); setAudience("all"); setSchedule(""); setError(null);
+      onClose();
+    },
+    onError: (err: Error) => setError(err.message),
+  });
 
   return (
     <Modal
@@ -256,8 +303,7 @@ function CreateCampaignModal({ open, onClose }: { open: boolean; onClose: () => 
         className="space-y-4"
         onSubmit={(e) => {
           e.preventDefault();
-          // TODO [GAURANSH]: POST /api/campaigns { name, message, audience, scheduledAt }
-          onClose();
+          create.mutate({ name, message, all: audience === "all" });
         }}
       >
         <Field label="Campaign name" htmlFor="campaign-name" required>
@@ -327,12 +373,14 @@ function CreateCampaignModal({ open, onClose }: { open: boolean; onClose: () => 
           <p className="mt-1.5 text-xs text-slate-500">Leave empty to save as a draft.</p>
         </Field>
 
+        {error && <p className="rounded-lg bg-rose-50 px-3 py-2 text-xs text-rose-700">{error}</p>}
+
         <div className="flex justify-end gap-2 pt-2">
           <Button type="button" variant="secondary" onClick={onClose}>
             Cancel
           </Button>
-          <Button type="submit" disabled={!name.trim() || !message.trim()}>
-            Create Campaign
+          <Button type="submit" disabled={!name.trim() || !message.trim() || create.isPending}>
+            {create.isPending ? "Creating…" : "Create Campaign"}
           </Button>
         </div>
       </form>

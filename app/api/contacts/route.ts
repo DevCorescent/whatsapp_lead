@@ -64,41 +64,46 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ success: false, error: parsed.error.errors[0].message }, { status: 400 });
   }
 
-  const { tags, ...data } = parsed.data;
+  try {
+    const { tags, ...data } = parsed.data;
 
-  const existing = await prisma.contact.findUnique({
-    where: { phone_tenantId: { phone: data.phone, tenantId: session.user.tenantId } },
-  });
-  if (existing) {
-    return NextResponse.json(
-      { success: false, error: "A contact with this phone number already exists" },
-      { status: 409 }
-    );
+    const existing = await prisma.contact.findUnique({
+      where: { phone_tenantId: { phone: data.phone, tenantId: session.user.tenantId } },
+    });
+    if (existing) {
+      return NextResponse.json(
+        { success: false, error: "A contact with this phone number already exists" },
+        { status: 409 }
+      );
+    }
+
+    const contact = await prisma.contact.create({
+      data: {
+        ...data,
+        tenantId: session.user.tenantId,
+        ...(tags && tags.length > 0 && {
+          tags: { create: tags.map((tagId) => ({ tagId })) },
+        }),
+      },
+      include: {
+        tags: { include: { tag: true } },
+        _count: { select: { conversations: true, leads: true } },
+      },
+    });
+
+    await prisma.auditLog.create({
+      data: {
+        tenantId: session.user.tenantId,
+        userId: session.user.id,
+        action: "CONTACT_CREATED",
+        resource: "contact",
+        resourceId: contact.id,
+      },
+    });
+
+    return NextResponse.json({ success: true, data: contact }, { status: 201 });
+  } catch (error) {
+    console.error("[CONTACTS POST]", error);
+    return NextResponse.json({ success: false, error: "Failed to create contact" }, { status: 500 });
   }
-
-  const contact = await prisma.contact.create({
-    data: {
-      ...data,
-      tenantId: session.user.tenantId,
-      ...(tags && tags.length > 0 && {
-        tags: { create: tags.map((tagId) => ({ tagId })) },
-      }),
-    },
-    include: {
-      tags: { include: { tag: true } },
-      _count: { select: { conversations: true, leads: true } },
-    },
-  });
-
-  await prisma.auditLog.create({
-    data: {
-      tenantId: session.user.tenantId,
-      userId: session.user.id,
-      action: "CONTACT_CREATED",
-      resource: "contact",
-      resourceId: contact.id,
-    },
-  });
-
-  return NextResponse.json({ success: true, data: contact }, { status: 201 });
 }

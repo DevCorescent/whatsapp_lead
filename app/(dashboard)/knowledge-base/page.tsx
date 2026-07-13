@@ -1,7 +1,7 @@
 "use client";
 
 import { useRef, useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   BookOpen,
   FileText,
@@ -27,7 +27,6 @@ import {
 } from "@/components/ui";
 import { cn, formatDate } from "@/lib/utils";
 
-// TODO [GAURANSH]: GET/POST/DELETE /api/knowledge + the indexing pipeline (currently 501).
 
 function useKnowledgeDocs() {
   return useQuery<KnowledgeDoc[]>({
@@ -58,6 +57,7 @@ function readSize(doc: KnowledgeDoc): string {
 }
 
 export default function KnowledgeBasePage() {
+  const queryClient = useQueryClient();
   const { data, isLoading, isError } = useKnowledgeDocs();
   const [open, setOpen] = useState(false);
   const docs = data ?? [];
@@ -128,7 +128,11 @@ export default function KnowledgeBasePage() {
                 <button
                   aria-label={`Delete ${doc.name}`}
                   className="rounded-lg p-1.5 text-slate-300 transition hover:bg-rose-50 hover:text-rose-600 group-hover:text-slate-400"
-                  // TODO [GAURANSH]: DELETE /api/knowledge/[id]
+                  onClick={async () => {
+                    if (!confirm(`Delete "${doc.name}"?`)) return;
+                    await fetch(`/api/knowledge/${doc.id}`, { method: "DELETE" });
+                    queryClient.invalidateQueries({ queryKey: ["knowledge"] });
+                  }}
                 >
                   <Trash2 className="h-4 w-4" />
                 </button>
@@ -172,21 +176,38 @@ export default function KnowledgeBasePage() {
 }
 
 function UploadModal({ open, onClose }: { open: boolean; onClose: () => void }) {
+  const queryClient = useQueryClient();
   const inputRef = useRef<HTMLInputElement>(null);
   const [dragging, setDragging] = useState(false);
   const [files, setFiles] = useState<File[]>([]);
   const [url, setUrl] = useState("");
-
-  const addFiles = (list: FileList | null) => {
-    if (!list) return;
-    setFiles((prev) => [...prev, ...Array.from(list)]);
-  };
+  const [error, setError] = useState<string | null>(null);
 
   const close = () => {
     setFiles([]);
     setUrl("");
     setDragging(false);
+    setError(null);
     onClose();
+  };
+
+  const upload = useMutation({
+    mutationFn: async ({ name, type, content, url: docUrl }: { name: string; type: string; content?: string; url?: string }) => {
+      const res = await fetch("/api/knowledge", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name, type, content, url: docUrl }),
+      });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error ?? "Upload failed");
+      return json;
+    },
+    onError: (err: Error) => setError(err.message),
+  });
+
+  const addFiles = (list: FileList | null) => {
+    if (!list) return;
+    setFiles((prev) => [...prev, ...Array.from(list)]);
   };
 
   return (
@@ -198,10 +219,24 @@ function UploadModal({ open, onClose }: { open: boolean; onClose: () => void }) 
     >
       <form
         className="space-y-4"
-        onSubmit={(e) => {
+        onSubmit={async (e) => {
           e.preventDefault();
-          // TODO [GAURANSH]: POST /api/knowledge (multipart for files, JSON for URLs)
-          close();
+          setError(null);
+          try {
+            if (url.trim()) {
+              const name = url.split("/").filter(Boolean).pop() ?? "Web page";
+              await upload.mutateAsync({ name, type: "URL", url: url.trim() });
+            }
+            for (const file of files) {
+              const text = await file.text();
+              const ext = (file.name.split(".").pop() ?? "TXT").toUpperCase();
+              await upload.mutateAsync({ name: file.name, type: ext, content: text });
+            }
+            queryClient.invalidateQueries({ queryKey: ["knowledge"] });
+            close();
+          } catch {
+            // error handled by onError
+          }
         }}
       >
         <div
@@ -292,12 +327,14 @@ function UploadModal({ open, onClose }: { open: boolean; onClose: () => void }) 
           </div>
         </Field>
 
+        {error && <p className="rounded-lg bg-rose-50 px-3 py-2 text-xs text-rose-700">{error}</p>}
+
         <div className="flex justify-end gap-2 pt-2">
           <Button type="button" variant="secondary" onClick={close}>
             Cancel
           </Button>
-          <Button type="submit" disabled={files.length === 0 && !url.trim()}>
-            Upload &amp; Index
+          <Button type="submit" disabled={(files.length === 0 && !url.trim()) || upload.isPending}>
+            {upload.isPending ? "Uploading…" : "Upload & Index"}
           </Button>
         </div>
       </form>

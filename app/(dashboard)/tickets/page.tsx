@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useSyncExternalStore } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Ticket as TicketIcon, Plus, AlertTriangle, Clock } from "lucide-react";
 import type { Ticket, TicketPriority, TicketStatus } from "@prisma/client";
 import {
@@ -24,7 +24,6 @@ import {
   TICKET_STATUS_STYLE,
 } from "@/lib/utils";
 
-// TODO [GAURANSH]: GET/POST /api/tickets (currently 501).
 
 /** Tickets come back joined with the contact and the assigned agent. */
 type TicketRow = Ticket & {
@@ -294,12 +293,34 @@ export default function TicketsPage() {
 }
 
 function NewTicketModal({ open, onClose }: { open: boolean; onClose: () => void }) {
+  const queryClient = useQueryClient();
   const [subject, setSubject] = useState("");
   const [contact, setContact] = useState("");
   const [priority, setPriority] = useState<TicketPriority>("MEDIUM");
   const [department, setDepartment] = useState(DEPARTMENTS[0]);
   const [sla, setSla] = useState("");
   const [details, setDetails] = useState("");
+  const [error, setError] = useState<string | null>(null);
+
+  const create = useMutation({
+    mutationFn: async (data: { subject: string; priority: TicketPriority; department: string }) => {
+      const res = await fetch("/api/tickets", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(data),
+      });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error ?? "Failed to create ticket");
+      return json;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["tickets"] });
+      setSubject(""); setContact(""); setPriority("MEDIUM"); setDepartment(DEPARTMENTS[0]);
+      setSla(""); setDetails(""); setError(null);
+      onClose();
+    },
+    onError: (err: Error) => setError(err.message),
+  });
 
   return (
     <Modal
@@ -312,8 +333,8 @@ function NewTicketModal({ open, onClose }: { open: boolean; onClose: () => void 
         className="space-y-4"
         onSubmit={(e) => {
           e.preventDefault();
-          // TODO [GAURANSH]: POST /api/tickets { subject, contact, priority, department, slaDeadline }
-          onClose();
+          setError(null);
+          create.mutate({ subject, priority, department });
         }}
       >
         <Field label="Subject" htmlFor="ticket-subject" required>
@@ -389,12 +410,14 @@ function NewTicketModal({ open, onClose }: { open: boolean; onClose: () => void 
           />
         </Field>
 
+        {error && <p className="rounded-lg bg-rose-50 px-3 py-2 text-xs text-rose-700">{error}</p>}
+
         <div className="flex justify-end gap-2 pt-2">
           <Button type="button" variant="secondary" onClick={onClose}>
             Cancel
           </Button>
-          <Button type="submit" disabled={!subject.trim() || !contact.trim()}>
-            Create Ticket
+          <Button type="submit" disabled={!subject.trim() || create.isPending}>
+            {create.isPending ? "Creating…" : "Create Ticket"}
           </Button>
         </div>
       </form>

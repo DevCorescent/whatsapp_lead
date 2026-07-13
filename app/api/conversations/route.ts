@@ -78,8 +78,8 @@ async function listConversations(
   return prisma.conversation.findMany({
     where: {
       tenantId,
-      status: filters.status,
-      assignedToId: filters.assigneeId,
+      ...(filters.status !== undefined && { status: filters.status }),
+      ...(filters.assigneeId !== undefined && { assignedToId: filters.assigneeId }),
     },
     select: CONVERSATION_LIST_SELECT,
     orderBy: { updatedAt: "desc" },

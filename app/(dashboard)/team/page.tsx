@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   UserCog,
   UserPlus,
@@ -228,25 +228,61 @@ export default function TeamPage() {
 }
 
 function InviteModal({ open, onClose }: { open: boolean; onClose: () => void }) {
+  const queryClient = useQueryClient();
+  const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [role, setRole] = useState<UserRole>("AGENT");
-  const [note, setNote] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const [success, setSuccess] = useState<string | null>(null);
+
+  const invite = useMutation({
+    mutationFn: async (data: { name: string; email: string; role: UserRole }) => {
+      const res = await fetch("/api/team", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(data),
+      });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error ?? "Failed to invite member");
+      return json;
+    },
+    onSuccess: (json) => {
+      queryClient.invalidateQueries({ queryKey: ["team"] });
+      const pwd = json.data?.tempPassword;
+      setSuccess(pwd ? `Invited! Temporary password: ${pwd}` : "Member invited successfully.");
+      setName(""); setEmail(""); setRole("AGENT");
+    },
+    onError: (err: Error) => setError(err.message),
+  });
+
+  const close = () => { setName(""); setEmail(""); setError(null); setSuccess(null); onClose(); };
 
   return (
     <Modal
       open={open}
-      onClose={onClose}
+      onClose={close}
       title="Invite Member"
-      description="They'll get an email with a link to join this workspace."
+      description="Add a teammate to this workspace. They can log in with the temporary password."
     >
       <form
         className="space-y-4"
         onSubmit={(e) => {
           e.preventDefault();
-          // TODO [SHALMON]: POST /api/team/invite { email, role, note }
-          onClose();
+          setError(null);
+          invite.mutate({ name, email, role });
         }}
       >
+        <Field label="Full name" htmlFor="invite-name" required>
+          <input
+            id="invite-name"
+            type="text"
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            className={inputClass}
+            placeholder="Jane Smith"
+          />
+        </Field>
+
         <Field label="Email address" htmlFor="invite-email" required>
           <input
             id="invite-email"
@@ -279,24 +315,16 @@ function InviteModal({ open, onClose }: { open: boolean; onClose: () => void }) 
           </p>
         </Field>
 
-        <Field label="Personal note" htmlFor="invite-note">
-          <textarea
-            id="invite-note"
-            rows={3}
-            value={note}
-            onChange={(e) => setNote(e.target.value)}
-            className={cn(inputClass, "resize-y")}
-            placeholder="Optional — included in the invite email."
-          />
-        </Field>
+        {error && <p className="rounded-lg bg-rose-50 px-3 py-2 text-xs text-rose-700">{error}</p>}
+        {success && <p className="rounded-lg bg-emerald-50 px-3 py-2 text-xs text-emerald-700">{success}</p>}
 
         <div className="flex justify-end gap-2 pt-2">
-          <Button type="button" variant="secondary" onClick={onClose}>
+          <Button type="button" variant="secondary" onClick={close}>
             Cancel
           </Button>
-          <Button type="submit" disabled={!email.trim()}>
+          <Button type="submit" disabled={!name.trim() || !email.trim() || invite.isPending}>
             <UserPlus className="h-4 w-4" />
-            Send Invite
+            {invite.isPending ? "Inviting…" : "Invite Member"}
           </Button>
         </div>
       </form>
