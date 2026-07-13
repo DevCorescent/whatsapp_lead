@@ -1,9 +1,8 @@
-// TODO [HEMANT]: Admin panel layout (SUPER_ADMIN only).
-// Style: dark sidebar, platform branding "Corescent Admin".
-// Sidebar links: Dashboard, Tenants, Plans, Revenue, Audit Logs, Settings.
+// Admin panel layout (SUPER_ADMIN only) — dark theme, violet accent.
 
 import { redirect } from "next/navigation";
 import { auth } from "@/lib/auth";
+import { AdminSidebar } from "@/components/admin/AdminSidebar";
 
 export default async function AdminLayout({ children }: { children: React.ReactNode }) {
   const session = await auth();
@@ -13,28 +12,13 @@ export default async function AdminLayout({ children }: { children: React.ReactN
   }
 
   return (
-    <div className="flex h-screen bg-gray-950 text-white">
-      {/* TODO [HEMANT]: AdminSidebar component */}
-      <aside className="w-64 bg-gray-900 border-r border-gray-800 flex flex-col">
-        <div className="p-4 border-b border-gray-800">
-          <h1 className="text-lg font-bold text-purple-400">Corescent Admin</h1>
-          <p className="text-xs text-gray-500">Super Admin Panel</p>
-        </div>
-        <nav className="flex-1 p-4 space-y-1">
-          {/* TODO [HEMANT]: AdminNav links */}
-          <div className="text-sm text-gray-400 px-3 py-2 rounded hover:bg-gray-800 cursor-pointer">Dashboard</div>
-          <div className="text-sm text-gray-400 px-3 py-2 rounded hover:bg-gray-800 cursor-pointer">Tenants</div>
-          <div className="text-sm text-gray-400 px-3 py-2 rounded hover:bg-gray-800 cursor-pointer">Plans</div>
-          <div className="text-sm text-gray-400 px-3 py-2 rounded hover:bg-gray-800 cursor-pointer">Revenue</div>
-          <div className="text-sm text-gray-400 px-3 py-2 rounded hover:bg-gray-800 cursor-pointer">Audit Logs</div>
-        </nav>
-        <div className="p-4 border-t border-gray-800 text-xs text-gray-600">
-          {session.user.email}
-        </div>
-      </aside>
+    <div className="flex h-screen overflow-hidden bg-slate-950 text-slate-100">
+      <AdminSidebar name={session.user.name} email={session.user.email} />
 
-      <main className="flex-1 overflow-auto">
-        {children}
+      <main className="scrollbar-slim flex-1 overflow-y-auto">
+        <div className="mx-auto max-w-[1400px] px-4 pb-12 pt-16 sm:px-6 lg:px-8 lg:pt-8">
+          {children}
+        </div>
       </main>
     </div>
   );
