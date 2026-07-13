@@ -46,11 +46,15 @@ export async function POST(req: NextRequest) {
 
     const messages = conversation.messages
       .filter((m) => m.content)
-      .map((m) => `${m.direction === "INBOUND" ? "Customer" : "Agent"}: ${m.content}`);
+      .map((m) => ({
+        role: (m.direction === "INBOUND" ? "user" : "assistant") as "user" | "assistant",
+        content: m.content!,
+      }));
 
     if (messages.length === 0) return NextResponse.json({ success: false, error: "No messages to reply to" }, { status: 400 });
 
-    const reply = await generateReply(messages, knowledgeContext);
+    const systemPrompt = "You are a helpful WhatsApp CRM assistant. Suggest a concise, professional reply to the customer's last message.";
+    const reply = await generateReply(messages, systemPrompt, knowledgeContext);
     return NextResponse.json({ success: true, data: { reply } });
   } catch (error) {
     console.error("[AI REPLY]", error);

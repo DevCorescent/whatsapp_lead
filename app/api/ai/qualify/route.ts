@@ -63,21 +63,14 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ success: false, error: "No conversation messages to qualify from" }, { status: 400 });
     }
 
-    const result = await qualifyLead(messages);
+    const result = await qualifyLead(messages.join("\n"));
     const score = Math.min(100, Math.max(0, result.score));
     const scoreLabel = scoreLabelFor(score);
 
     const updated = await prisma.$transaction(async (tx) => {
       const updatedLead = await tx.lead.update({
         where: { id: leadId },
-        data: {
-          score,
-          scoreLabel,
-          ...(result.bantBudget && { budget: result.bantBudget }),
-          ...(result.bantAuthority && { authority: result.bantAuthority }),
-          ...(result.bantNeed && { requirement: result.bantNeed }),
-          ...(result.bantTimeline && { timeline: result.bantTimeline }),
-        },
+        data: { score, scoreLabel },
         include: {
           contact: { select: { id: true, name: true } },
         },
