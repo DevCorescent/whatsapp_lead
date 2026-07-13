@@ -1,14 +1,18 @@
-import { auth } from "@/lib/auth";
+import NextAuth from "next-auth";
 import { NextResponse } from "next/server";
-import type { NextRequest } from "next/server";
+import { authConfig } from "@/lib/auth.config";
+
+// Built from the edge-safe config, NOT from lib/auth.ts — importing that here
+// drags Prisma and the pg driver into the Edge bundle, which cannot load them.
+const { auth } = NextAuth(authConfig);
 
 // Routes that don't need authentication
 const PUBLIC_ROUTES = ["/", "/pricing", "/features", "/about", "/blog", "/contact", "/industries", "/privacy-policy", "/terms", "/refund-policy"];
 const AUTH_ROUTES = ["/login", "/register", "/forgot-password"];
-const ADMIN_ROUTES = ["/admin"];
 
 export default auth((req) => {
-  const { nextUrl, auth: session } = req as NextRequest & { auth: any };
+  const { nextUrl } = req;
+  const session = req.auth;
   const pathname = nextUrl.pathname;
   const isLoggedIn = !!session?.user;
 
