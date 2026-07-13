@@ -38,11 +38,16 @@ export async function sendTextMessage(
   });
 
   if (!res.ok) {
-    const err = await res.json();
-    throw new Error(`WhatsApp API error: ${JSON.stringify(err)}`);
+    // Meta returns JSON on error but emits HTML on gateway failures (502/504). Calling res.json()
+    // here would throw a SyntaxError *inside the error handler*, destroying the real failure and
+    // replacing it with a parse error — precisely when the real failure matters most.
+    const err = await res.text();
+    throw new Error(
+      `WhatsApp API error (${res.status} ${res.statusText}) sending text to ${to}: ${err}`
+    );
   }
 
-  return res.json() as Promise<{ messages: [{ id: string }] }>;
+  return res.json() as Promise<WASendMessageResponse>;
 }
 
 // ─── Template message types (Meta Cloud API) ─────────────────────────────────

@@ -7,7 +7,8 @@ export const sendMessageSchema = z.object({
   mediaUrl: z.string().url().optional(),
   isNote: z.boolean().default(false),
   templateId: z.string().optional(),
-  templateVariables: z.record(z.string()).optional(),
+  // Zod 4 requires both key and value schemas — the single-argument form was removed.
+  templateVariables: z.record(z.string(), z.string()).optional(),
 });
 
 export type SendMessageInput = z.infer<typeof sendMessageSchema>;
