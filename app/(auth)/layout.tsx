@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+﻿import type { ReactNode } from "react";
 import Link from "next/link";
 import { Check, MessageSquare } from "lucide-react";
 
@@ -11,67 +11,67 @@ const FEATURES = [
 
 export default function AuthLayout({ children }: { children: ReactNode }) {
   return (
-    <div className=”min-h-screen bg-white lg:grid lg:grid-cols-2”>
+    <div className="min-h-screen bg-white lg:grid lg:grid-cols-2">
       {/* ─── Left branding panel ─────────────────────────────────────────── */}
-      <div className=”relative hidden flex-col justify-between overflow-hidden bg-gradient-to-br from-emerald-600 to-emerald-800 p-12 text-white lg:flex”>
+      <div className="relative hidden flex-col justify-between overflow-hidden bg-gradient-to-br from-emerald-600 to-emerald-800 p-12 text-white lg:flex">
         {/* Decorative blurred circles */}
         <div
           aria-hidden
-          className=”pointer-events-none absolute -left-24 -top-24 h-80 w-80 rounded-full bg-emerald-400/25 blur-3xl”
+          className="pointer-events-none absolute -left-24 -top-24 h-80 w-80 rounded-full bg-emerald-400/25 blur-3xl"
         />
         <div
           aria-hidden
-          className=”pointer-events-none absolute -bottom-32 -right-16 h-96 w-96 rounded-full bg-teal-300/20 blur-3xl”
+          className="pointer-events-none absolute -bottom-32 -right-16 h-96 w-96 rounded-full bg-teal-300/20 blur-3xl"
         />
         <div
           aria-hidden
-          className=”pointer-events-none absolute right-1/4 top-1/3 h-52 w-52 rounded-full bg-emerald-200/10 blur-2xl”
+          className="pointer-events-none absolute right-1/4 top-1/3 h-52 w-52 rounded-full bg-emerald-200/10 blur-2xl"
         />
 
         {/* Logo */}
         <Link
-          href=”/”
-          className=”relative z-10 inline-flex w-fit items-center gap-3 rounded-lg focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-white”
+          href="/"
+          className="relative z-10 inline-flex w-fit items-center gap-3 rounded-lg focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-white"
         >
-          <span className=”flex h-10 w-10 items-center justify-center rounded-xl bg-white/15 ring-1 ring-inset ring-white/25 backdrop-blur-sm”>
-            <MessageSquare className=”h-5 w-5 text-white” />
+          <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-white/15 ring-1 ring-inset ring-white/25 backdrop-blur-sm">
+            <MessageSquare className="h-5 w-5 text-white" />
           </span>
-          <span className=”text-xl font-bold tracking-tight”>WhatsCRM</span>
+          <span className="text-xl font-bold tracking-tight">WhatsCRM</span>
         </Link>
 
         {/* Headline + features */}
-        <div className=”relative z-10 max-w-md”>
-          <h2 className=”text-4xl font-bold leading-tight tracking-tight”>
+        <div className="relative z-10 max-w-md">
+          <h2 className="text-4xl font-bold leading-tight tracking-tight">
             Turn every WhatsApp chat into a qualified lead.
           </h2>
-          <p className=”mt-4 text-base leading-relaxed text-emerald-50/90”>
+          <p className="mt-4 text-base leading-relaxed text-emerald-50/90">
             One workspace for your team to talk to customers, score leads with AI and close
             faster — all on the channel your customers already use.
           </p>
 
-          <ul className=”mt-8 space-y-3”>
+          <ul className="mt-8 space-y-3">
             {FEATURES.map((feature) => (
-              <li key={feature} className=”flex items-center gap-3”>
-                <span className=”flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-white/15 ring-1 ring-inset ring-white/20”>
-                  <Check className=”h-3.5 w-3.5 text-white” />
+              <li key={feature} className="flex items-center gap-3">
+                <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-white/15 ring-1 ring-inset ring-white/20">
+                  <Check className="h-3.5 w-3.5 text-white" />
                 </span>
-                <span className=”text-sm font-medium text-emerald-50”>{feature}</span>
+                <span className="text-sm font-medium text-emerald-50">{feature}</span>
               </li>
             ))}
           </ul>
 
           {/* Testimonial */}
-          <figure className=”mt-10 rounded-2xl bg-white/10 p-6 ring-1 ring-inset ring-white/15 backdrop-blur-sm”>
-            <blockquote className=”text-sm leading-relaxed text-white”>
-              {““WhatsCRM helped us qualify 3x more leads without adding a single agent.””}
+          <figure className="mt-10 rounded-2xl bg-white/10 p-6 ring-1 ring-inset ring-white/15 backdrop-blur-sm">
+            <blockquote className="text-sm leading-relaxed text-white">
+              {""WhatsCRM helped us qualify 3x more leads without adding a single agent.""}
             </blockquote>
-            <figcaption className=”mt-4 flex items-center gap-3”>
-              <span className=”flex h-9 w-9 items-center justify-center rounded-full bg-white/20 text-xs font-semibold text-white”>
+            <figcaption className="mt-4 flex items-center gap-3">
+              <span className="flex h-9 w-9 items-center justify-center rounded-full bg-white/20 text-xs font-semibold text-white">
                 RK
               </span>
-              <span className=”text-xs leading-tight”>
-                <span className=”block font-semibold text-white”>Rajesh Kumar</span>
-                <span className=”block text-emerald-100/80”>Director, TechSales India</span>
+              <span className="text-xs leading-tight">
+                <span className="block font-semibold text-white">Rajesh Kumar</span>
+                <span className="block text-emerald-100/80">Director, TechSales India</span>
               </span>
             </figcaption>
           </figure>
