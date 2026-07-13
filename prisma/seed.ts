@@ -4,10 +4,10 @@
 // TODO [SHALMON]: Add more seed data (sample contacts, leads, conversations) for demo.
 
 import "dotenv/config";
-import { PrismaClient } from "@prisma/client";
 import bcrypt from "bcryptjs";
-
-const prisma = new PrismaClient();
+// Prisma 7 needs a driver adapter, which lib/prisma.ts already configures.
+// Constructing a bare PrismaClient() here throws at startup.
+import { prisma } from "../lib/prisma";
 
 async function main() {
   console.log("🌱 Seeding database...");
