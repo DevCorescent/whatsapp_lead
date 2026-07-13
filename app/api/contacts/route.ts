@@ -1,15 +1,3 @@
-// TODO [SHALMON]: Implement GET (list with pagination/search) and POST (create contact).
-//
-// GET /api/contacts
-//   Query params: page, limit, search, tag, source, sortBy, sortOrder
-//   Returns: PaginatedResponse<Contact>
-//   Security: Only return contacts belonging to session.user.tenantId
-//
-// POST /api/contacts
-//   Body: CreateContactInput (validated with createContactSchema)
-//   Returns: Created contact
-//   Side-effect: Create AuditLog entry
-
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
@@ -19,14 +7,98 @@ export async function GET(req: NextRequest) {
   const session = await auth();
   if (!session?.user) return NextResponse.json({ success: false, error: "Unauthorized" }, { status: 401 });
 
-  // TODO [SHALMON]: Implement
-  return NextResponse.json({ success: false, error: "Not implemented yet" }, { status: 501 });
+  const { searchParams } = new URL(req.url);
+  const page = Math.max(1, parseInt(searchParams.get("page") ?? "1"));
+  const limit = Math.min(100, parseInt(searchParams.get("limit") ?? "20"));
+  const search = searchParams.get("search") ?? "";
+  const tagId = searchParams.get("tagId") ?? "";
+
+  const where = {
+    tenantId: session.user.tenantId,
+    isBlocked: false,
+    ...(search && {
+      OR: [
+        { name: { contains: search, mode: "insensitive" as const } },
+        { phone: { contains: search } },
+        { email: { contains: search, mode: "insensitive" as const } },
+        { company: { contains: search, mode: "insensitive" as const } },
+      ],
+    }),
+    ...(tagId && { tags: { some: { tagId } } }),
+  };
+
+  const [total, contacts] = await Promise.all([
+    prisma.contact.count({ where }),
+    prisma.contact.findMany({
+      where,
+      include: {
+        tags: { include: { tag: true } },
+        _count: { select: { conversations: true, leads: true } },
+      },
+      orderBy: { createdAt: "desc" },
+      skip: (page - 1) * limit,
+      take: limit,
+    }),
+  ]);
+
+  return NextResponse.json({
+    success: true,
+    data: contacts,
+    pagination: { page, limit, total, totalPages: Math.ceil(total / limit) },
+  });
 }
 
 export async function POST(req: NextRequest) {
   const session = await auth();
   if (!session?.user) return NextResponse.json({ success: false, error: "Unauthorized" }, { status: 401 });
 
-  // TODO [SHALMON]: Implement
-  return NextResponse.json({ success: false, error: "Not implemented yet" }, { status: 501 });
+  let body: unknown;
+  try {
+    body = await req.json();
+  } catch {
+    return NextResponse.json({ success: false, error: "Invalid JSON body" }, { status: 400 });
+  }
+
+  const parsed = createContactSchema.safeParse(body);
+  if (!parsed.success) {
+    return NextResponse.json({ success: false, error: parsed.error.errors[0].message }, { status: 400 });
+  }
+
+  const { tags, ...data } = parsed.data;
+
+  const existing = await prisma.contact.findUnique({
+    where: { phone_tenantId: { phone: data.phone, tenantId: session.user.tenantId } },
+  });
+  if (existing) {
+    return NextResponse.json(
+      { success: false, error: "A contact with this phone number already exists" },
+      { status: 409 }
+    );
+  }
+
+  const contact = await prisma.contact.create({
+    data: {
+      ...data,
+      tenantId: session.user.tenantId,
+      ...(tags && tags.length > 0 && {
+        tags: { create: tags.map((tagId) => ({ tagId })) },
+      }),
+    },
+    include: {
+      tags: { include: { tag: true } },
+      _count: { select: { conversations: true, leads: true } },
+    },
+  });
+
+  await prisma.auditLog.create({
+    data: {
+      tenantId: session.user.tenantId,
+      userId: session.user.id,
+      action: "CONTACT_CREATED",
+      resource: "contact",
+      resourceId: contact.id,
+    },
+  });
+
+  return NextResponse.json({ success: true, data: contact }, { status: 201 });
 }

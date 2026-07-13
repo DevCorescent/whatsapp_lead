@@ -1,28 +1,98 @@
-// TODO [SHALMON]: GET single contact, PATCH update, DELETE.
-// GET /api/contacts/:id  → full contact with tags, conversations, leads
-// PATCH /api/contacts/:id → update fields
-// DELETE /api/contacts/:id → soft delete (set isBlocked or remove)
-
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
+import { prisma } from "@/lib/prisma";
+import { updateContactSchema } from "@/lib/validators/contact";
 
-export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+type Params = { params: Promise<{ id: string }> };
+
+export async function GET(req: NextRequest, { params }: Params) {
   const session = await auth();
   if (!session?.user) return NextResponse.json({ success: false, error: "Unauthorized" }, { status: 401 });
-  // TODO [SHALMON]: Implement
-  return NextResponse.json({ success: false, error: "Not implemented yet" }, { status: 501 });
+
+  const { id } = await params;
+
+  const contact = await prisma.contact.findFirst({
+    where: { id, tenantId: session.user.tenantId },
+    include: {
+      tags: { include: { tag: true } },
+      leads: { orderBy: { createdAt: "desc" }, take: 5 },
+      _count: { select: { conversations: true } },
+    },
+  });
+
+  if (!contact) return NextResponse.json({ success: false, error: "Contact not found" }, { status: 404 });
+
+  return NextResponse.json({ success: true, data: contact });
 }
 
-export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+export async function PATCH(req: NextRequest, { params }: Params) {
   const session = await auth();
   if (!session?.user) return NextResponse.json({ success: false, error: "Unauthorized" }, { status: 401 });
-  // TODO [SHALMON]: Implement
-  return NextResponse.json({ success: false, error: "Not implemented yet" }, { status: 501 });
+
+  const { id } = await params;
+
+  const contact = await prisma.contact.findFirst({
+    where: { id, tenantId: session.user.tenantId },
+  });
+  if (!contact) return NextResponse.json({ success: false, error: "Contact not found" }, { status: 404 });
+
+  let body: unknown;
+  try {
+    body = await req.json();
+  } catch {
+    return NextResponse.json({ success: false, error: "Invalid JSON body" }, { status: 400 });
+  }
+
+  const parsed = updateContactSchema.safeParse(body);
+  if (!parsed.success) {
+    return NextResponse.json({ success: false, error: parsed.error.errors[0].message }, { status: 400 });
+  }
+
+  const { tags, ...data } = parsed.data;
+
+  const updated = await prisma.$transaction(async (tx) => {
+    if (tags !== undefined) {
+      await tx.contactTag.deleteMany({ where: { contactId: id } });
+      if (tags.length > 0) {
+        await tx.contactTag.createMany({
+          data: tags.map((tagId) => ({ contactId: id, tagId })),
+        });
+      }
+    }
+
+    return tx.contact.update({
+      where: { id },
+      data,
+      include: { tags: { include: { tag: true } } },
+    });
+  });
+
+  return NextResponse.json({ success: true, data: updated });
 }
 
-export async function DELETE(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+export async function DELETE(req: NextRequest, { params }: Params) {
   const session = await auth();
   if (!session?.user) return NextResponse.json({ success: false, error: "Unauthorized" }, { status: 401 });
-  // TODO [SHALMON]: Implement
-  return NextResponse.json({ success: false, error: "Not implemented yet" }, { status: 501 });
+
+  const { id } = await params;
+
+  const contact = await prisma.contact.findFirst({
+    where: { id, tenantId: session.user.tenantId },
+  });
+  if (!contact) return NextResponse.json({ success: false, error: "Contact not found" }, { status: 404 });
+
+  // Soft delete — marks as blocked so it disappears from lists but data is preserved
+  await prisma.contact.update({ where: { id }, data: { isBlocked: true } });
+
+  await prisma.auditLog.create({
+    data: {
+      tenantId: session.user.tenantId,
+      userId: session.user.id,
+      action: "CONTACT_DELETED",
+      resource: "contact",
+      resourceId: id,
+    },
+  });
+
+  return NextResponse.json({ success: true });
 }

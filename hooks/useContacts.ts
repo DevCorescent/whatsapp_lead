@@ -1,17 +1,14 @@
-// TODO [SHALMON]: React Query hooks for contacts.
-//
-// useContacts(filters) — GET /api/contacts with pagination + filters
-// useContact(id)       — GET /api/contacts/[id]
-// useCreateContact()   — POST /api/contacts (mutation)
-// useUpdateContact()   — PATCH /api/contacts/[id] (mutation)
-// useDeleteContact()   — DELETE /api/contacts/[id] (mutation)
-//
-// Use @tanstack/react-query v5 syntax (queryKey arrays, useMutation with mutationFn).
-// Invalidate ["contacts"] on create/update/delete.
-
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import type { CreateContactInput, UpdateContactInput } from "@/lib/validators/contact";
 
-export function useContacts(filters?: { search?: string; tagId?: string; page?: number }) {
+interface ContactFilters {
+  search?: string;
+  tagId?: string;
+  page?: number;
+  limit?: number;
+}
+
+export function useContacts(filters?: ContactFilters) {
   return useQuery({
     queryKey: ["contacts", filters],
     queryFn: async () => {
@@ -19,6 +16,7 @@ export function useContacts(filters?: { search?: string; tagId?: string; page?: 
       if (filters?.search) params.set("search", filters.search);
       if (filters?.tagId) params.set("tagId", filters.tagId);
       if (filters?.page) params.set("page", String(filters.page));
+      if (filters?.limit) params.set("limit", String(filters.limit));
       const res = await fetch(`/api/contacts?${params}`);
       if (!res.ok) throw new Error("Failed to fetch contacts");
       return res.json();
@@ -38,4 +36,56 @@ export function useContact(id: string) {
   });
 }
 
-// TODO [SHALMON]: Implement useCreateContact, useUpdateContact, useDeleteContact mutations
+export function useCreateContact() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (data: CreateContactInput) => {
+      const res = await fetch("/api/contacts", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(data),
+      });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error ?? "Failed to create contact");
+      return json;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["contacts"] });
+    },
+  });
+}
+
+export function useUpdateContact() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ id, ...data }: UpdateContactInput & { id: string }) => {
+      const res = await fetch(`/api/contacts/${id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(data),
+      });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error ?? "Failed to update contact");
+      return json;
+    },
+    onSuccess: (_data, { id }) => {
+      queryClient.invalidateQueries({ queryKey: ["contacts"] });
+      queryClient.invalidateQueries({ queryKey: ["contacts", id] });
+    },
+  });
+}
+
+export function useDeleteContact() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (id: string) => {
+      const res = await fetch(`/api/contacts/${id}`, { method: "DELETE" });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error ?? "Failed to delete contact");
+      return json;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["contacts"] });
+    },
+  });
+}
