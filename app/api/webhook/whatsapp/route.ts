@@ -474,7 +474,7 @@ async function saveInboundMessage(
     });
 
     return { message: created, isNew: true };
-  } catch (error: any) {
+  } catch (error) {
     // P2002 on waMessageId means Meta redelivered a message we have already ingested. The
     // conversation counters already account for it, so the correct response is to hand back the
     // stored row and increment nothing. This is what makes retries free rather than corrupting.
