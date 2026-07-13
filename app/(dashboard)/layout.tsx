@@ -29,7 +29,7 @@ export default async function DashboardLayout({ children }: { children: ReactNod
   const plan = await getPlanName(session.user.tenantId);
 
   return (
-    <div className="flex h-screen overflow-hidden bg-slate-50">
+    <div className="flex h-screen overflow-hidden bg-[#f6f7f9]">
       <Sidebar
         user={{
           name: session.user.name,

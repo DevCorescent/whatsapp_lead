@@ -150,15 +150,16 @@ export function ConversationList({
             onChange={(e) => onSearchChange(e.target.value)}
             placeholder="Search conversations"
             aria-label="Search conversations"
-            className="w-full rounded-lg border border-slate-200 bg-slate-50 py-2 pl-9 pr-3 text-sm text-slate-900 placeholder:text-slate-400 focus:border-emerald-500 focus:bg-white focus:outline-none focus:ring-2 focus:ring-emerald-500/20"
+            className="w-full rounded-lg bg-slate-50 py-2 pl-9 pr-3 text-sm text-slate-900 ring-1 ring-inset ring-transparent transition placeholder:text-slate-400 focus:bg-white focus:outline-none focus:ring-2 focus:ring-emerald-500"
           />
         </div>
 
-        {/* Filter tabs */}
+        {/* Filter tabs. Five of these have to survive a 320px column, so the
+            padding is tight enough that "Mine" isn't clipped off the end. */}
         <div
           role="tablist"
           aria-label="Filter conversations"
-          className="scrollbar-slim mt-3 flex gap-1 overflow-x-auto"
+          className="scrollbar-slim mt-3 flex gap-0.5 overflow-x-auto"
         >
           {INBOX_TABS.map((t) => {
             const active = t.id === tab;
@@ -169,10 +170,10 @@ export function ConversationList({
                 aria-selected={active}
                 onClick={() => onTabChange(t.id)}
                 className={cn(
-                  "shrink-0 rounded-full px-3 py-1.5 text-xs font-medium transition",
+                  "shrink-0 rounded-full px-2.5 py-1.5 text-xs font-medium transition",
                   "focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-600",
                   active
-                    ? "bg-emerald-600 text-white shadow-sm"
+                    ? "bg-emerald-600 text-white shadow-sm shadow-emerald-600/25"
                     : "text-slate-500 hover:bg-slate-100 hover:text-slate-700",
                 )}
               >

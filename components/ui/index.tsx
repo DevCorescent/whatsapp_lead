@@ -31,7 +31,7 @@ export function Avatar({
       <img
         src={src}
         alt={name ?? "avatar"}
-        className={cn("rounded-full object-cover shrink-0", sizes[size], className)}
+        className={cn("shrink-0 rounded-full object-cover", sizes[size], className)}
       />
     );
   }
@@ -39,7 +39,7 @@ export function Avatar({
   return (
     <span
       className={cn(
-        "rounded-full shrink-0 flex items-center justify-center font-semibold text-white select-none",
+        "flex shrink-0 select-none items-center justify-center rounded-full font-semibold text-white",
         avatarColor(name),
         sizes[size],
         className,
@@ -53,18 +53,12 @@ export function Avatar({
 
 // ─── Badge ────────────────────────────────────────────────────────────────────
 
-export function Badge({
-  children,
-  className,
-}: {
-  children: ReactNode;
-  className?: string;
-}) {
+export function Badge({ children, className }: { children: ReactNode; className?: string }) {
   return (
     <span
       className={cn(
-        "inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ring-1 ring-inset",
-        "bg-slate-100 text-slate-700 ring-slate-500/20",
+        "inline-flex items-center rounded-md px-1.5 py-0.5 text-xs font-medium ring-1 ring-inset",
+        "bg-slate-50 text-slate-600 ring-slate-500/15",
         className,
       )}
     >
@@ -80,29 +74,28 @@ type ButtonProps = React.ButtonHTMLAttributes<HTMLButtonElement> & {
   size?: "sm" | "md";
 };
 
-export function Button({
-  variant = "primary",
-  size = "md",
-  className,
-  ...props
-}: ButtonProps) {
+export function Button({ variant = "primary", size = "md", className, ...props }: ButtonProps) {
   const variants = {
-    primary: "bg-emerald-600 text-white hover:bg-emerald-700 shadow-sm",
-    secondary: "bg-white text-slate-700 ring-1 ring-inset ring-slate-300 hover:bg-slate-50",
-    ghost: "text-slate-600 hover:bg-slate-100",
-    danger: "bg-rose-600 text-white hover:bg-rose-700",
+    // A tinted shadow under the primary is what makes it read as raised rather
+    // than as a flat green rectangle.
+    primary:
+      "bg-emerald-600 text-white shadow-sm shadow-emerald-600/25 hover:bg-emerald-700 active:bg-emerald-800",
+    secondary:
+      "bg-white text-slate-700 shadow-sm ring-1 ring-inset ring-slate-200 hover:bg-slate-50 hover:text-slate-900",
+    ghost: "text-slate-500 hover:bg-slate-100 hover:text-slate-900",
+    danger: "bg-rose-600 text-white shadow-sm shadow-rose-600/25 hover:bg-rose-700",
   };
   const sizes = {
-    sm: "px-2.5 py-1.5 text-xs",
-    md: "px-4 py-2 text-sm",
+    sm: "h-8 gap-1.5 px-2.5 text-xs",
+    md: "h-9 gap-2 px-3.5 text-sm",
   };
 
   return (
     <button
       className={cn(
-        "inline-flex items-center justify-center gap-2 rounded-lg font-medium transition",
+        "inline-flex items-center justify-center rounded-lg font-medium transition",
         "focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-600",
-        "disabled:opacity-50 disabled:pointer-events-none",
+        "disabled:pointer-events-none disabled:opacity-50",
         variants[variant],
         sizes[size],
         className,
@@ -114,9 +107,18 @@ export function Button({
 
 // ─── Card ─────────────────────────────────────────────────────────────────────
 
+/**
+ * A hairline ring plus a soft shadow, rather than a full grey border. The border
+ * version reads as a wireframe once a page has more than a few cards on it.
+ */
 export function Card({ children, className }: { children: ReactNode; className?: string }) {
   return (
-    <div className={cn("rounded-xl border border-slate-200 bg-white shadow-sm", className)}>
+    <div
+      className={cn(
+        "rounded-2xl bg-white shadow-sm ring-1 ring-slate-900/5",
+        className,
+      )}
+    >
       {children}
     </div>
   );
@@ -125,7 +127,7 @@ export function Card({ children, className }: { children: ReactNode; className?:
 // ─── Skeleton ─────────────────────────────────────────────────────────────────
 
 export function Skeleton({ className }: { className?: string }) {
-  return <div className={cn("animate-pulse rounded-md bg-slate-200", className)} />;
+  return <div className={cn("animate-pulse rounded-md bg-slate-100", className)} />;
 }
 
 export function SkeletonRows({ rows = 5, className }: { rows?: number; className?: string }) {
@@ -155,19 +157,18 @@ export function EmptyState({
 }) {
   return (
     <div
-      className={cn(
-        "flex flex-col items-center justify-center text-center px-6 py-12",
-        className,
-      )}
+      className={cn("flex flex-col items-center justify-center px-6 py-14 text-center", className)}
     >
       {Icon && (
-        <span className="mb-3 flex h-12 w-12 items-center justify-center rounded-full bg-slate-100">
-          <Icon className="h-6 w-6 text-slate-400" />
+        <span className="mb-4 flex h-11 w-11 items-center justify-center rounded-xl bg-slate-50 ring-1 ring-inset ring-slate-900/5">
+          <Icon className="h-5 w-5 text-slate-400" />
         </span>
       )}
-      <p className="text-sm font-medium text-slate-900">{title}</p>
-      {description && <p className="mt-1 max-w-sm text-sm text-slate-500">{description}</p>}
-      {action && <div className="mt-4">{action}</div>}
+      <p className="text-sm font-semibold text-slate-900">{title}</p>
+      {description && (
+        <p className="mt-1 max-w-xs text-sm leading-relaxed text-slate-500">{description}</p>
+      )}
+      {action && <div className="mt-5">{action}</div>}
     </div>
   );
 }
@@ -207,7 +208,7 @@ export function Modal({
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
       <div
-        className="absolute inset-0 bg-slate-900/40 backdrop-blur-sm"
+        className="absolute inset-0 bg-slate-900/40 backdrop-blur-[2px]"
         onClick={onClose}
         aria-hidden
       />
@@ -216,25 +217,25 @@ export function Modal({
         aria-modal="true"
         aria-label={title}
         className={cn(
-          "relative z-10 w-full max-w-lg rounded-2xl bg-white shadow-xl",
-          "max-h-[90vh] overflow-y-auto scrollbar-slim",
+          "relative z-10 w-full max-w-lg rounded-2xl bg-white shadow-2xl ring-1 ring-slate-900/5",
+          "scrollbar-slim max-h-[90vh] overflow-y-auto",
           className,
         )}
       >
-        <div className="flex items-start justify-between gap-4 border-b border-slate-200 px-6 py-4">
+        <div className="flex items-start justify-between gap-4 px-6 pb-4 pt-5">
           <div>
-            <h2 className="text-base font-semibold text-slate-900">{title}</h2>
+            <h2 className="text-base font-semibold tracking-tight text-slate-900">{title}</h2>
             {description && <p className="mt-0.5 text-sm text-slate-500">{description}</p>}
           </div>
           <button
             onClick={onClose}
-            className="rounded-lg p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-600"
+            className="-mr-1 rounded-lg p-1.5 text-slate-400 transition hover:bg-slate-100 hover:text-slate-600"
             aria-label="Close"
           >
-            <X className="h-5 w-5" />
+            <X className="h-4.5 w-4.5" />
           </button>
         </div>
-        <div className="px-6 py-5">{children}</div>
+        <div className="px-6 pb-6">{children}</div>
       </div>
     </div>
   );
@@ -262,14 +263,21 @@ export function Field({
         {required && <span className="ml-0.5 text-rose-500">*</span>}
       </label>
       {children}
-      {error && <p className="mt-1 text-xs text-rose-600">{error}</p>}
+      {error && <p className="mt-1.5 text-xs text-rose-600">{error}</p>}
     </div>
   );
 }
 
-export const inputClass =
-  "w-full rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-900 placeholder:text-slate-400 " +
-  "focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-500/20";
+const controlBase =
+  "w-full rounded-lg bg-white px-3 py-2 text-sm text-slate-900 shadow-sm " +
+  "ring-1 ring-inset ring-slate-200 transition placeholder:text-slate-400 " +
+  "focus:outline-none focus:ring-2 focus:ring-inset focus:ring-emerald-500 " +
+  "disabled:bg-slate-50 disabled:text-slate-400";
+
+export const inputClass = controlBase;
+
+/** Selects need the extra right padding that makes room for the custom chevron. */
+export const selectClass = cn(controlBase, "cursor-pointer");
 
 // ─── Page header ──────────────────────────────────────────────────────────────
 
@@ -283,10 +291,10 @@ export function PageHeader({
   action?: ReactNode;
 }) {
   return (
-    <div className="mb-6 flex flex-wrap items-start justify-between gap-4">
-      <div>
-        <h1 className="text-2xl font-bold tracking-tight text-slate-900">{title}</h1>
-        {description && <p className="mt-1 text-sm text-slate-500">{description}</p>}
+    <div className="mb-6 flex flex-wrap items-center justify-between gap-3">
+      <div className="min-w-0">
+        <h1 className="text-xl font-semibold tracking-tight text-slate-900">{title}</h1>
+        {description && <p className="mt-0.5 text-sm text-slate-500">{description}</p>}
       </div>
       {action}
     </div>
