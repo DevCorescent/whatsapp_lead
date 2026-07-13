@@ -63,7 +63,7 @@ export default function AuthLayout({ children }: { children: ReactNode }) {
           {/* Testimonial */}
           <figure className="mt-10 rounded-2xl bg-white/10 p-6 ring-1 ring-inset ring-white/15 backdrop-blur-sm">
             <blockquote className="text-sm leading-relaxed text-white">
-              {""WhatsCRM helped us qualify 3x more leads without adding a single agent.""}
+              &ldquo;WhatsCRM helped us qualify 3x more leads without adding a single agent.&rdquo;
             </blockquote>
             <figcaption className="mt-4 flex items-center gap-3">
               <span className="flex h-9 w-9 items-center justify-center rounded-full bg-white/20 text-xs font-semibold text-white">
