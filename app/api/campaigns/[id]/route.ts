@@ -1,11 +1,8 @@
-// TODO [GAURANSH]: Single campaign CRUD + actions.
+// TODO [GAURANSH]: Single campaign operations.
 //
-// GET /api/campaigns/[id]  → campaign details + progress stats
-// PATCH /api/campaigns/[id]  → update name, scheduledAt (only if DRAFT/SCHEDULED)
-// DELETE /api/campaigns/[id]  → soft delete (only DRAFT or FAILED)
-//
-// POST /api/campaigns/[id]/pause  → pause RUNNING campaign (BullMQ job pause)
-// POST /api/campaigns/[id]/resume → resume PAUSED campaign
+// GET /api/campaigns/[id]  → campaign details + per-contact delivery stats
+// PATCH /api/campaigns/[id]  → update name (only if status is DRAFT)
+// DELETE /api/campaigns/[id]  → delete only DRAFT campaigns
 
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
