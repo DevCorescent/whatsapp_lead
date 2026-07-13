@@ -6,11 +6,15 @@
 //   - Include: contact count, sent count, delivered %, failed count
 //
 // POST /api/campaigns
-//   - Body: { name, templateId, contactIds | tagIds | "ALL", scheduledAt? }
+//   - Body: { name, templateId, contactIds | tagIds | "ALL" }
 //   - Validate plan limits (maxCampaigns)
-//   - Create campaign + CampaignContact rows
-//   - If scheduledAt is null → enqueue immediately via BullMQ
-//   - If scheduledAt → schedule delayed BullMQ job
+//   - Create campaign + CampaignContact rows in DB
+//   - Then loop through each contact and call sendTextMessage()
+//   - Update CampaignContact.status for each: "SENT" or "FAILED"
+//   - Update campaign.status to "COMPLETED" when done
+//
+// NOTE: No queue/Redis needed — loop directly in this route.
+// For very large campaigns (10k+), split into batches with a 1-second delay between batches.
 
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";

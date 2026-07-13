@@ -1,33 +1,21 @@
-// TODO [GAURANSH]: AI helper functions using OpenAI SDK.
-//
-// Functions to implement:
-//   generateReply(messages, systemPrompt, context) → string
-//   qualifyLead(conversationText) → LeadQualification
-//   summarizeConversation(messages) → string
-//   generateFollowUp(contact, lead) → string
-//   detectSentiment(text) → 'positive' | 'neutral' | 'negative'
-//   extractContactInfo(text) → Partial<Contact>
-//
-// Use prompt caching for system prompts (add cache_control to long prompts).
-// Model: process.env.OPENAI_MODEL (default: gpt-4o-mini)
+import Groq from "groq-sdk";
 
-import OpenAI from "openai";
-
-const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
+const MODEL = process.env.GROQ_MODEL ?? "llama-3.3-70b-versatile";
 
 export async function generateReply(
   conversationHistory: { role: "user" | "assistant"; content: string }[],
   systemPrompt: string,
   knowledgeContext?: string
 ): Promise<string> {
-  // TODO [GAURANSH]: Add RAG context injection + implement
-  const completion = await openai.chat.completions.create({
-    model: process.env.OPENAI_MODEL ?? "gpt-4o-mini",
+  const systemContent = knowledgeContext
+    ? `${systemPrompt}\n\nRelevant knowledge:\n${knowledgeContext}`
+    : systemPrompt;
+
+  const completion = await groq.chat.completions.create({
+    model: MODEL,
     messages: [
-      {
-        role: "system",
-        content: [systemPrompt, knowledgeContext ? `\n\nRelevant knowledge:\n${knowledgeContext}` : ""].join(""),
-      },
+      { role: "system", content: systemContent },
       ...conversationHistory,
     ],
     max_tokens: 500,
@@ -37,11 +25,106 @@ export async function generateReply(
   return completion.choices[0]?.message?.content ?? "";
 }
 
-// TODO [GAURANSH]: Implement remaining functions
-export async function summarizeConversation(messages: { role: string; content: string }[]): Promise<string> {
-  throw new Error("Not implemented yet");
+export async function summarizeConversation(
+  messages: { role: string; content: string }[]
+): Promise<string> {
+  const transcript = messages
+    .map((m) => `${m.role === "user" ? "Customer" : "Agent"}: ${m.content}`)
+    .join("\n");
+
+  const completion = await groq.chat.completions.create({
+    model: MODEL,
+    messages: [
+      {
+        role: "system",
+        content:
+          "You are a CRM assistant. Summarize WhatsApp conversations concisely for sales agents.",
+      },
+      {
+        role: "user",
+        content: `Summarize this conversation in 3-4 bullet points. Include: customer intent, key concerns, and action items.\n\nConversation:\n${transcript}`,
+      },
+    ],
+    max_tokens: 300,
+    temperature: 0.3,
+  });
+
+  return completion.choices[0]?.message?.content ?? "";
 }
 
-export async function qualifyLead(conversationText: string) {
-  throw new Error("Not implemented yet");
+export interface LeadQualification {
+  bantBudget: boolean;
+  bantAuthority: boolean;
+  bantNeed: boolean;
+  bantTimeline: boolean;
+  score: number;
+  scoreLabel: "COLD" | "WARM" | "HOT" | "QUALIFIED";
+  reasoning: string;
+}
+
+export async function qualifyLead(conversationText: string): Promise<LeadQualification> {
+  const completion = await groq.chat.completions.create({
+    model: MODEL,
+    messages: [
+      {
+        role: "system",
+        content:
+          'You are a sales qualification expert using the BANT framework. Respond ONLY with valid JSON — no markdown, no explanation.',
+      },
+      {
+        role: "user",
+        content: `Analyze this WhatsApp conversation and determine BANT qualification.\n\nConversation:\n${conversationText}\n\nRespond with this exact JSON structure:\n{\n  "bantBudget": true/false,\n  "bantAuthority": true/false,\n  "bantNeed": true/false,\n  "bantTimeline": true/false,\n  "reasoning": "one sentence explanation"\n}`,
+      },
+    ],
+    max_tokens: 200,
+    temperature: 0.1,
+  });
+
+  const raw = completion.choices[0]?.message?.content ?? "{}";
+
+  let parsed: Partial<LeadQualification>;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    parsed = { bantBudget: false, bantAuthority: false, bantNeed: false, bantTimeline: false };
+  }
+
+  const bant = {
+    bantBudget: parsed.bantBudget ?? false,
+    bantAuthority: parsed.bantAuthority ?? false,
+    bantNeed: parsed.bantNeed ?? false,
+    bantTimeline: parsed.bantTimeline ?? false,
+  };
+
+  const score =
+    (bant.bantBudget ? 25 : 0) +
+    (bant.bantAuthority ? 25 : 0) +
+    (bant.bantNeed ? 25 : 0) +
+    (bant.bantTimeline ? 25 : 0);
+
+  const scoreLabel: LeadQualification["scoreLabel"] =
+    score <= 30 ? "COLD" : score <= 60 ? "WARM" : score <= 80 ? "HOT" : "QUALIFIED";
+
+  return { ...bant, score, scoreLabel, reasoning: parsed.reasoning ?? "" };
+}
+
+export async function detectSentiment(
+  text: string
+): Promise<"positive" | "neutral" | "negative"> {
+  const completion = await groq.chat.completions.create({
+    model: MODEL,
+    messages: [
+      {
+        role: "system",
+        content: 'Classify sentiment. Respond with exactly one word: positive, neutral, or negative.',
+      },
+      { role: "user", content: text },
+    ],
+    max_tokens: 5,
+    temperature: 0,
+  });
+
+  const result = completion.choices[0]?.message?.content?.trim().toLowerCase() ?? "neutral";
+  if (result === "positive" || result === "negative") return result;
+  return "neutral";
 }
