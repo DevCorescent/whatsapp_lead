@@ -45,7 +45,7 @@ export async function PATCH(req: NextRequest, { params }: Params) {
 
   const parsed = updateContactSchema.safeParse(body);
   if (!parsed.success) {
-    return NextResponse.json({ success: false, error: parsed.error.errors[0].message }, { status: 400 });
+    return NextResponse.json({ success: false, error: parsed.error.issues[0].message }, { status: 400 });
   }
 
   const { tags, ...data } = parsed.data;

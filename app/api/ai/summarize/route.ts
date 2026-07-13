@@ -38,7 +38,10 @@ export async function POST(req: NextRequest) {
 
     const messages = conversation.messages
       .filter((m) => m.content)
-      .map((m) => `${m.direction === "INBOUND" ? "Customer" : "Agent"}: ${m.content}`);
+      .map((m) => ({
+        role: m.direction === "INBOUND" ? "user" : "assistant",
+        content: m.content!,
+      }));
 
     if (messages.length === 0) return NextResponse.json({ success: false, error: "No messages to summarize" }, { status: 400 });
 
