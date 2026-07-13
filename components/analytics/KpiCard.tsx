@@ -14,7 +14,7 @@ const TINTS = {
   violet: "bg-violet-50 text-violet-600",
   amber: "bg-amber-50 text-amber-600",
   rose: "bg-rose-50 text-rose-600",
-  slate: "bg-slate-100 text-slate-600",
+  slate: "bg-slate-100 text-slate-500",
 } as const;
 
 export type KpiTint = keyof typeof TINTS;
@@ -44,10 +44,12 @@ export function KpiCard({
   if (loading) {
     return (
       <Card className="p-4">
-        <Skeleton className="h-8 w-8 rounded-lg" />
-        <Skeleton className="mt-3 h-3 w-24" />
-        <Skeleton className="mt-2.5 h-7 w-16" />
-        <Skeleton className="mt-3 h-3 w-28" />
+        <div className="flex items-center justify-between">
+          <Skeleton className="h-3 w-24" />
+          <Skeleton className="h-7 w-7 rounded-lg" />
+        </div>
+        <Skeleton className="mt-3 h-7 w-20" />
+        <Skeleton className="mt-2.5 h-3 w-28" />
       </Card>
     );
   }
@@ -63,27 +65,30 @@ export function KpiCard({
 
   return (
     <Card className="p-4 transition hover:shadow-md">
-      <span
-        className={cn(
-          "flex h-8 w-8 items-center justify-center rounded-lg",
-          TINTS[tint],
-        )}
-      >
-        <Icon className="h-4 w-4" />
-      </span>
-
-      <p className="mt-3 truncate text-xs font-medium text-slate-500">{label}</p>
+      {/* Label and icon share the top line, so the number owns its own row and
+          reads as the focal point instead of sitting third in a stack. */}
+      <div className="flex items-start justify-between gap-2">
+        <p className="truncate pt-0.5 text-xs font-medium text-slate-500">{label}</p>
+        <span
+          className={cn(
+            "flex h-7 w-7 shrink-0 items-center justify-center rounded-lg",
+            TINTS[tint],
+          )}
+        >
+          <Icon className="h-3.5 w-3.5" />
+        </span>
+      </div>
 
       <p
         className={cn(
-          "mt-1 text-2xl font-semibold tracking-tight",
+          "nums mt-2 text-[26px] font-semibold leading-none tracking-tight",
           value == null ? "text-slate-300" : "text-slate-900",
         )}
       >
         {value ?? "—"}
       </p>
 
-      <div className="mt-2 flex items-center gap-1 text-xs">
+      <div className="mt-3 flex items-center gap-1 text-xs">
         {hasDelta ? (
           <>
             <TrendIcon
@@ -96,7 +101,7 @@ export function KpiCard({
             />
             <span
               className={cn(
-                "font-medium",
+                "nums font-semibold",
                 good && "text-emerald-600",
                 bad && "text-rose-600",
                 !good && !bad && "text-slate-400",
@@ -108,7 +113,7 @@ export function KpiCard({
             <span className="text-slate-400">vs prev</span>
           </>
         ) : (
-          <span className="text-slate-400">— vs prev</span>
+          <span className="text-slate-300">— vs prev</span>
         )}
       </div>
     </Card>

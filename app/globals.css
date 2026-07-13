@@ -8,10 +8,37 @@
 body {
   font-family: var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif;
   -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
 }
 
-/* Slim scrollbars — the inbox and kanban are scroll-heavy surfaces. */
+/*
+ * Deliberately unlayered. Tailwind puts everything it generates inside the
+ * theme/base/components/utilities cascade layers, and unlayered rules outrank
+ * every layer — which is exactly what a select needs, because `appearance` has
+ * to win against the browser default AND the utility classes on the element.
+ * The same rules inside `@layer base` silently lost and the OS chevron stayed.
+ */
+select {
+  appearance: none;
+  -webkit-appearance: none;
+  background-image: url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 20 20'%3E%3Cpath stroke='%2394a3b8' stroke-linecap='round' stroke-linejoin='round' stroke-width='1.75' d='m6 8 4 4 4-4'/%3E%3C/svg%3E");
+  background-position: right 0.625rem center;
+  background-repeat: no-repeat;
+  background-size: 1.05rem;
+  padding-right: 2.25rem;
+}
+
+/* Sliders inherit the brand instead of the OS blue. */
+input[type="range"] {
+  accent-color: #059669;
+}
+
 @layer utilities {
+  /* Figures in tables, KPI tiles and charts should not jitter as they update. */
+  .nums {
+    font-variant-numeric: tabular-nums;
+  }
+
   .scrollbar-slim {
     scrollbar-width: thin;
     scrollbar-color: rgb(203 213 225) transparent;
