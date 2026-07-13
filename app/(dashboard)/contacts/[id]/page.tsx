@@ -12,6 +12,8 @@
 //
 // TODO [SHALMON]: GET /api/contacts/:id (full contact with relations)
 
+import Link from "next/link";
+
 interface Props { params: Promise<{ id: string }> }
 
 export default async function ContactDetailPage({ params }: Props) {
@@ -19,7 +21,7 @@ export default async function ContactDetailPage({ params }: Props) {
   return (
     <div>
       <div className="mb-6">
-        <a href="/contacts" className="text-sm text-gray-500 hover:text-gray-700">← Back to Contacts</a>
+        <Link href="/contacts" className="text-sm text-gray-500 hover:text-gray-700">← Back to Contacts</Link>
       </div>
       {/* TODO [HEMANT]: Build full contact detail layout */}
       <div className="bg-white rounded-xl border p-8 text-center text-gray-400">
