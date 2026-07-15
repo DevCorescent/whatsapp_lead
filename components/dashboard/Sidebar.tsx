@@ -33,24 +33,24 @@ const NAV = [
       { href: "/leads", label: "Leads", icon: Target },
     ],
   },
-  // {
-  //   section: "Automate",
-  //   items: [
-  //     { href: "/campaigns", label: "Campaigns", icon: Megaphone },
-  //     { href: "/chatbot", label: "Chatbot", icon: Bot },
-  //     { href: "/ai-settings", label: "AI Settings", icon: Sparkles },
-  //     { href: "/knowledge-base", label: "Knowledge Base", icon: BookOpen },
-  //   ],
-  // },
-  // {
-  //   section: "Manage",
-  //   items: [
-  //     { href: "/tickets", label: "Tickets", icon: Ticket },
-  //     { href: "/analytics", label: "Analytics", icon: BarChart2 },
-  //     { href: "/team", label: "Team", icon: UserCog },
-  //     { href: "/settings", label: "Settings", icon: Settings },
-  //   ],
-  // },
+ //  {
+ //    section: "Automate",
+ //    items: [
+ //      { href: "/campaigns", label: "Campaigns", icon: Megaphone },
+ //      { href: "/chatbot", label: "Chatbot", icon: Bot },
+ //      { href: "/ai-settings", label: "AI Settings", icon: Sparkles },
+ //      { href: "/knowledge-base", label: "Knowledge Base", icon: BookOpen },
+ //    ],
+ //  },
+   {
+     section: "Manage",
+     items: [
+       { href: "/tickets", label: "Tickets", icon: Ticket },
+       { href: "/analytics", label: "Analytics", icon: BarChart2 },
+       { href: "/team", label: "Team", icon: UserCog },
+       { href: "/settings", label: "Settings", icon: Settings },
+     ],
+   },
 ];
 
 const PLAN_STYLE: Record<string, string> = {
