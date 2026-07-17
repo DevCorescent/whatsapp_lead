@@ -33,15 +33,15 @@ const NAV = [
       { href: "/leads", label: "Leads", icon: Target },
     ],
   },
- //  {
- //    section: "Automate",
- //    items: [
- //      { href: "/campaigns", label: "Campaigns", icon: Megaphone },
- //      { href: "/chatbot", label: "Chatbot", icon: Bot },
- //      { href: "/ai-settings", label: "AI Settings", icon: Sparkles },
- //      { href: "/knowledge-base", label: "Knowledge Base", icon: BookOpen },
- //    ],
- //  },
+   {
+     section: "Automate",
+     items: [
+       { href: "/campaigns", label: "Campaigns", icon: Megaphone },
+       { href: "/chatbot", label: "Chatbot", icon: Bot },
+       { href: "/ai-settings", label: "AI Settings", icon: Sparkles },
+       { hr0ef: "/knowledge-base", label: "Knowledge Base", icon: BookOpen },
+     ],
+   },
    {
      section: "Manage",
      items: [
