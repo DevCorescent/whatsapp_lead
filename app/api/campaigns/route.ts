@@ -1,8 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { CampaignStatus } from "@prisma/client";
+import { CampaignStatus, Prisma } from "@prisma/client";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
+import { runCampaign, CampaignClaimError } from "@/lib/campaigns/runner";
+import { assertWithinLimit, LimitError } from "@/lib/billing/usage";
 
 const querySchema = z.object({
   status: z.nativeEnum(CampaignStatus).optional(),
@@ -17,6 +19,10 @@ const createCampaignSchema = z.object({
   contactIds: z.array(z.string()).optional(),
   tagIds: z.array(z.string()).optional(),
   all: z.boolean().optional(),
+  // Scheduling: an ISO datetime saves the campaign as SCHEDULED; `sendNow` (with
+  // no schedule) sends immediately; neither leaves it as a DRAFT.
+  scheduledAt: z.string().datetime({ offset: true }).optional(),
+  sendNow: z.boolean().optional(),
 }).refine((d) => d.templateId || d.message, { message: "Either templateId or message is required" });
 
 export async function GET(req: NextRequest) {
@@ -76,7 +82,29 @@ export async function POST(req: NextRequest) {
     const parsed = createCampaignSchema.safeParse(body);
     if (!parsed.success) return NextResponse.json({ success: false, error: parsed.error.issues[0].message }, { status: 400 });
 
-    const { name, templateId, contactIds, tagIds, all } = parsed.data;
+    // Billing: enforce the plan's campaigns-per-period limit.
+    try {
+      await assertWithinLimit(tenantId, "campaigns");
+    } catch (e) {
+      if (e instanceof LimitError) return NextResponse.json({ success: false, error: e.message }, { status: 403 });
+      throw e;
+    }
+
+    const { name, templateId, message, contactIds, tagIds, all, sendNow } = parsed.data;
+
+    // Resolve schedule: reject a schedule set in the past, otherwise decide the
+    // campaign's initial status from the scheduling inputs.
+    let scheduledAt: Date | null = null;
+    if (parsed.data.scheduledAt) {
+      scheduledAt = new Date(parsed.data.scheduledAt);
+      if (scheduledAt.getTime() <= Date.now()) {
+        return NextResponse.json(
+          { success: false, error: "Scheduled time must be in the future" },
+          { status: 400 },
+        );
+      }
+    }
+    const initialStatus: CampaignStatus = scheduledAt ? "SCHEDULED" : "DRAFT";
 
     // Resolve target contacts
     let contacts: { id: string; phone: string }[] = [];
@@ -97,14 +125,17 @@ export async function POST(req: NextRequest) {
       });
     }
 
-    // Create campaign as DRAFT with contact rows
+    // Create campaign with its contact rows. The broadcast body is stored on
+    // `metadata.message` so the runner (immediate or scheduled) can read it.
     const campaign = await prisma.campaign.create({
       data: {
         tenantId,
         name,
         ...(templateId && { templateId }),
-        status: "DRAFT",
+        status: initialStatus,
+        scheduledAt,
         totalCount: contacts.length,
+        ...(message && { metadata: { message } as Prisma.InputJsonValue }),
         ...(contacts.length > 0 && {
           contacts: {
             create: contacts.map((c) => ({
@@ -120,6 +151,25 @@ export async function POST(req: NextRequest) {
         _count: { select: { contacts: true } },
       },
     });
+
+    // Immediate send: no schedule and the caller asked to send now.
+    if (!scheduledAt && sendNow) {
+      try {
+        await runCampaign(campaign.id);
+      } catch (error) {
+        if (!(error instanceof CampaignClaimError)) {
+          console.error("[CAMPAIGNS POST] immediate send failed:", error);
+        }
+      }
+      const fresh = await prisma.campaign.findUnique({
+        where: { id: campaign.id },
+        include: {
+          template: { select: { id: true, name: true } },
+          _count: { select: { contacts: true } },
+        },
+      });
+      return NextResponse.json({ success: true, data: fresh ?? campaign }, { status: 201 });
+    }
 
     return NextResponse.json({ success: true, data: campaign }, { status: 201 });
   } catch (error) {

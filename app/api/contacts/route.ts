@@ -2,6 +2,7 @@
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { createContactSchema } from "@/lib/validators/contact";
+import { assertWithinLimit, LimitError } from "@/lib/billing/usage";
 
 export async function GET(req: NextRequest) {
   const session = await auth();
@@ -65,6 +66,14 @@ export async function POST(req: NextRequest) {
   }
 
   try {
+    // Billing: enforce the plan's contact limit.
+    try {
+      await assertWithinLimit(session.user.tenantId, "contacts");
+    } catch (e) {
+      if (e instanceof LimitError) return NextResponse.json({ success: false, error: e.message }, { status: 403 });
+      throw e;
+    }
+
     const { tags, ...data } = parsed.data;
 
     const existing = await prisma.contact.findUnique({

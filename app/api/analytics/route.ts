@@ -95,9 +95,10 @@ export async function GET(req: NextRequest) {
         where: { tenantId, assignedToId: { not: null } },
         _count: { id: true },
       }),
-      // Campaign performance
+      // Campaign performance. SENT/PROCESSING are the scheduling module's terminal
+      // and in-flight statuses; COMPLETED/RUNNING are kept for legacy campaigns.
       prisma.campaign.findMany({
-        where: { tenantId, status: { in: ["COMPLETED", "RUNNING"] } },
+        where: { tenantId, status: { in: ["SENT", "PROCESSING", "COMPLETED", "RUNNING"] } },
         select: {
           id: true,
           name: true,

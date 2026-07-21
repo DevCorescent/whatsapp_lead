@@ -341,6 +341,116 @@ export async function sendInteractiveMessage(
   return res.json() as Promise<WASendMessageResponse>;
 }
 
+// ─── Message templates (Meta Cloud API) ─────────────────────────────────────
+//
+// Templates live on the WhatsApp Business Account (WABA), not the phone number,
+// so these calls are keyed by the tenant's waBusinessAccountId — distinct from
+// the phoneNumberId used to send messages.
+
+/** A single component of a template as Meta's create endpoint expects it. */
+export interface WATemplateCreateComponent {
+  type: "HEADER" | "BODY" | "FOOTER" | "BUTTONS";
+  format?: "TEXT" | "IMAGE" | "VIDEO" | "DOCUMENT";
+  text?: string;
+  example?: Record<string, unknown>;
+  buttons?: Record<string, unknown>[];
+}
+
+export interface WATemplateCreatePayload {
+  name: string;
+  language: string;
+  category: "MARKETING" | "UTILITY" | "AUTHENTICATION";
+  components: WATemplateCreateComponent[];
+}
+
+export interface WATemplateCreateResponse {
+  id: string;
+  status?: string;
+  category?: string;
+}
+
+/**
+ * Submit a message template to Meta for review.
+ *
+ * @param wabaId - The tenant's WhatsApp Business Account ID (TenantSettings.waBusinessAccountId).
+ * @param apiKey - The tenant's WhatsApp access token (decrypted TenantSettings.waApiKey).
+ * @returns The created template's Meta ID and initial review status.
+ * @throws {Error} If Meta rejects the submission; the message carries Meta's own error text.
+ */
+export async function createMessageTemplate(
+  wabaId: string,
+  apiKey: string,
+  payload: WATemplateCreatePayload
+): Promise<WATemplateCreateResponse> {
+  const res = await fetch(`${WA_BASE_URL}/${wabaId}/message_templates`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${apiKey}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(payload),
+  });
+
+  const raw = await res.text();
+  let parsed: Record<string, unknown> = {};
+  try {
+    parsed = raw ? JSON.parse(raw) : {};
+  } catch {
+    parsed = {};
+  }
+
+  if (!res.ok) {
+    const metaError =
+      (parsed.error as { message?: string } | undefined)?.message ??
+      `Meta returned ${res.status} ${res.statusText}`;
+    throw new Error(metaError);
+  }
+
+  return parsed as unknown as WATemplateCreateResponse;
+}
+
+export interface WATemplateStatusResponse {
+  id: string;
+  name?: string;
+  status?: string;
+  category?: string;
+  rejected_reason?: string;
+}
+
+/**
+ * Fetch a single template's current review state from Meta, by its template ID.
+ *
+ * @param templateId - The Meta template ID stored on MessageTemplate.waTemplateId.
+ * @param apiKey - The tenant's WhatsApp access token (decrypted).
+ * @throws {Error} If Meta responds with a non-2xx status.
+ */
+export async function getMessageTemplate(
+  templateId: string,
+  apiKey: string
+): Promise<WATemplateStatusResponse> {
+  const res = await fetch(
+    `${WA_BASE_URL}/${templateId}?fields=name,status,category,rejected_reason`,
+    { headers: { Authorization: `Bearer ${apiKey}` } }
+  );
+
+  const raw = await res.text();
+  let parsed: Record<string, unknown> = {};
+  try {
+    parsed = raw ? JSON.parse(raw) : {};
+  } catch {
+    parsed = {};
+  }
+
+  if (!res.ok) {
+    const metaError =
+      (parsed.error as { message?: string } | undefined)?.message ??
+      `Meta returned ${res.status} ${res.statusText}`;
+    throw new Error(metaError);
+  }
+
+  return parsed as unknown as WATemplateStatusResponse;
+}
+
 export async function markMessageAsRead(
   phoneNumberId: string,
   apiKey: string,

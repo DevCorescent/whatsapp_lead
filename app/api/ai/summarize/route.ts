@@ -3,6 +3,7 @@ import { z } from "zod";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { summarizeConversation } from "@/lib/ai";
+import { assertWithinLimit, incrementAiUsage, LimitError } from "@/lib/billing/usage";
 
 const schema = z.object({
   conversationId: z.string().min(1),
@@ -21,6 +22,14 @@ export async function POST(req: NextRequest) {
     if (!parsed.success) return NextResponse.json({ success: false, error: parsed.error.issues[0].message }, { status: 400 });
 
     const { conversationId } = parsed.data;
+
+    // Billing: enforce the plan's AI-credit limit.
+    try {
+      await assertWithinLimit(tenantId, "ai");
+    } catch (e) {
+      if (e instanceof LimitError) return NextResponse.json({ success: false, error: e.message }, { status: 403 });
+      throw e;
+    }
 
     const conversation = await prisma.conversation.findFirst({
       where: { id: conversationId, tenantId },
@@ -46,6 +55,7 @@ export async function POST(req: NextRequest) {
     if (messages.length === 0) return NextResponse.json({ success: false, error: "No messages to summarize" }, { status: 400 });
 
     const summary = await summarizeConversation(messages);
+    await incrementAiUsage(tenantId);
     return NextResponse.json({ success: true, data: { summary } });
   } catch (error) {
     console.error("[AI SUMMARIZE]", error);

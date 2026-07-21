@@ -75,9 +75,13 @@ enum LeadScoreLabel {
 enum CampaignStatus {
   DRAFT
   SCHEDULED
+  PROCESSING
+  SENT
+  CANCELLED
+  FAILED
+  // Legacy statuses — kept so existing rows and the analytics module remain valid.
   RUNNING
   COMPLETED
-  FAILED
   PAUSED
 }
 
@@ -424,7 +428,9 @@ model MessageTemplate {
   buttons       Json?
   variables     String[]
   waTemplateId  String?
-  status        String   @default("PENDING")
+  status        String   @default("DRAFT")
+  rejectionReason String?
+  lastSyncedAt  DateTime?
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
 
@@ -446,6 +452,9 @@ model Campaign {
   scheduledAt    DateTime?
   startedAt      DateTime?
   completedAt    DateTime?
+  processedAt    DateTime?
+  sentAt         DateTime?
+  lastError      String?
   totalCount     Int            @default(0)
   sentCount      Int            @default(0)
   deliveredCount Int            @default(0)
@@ -566,6 +575,9 @@ model Plan {
   maxAgents      Int
   maxCampaigns   Int
   maxFlows       Int      @default(5)
+  maxStorageMb   Int      @default(1024)
+  aiCredits      Int      @default(0)
+  stripePriceId  String?
   aiEnabled      Boolean  @default(false)
   ragEnabled     Boolean  @default(false)
   whiteLabel     Boolean  @default(false)
@@ -591,6 +603,8 @@ model Subscription {
   currentPeriodEnd   DateTime
   trialEndsAt        DateTime?
   cancelledAt        DateTime?
+  cancelAtPeriodEnd  Boolean            @default(false)
+  aiCreditsUsed      Int                @default(0)
   razorpaySubId      String?
   razorpayCustomerId String?
   stripeSubId        String?

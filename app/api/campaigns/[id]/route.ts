@@ -2,13 +2,32 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
-import { sendTextMessage } from "@/lib/whatsapp";
-import { decryptSecret } from "@/lib/crypto";
+import { runCampaign, CampaignClaimError } from "@/lib/campaigns/runner";
 
+// A PATCH either renames the campaign (DRAFT only) or performs one scheduling
+// action. Actions and rename are mutually exclusive per request.
 const updateSchema = z.object({
   name: z.string().min(1).optional(),
-  status: z.enum(["RUNNING", "PAUSED", "COMPLETED"]).optional(),
-}).strict();
+  action: z.enum(["schedule", "reschedule", "cancel", "retry", "send_now"]).optional(),
+  scheduledAt: z.string().datetime({ offset: true }).optional(),
+}).strict().refine((d) => d.name !== undefined || d.action !== undefined, {
+  message: "Nothing to update",
+});
+
+/** Run a campaign through the shared runner and return its refreshed record. */
+async function runAndRespond(id: string) {
+  try {
+    await runCampaign(id);
+  } catch (error) {
+    if (error instanceof CampaignClaimError) {
+      return NextResponse.json({ success: false, error: error.message }, { status: 409 });
+    }
+    console.error("[CAMPAIGN RUN]", error);
+    return NextResponse.json({ success: false, error: "Failed to send campaign" }, { status: 500 });
+  }
+  const updated = await prisma.campaign.findUnique({ where: { id } });
+  return NextResponse.json({ success: true, data: updated });
+}
 
 export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const session = await auth();
@@ -53,89 +72,79 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
     const campaign = await prisma.campaign.findFirst({ where: { id, tenantId } });
     if (!campaign) return NextResponse.json({ success: false, error: "Campaign not found" }, { status: 404 });
 
-    // Only allow name change on DRAFT campaigns
-    if (parsed.data.name && campaign.status !== "DRAFT") {
-      return NextResponse.json({ success: false, error: "Can only rename DRAFT campaigns" }, { status: 400 });
+    const { name, action, scheduledAt: scheduledAtRaw } = parsed.data;
+
+    // ── Rename (DRAFT only) ─────────────────────────────────────────────────
+    if (name !== undefined) {
+      if (campaign.status !== "DRAFT") {
+        return NextResponse.json({ success: false, error: "Can only rename DRAFT campaigns" }, { status: 400 });
+      }
+      const updated = await prisma.campaign.update({ where: { id }, data: { name } });
+      return NextResponse.json({ success: true, data: updated });
     }
 
-    // If launching (DRAFT → RUNNING), send messages inline
-    if (parsed.data.status === "RUNNING" && campaign.status === "DRAFT") {
-      // Get WhatsApp credentials
-      const settings = await prisma.tenantSettings.findUnique({
-        where: { tenantId },
-        select: { waPhoneNumberId: true, waApiKey: true },
-      });
+    // ── Actions ─────────────────────────────────────────────────────────────
+    const status = campaign.status;
 
-      // Get pending contacts
-      const pendingContacts = await prisma.campaignContact.findMany({
-        where: { campaignId: id, status: "PENDING" },
-        include: { contact: { select: { phone: true } } },
-      });
-
-      // The access token is stored encrypted at rest — decrypt before sending.
-      let waApiKey: string | null = null;
-      try {
-        waApiKey = decryptSecret(settings?.waApiKey);
-      } catch (error) {
-        console.error("[CAMPAIGN LAUNCH] Failed to decrypt WhatsApp token:", error);
+    if (action === "schedule" || action === "reschedule") {
+      if (!scheduledAtRaw) {
+        return NextResponse.json({ success: false, error: "scheduledAt is required" }, { status: 400 });
       }
-
-      if (settings?.waPhoneNumberId && waApiKey && pendingContacts.length > 0) {
-        // Capture as consts so the narrowed (non-null) values hold inside the loop.
-        const phoneNumberId = settings.waPhoneNumberId;
-        const apiKey = waApiKey;
-        // Update campaign to RUNNING
-        await prisma.campaign.update({
-          where: { id },
-          data: { status: "RUNNING", startedAt: new Date() },
-        });
-
-        // Send messages inline (no queue)
-        let sent = 0;
-        let failed = 0;
-        for (const cc of pendingContacts) {
-          const phone = cc.contact?.phone ?? cc.phone;
-          try {
-            const message = campaign.metadata && typeof campaign.metadata === "object"
-              ? (campaign.metadata as Record<string, string>).message ?? "Hello from WhatsCRM"
-              : "Hello from WhatsCRM";
-            await sendTextMessage(phoneNumberId, apiKey, phone, message);
-            await prisma.campaignContact.update({
-              where: { id: cc.id },
-              data: { status: "SENT", sentAt: new Date() },
-            });
-            sent++;
-          } catch {
-            await prisma.campaignContact.update({
-              where: { id: cc.id },
-              data: { status: "FAILED", failedReason: "Send failed" },
-            });
-            failed++;
-          }
-        }
-
-        const updated = await prisma.campaign.update({
-          where: { id },
-          data: {
-            status: "COMPLETED",
-            completedAt: new Date(),
-            sentCount: sent,
-            failedCount: failed,
-          },
-        });
-        return NextResponse.json({ success: true, data: updated });
+      const when = new Date(scheduledAtRaw);
+      if (when.getTime() <= Date.now()) {
+        return NextResponse.json({ success: false, error: "Scheduled time must be in the future" }, { status: 400 });
       }
+      if (status === "SENT" || status === "PROCESSING" || status === "COMPLETED" || status === "RUNNING") {
+        return NextResponse.json({ success: false, error: "Cannot schedule a campaign that is sending or already sent" }, { status: 400 });
+      }
+      // Prevent duplicate scheduling: a SCHEDULED campaign must be rescheduled, not re-scheduled.
+      if (action === "schedule" && status === "SCHEDULED") {
+        return NextResponse.json({ success: false, error: "Campaign is already scheduled — use reschedule" }, { status: 400 });
+      }
+      if (action === "reschedule" && status !== "SCHEDULED") {
+        return NextResponse.json({ success: false, error: "Only a scheduled campaign can be rescheduled" }, { status: 400 });
+      }
+      const updated = await prisma.campaign.update({
+        where: { id },
+        data: { status: "SCHEDULED", scheduledAt: when, lastError: null },
+      });
+      return NextResponse.json({ success: true, data: updated });
     }
 
-    const updated = await prisma.campaign.update({
-      where: { id },
-      data: {
-        ...(parsed.data.name && { name: parsed.data.name }),
-        ...(parsed.data.status && { status: parsed.data.status }),
-      },
-    });
+    if (action === "cancel") {
+      // Atomic guard: only a SCHEDULED campaign can be cancelled, and only if the
+      // scheduler has not already claimed it (-> PROCESSING) in the meantime.
+      const res = await prisma.campaign.updateMany({
+        where: { id, tenantId, status: "SCHEDULED" },
+        data: { status: "CANCELLED" },
+      });
+      if (res.count === 0) {
+        return NextResponse.json({ success: false, error: "Only a scheduled campaign can be cancelled" }, { status: 400 });
+      }
+      const updated = await prisma.campaign.findUnique({ where: { id } });
+      return NextResponse.json({ success: true, data: updated });
+    }
 
-    return NextResponse.json({ success: true, data: updated });
+    if (action === "retry") {
+      if (status !== "FAILED") {
+        return NextResponse.json({ success: false, error: "Only a failed campaign can be retried" }, { status: 400 });
+      }
+      // Reset the recipients that failed so the runner re-attempts only those.
+      await prisma.campaignContact.updateMany({
+        where: { campaignId: id, status: "FAILED" },
+        data: { status: "PENDING", failedReason: null },
+      });
+      return await runAndRespond(id);
+    }
+
+    if (action === "send_now") {
+      if (status === "SENT" || status === "PROCESSING" || status === "COMPLETED" || status === "RUNNING") {
+        return NextResponse.json({ success: false, error: "Campaign is already sending or sent" }, { status: 400 });
+      }
+      return await runAndRespond(id);
+    }
+
+    return NextResponse.json({ success: false, error: "Unknown action" }, { status: 400 });
   } catch (error) {
     console.error("[CAMPAIGN PATCH]", error);
     return NextResponse.json({ success: false, error: "Failed to update campaign" }, { status: 500 });

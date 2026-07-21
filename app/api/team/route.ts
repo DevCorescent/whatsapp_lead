@@ -5,6 +5,7 @@ import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import bcrypt from "bcryptjs";
 import { sendEmail, teamInviteEmail } from "@/lib/email";
+import { assertWithinLimit, LimitError } from "@/lib/billing/usage";
 
 const inviteSchema = z.object({
   name: z.string().min(1, "Name is required"),
@@ -64,6 +65,14 @@ export async function POST(req: NextRequest) {
 
     const parsed = inviteSchema.safeParse(body);
     if (!parsed.success) return NextResponse.json({ success: false, error: parsed.error.issues[0].message }, { status: 400 });
+
+    // Billing: enforce the plan's team-member limit.
+    try {
+      await assertWithinLimit(tenantId, "users");
+    } catch (e) {
+      if (e instanceof LimitError) return NextResponse.json({ success: false, error: e.message }, { status: 403 });
+      throw e;
+    }
 
     const { name, email, role, phone } = parsed.data;
 

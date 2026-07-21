@@ -13,6 +13,8 @@ import { z } from "zod";
 import { Prisma } from "@prisma/client";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
+import { resolveTenantPlan } from "@/lib/billing/usage";
+import { isUnlimited } from "@/lib/billing/tiers";
 
 const MAX_ROWS = 5000;
 const PHONE_REGEX = /^\+?[1-9]\d{9,14}$/;
@@ -80,6 +82,12 @@ export async function POST(req: NextRequest) {
       existing.map((c) => c.email?.trim().toLowerCase()).filter((e): e is string => Boolean(e)),
     );
 
+    // Billing: cap how many new contacts this import may create by the plan limit.
+    const { limits } = await resolveTenantPlan(tenantId);
+    const remainingCapacity = isUnlimited(limits.contacts)
+      ? Infinity
+      : Math.max(0, limits.contacts - existing.length);
+
     let created = 0;
     let duplicates = 0;
     const failed: RowError[] = [];
@@ -117,6 +125,13 @@ export async function POST(req: NextRequest) {
         duplicates++;
         continue;
       }
+      // Stop creating once the plan's contact limit is reached; the rest are
+      // reported as failed rather than silently dropped.
+      if (created >= remainingCapacity) {
+        failed.push({ row: rowNum, phone, reason: "Plan contact limit reached — upgrade to import more" });
+        continue;
+      }
+
       seenPhones.add(phone);
       if (emailKey) seenEmails.add(emailKey);
 

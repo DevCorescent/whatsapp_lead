@@ -14,7 +14,18 @@ interface CreateCampaignInput {
   contactIds?: string[];
   tagIds?: string[];
   all?: boolean;
+  /** ISO datetime — saves the campaign as SCHEDULED. */
+  scheduledAt?: string;
+  /** With no schedule, send the campaign immediately. */
+  sendNow?: boolean;
 }
+
+type CampaignAction =
+  | { action: "schedule"; scheduledAt: string }
+  | { action: "reschedule"; scheduledAt: string }
+  | { action: "cancel" }
+  | { action: "retry" }
+  | { action: "send_now" };
 
 export function useCampaigns(filters?: CampaignFilters) {
   return useQuery({
@@ -64,23 +75,49 @@ export function useCreateCampaign() {
   });
 }
 
-export function useLaunchCampaign() {
+/**
+ * Perform a scheduling action on a campaign: schedule, reschedule, cancel, retry
+ * or send_now. All routed through PATCH /api/campaigns/[id].
+ */
+export function useCampaignAction() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: async (id: string) => {
+    mutationFn: async ({ id, ...body }: CampaignAction & { id: string }) => {
       const res = await fetch(`/api/campaigns/${id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ status: "RUNNING" }),
+        body: JSON.stringify(body),
       });
       if (!res.ok) {
         const err = await res.json().catch(() => ({}));
-        throw new Error((err as { error?: string }).error ?? "Failed to launch campaign");
+        throw new Error((err as { error?: string }).error ?? "Campaign action failed");
       }
       return res.json();
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["campaigns"] });
+    },
+  });
+}
+
+/** Convenience wrapper: send a campaign immediately. */
+export function useLaunchCampaign() {
+  const action = useCampaignAction();
+  return {
+    ...action,
+    mutate: (id: string) => action.mutate({ id, action: "send_now" }),
+    mutateAsync: (id: string) => action.mutateAsync({ id, action: "send_now" }),
+  };
+}
+
+/** List the tenant's upcoming scheduled campaigns (soonest first). */
+export function useScheduledCampaigns() {
+  return useQuery({
+    queryKey: ["campaigns", "scheduled"],
+    queryFn: async () => {
+      const res = await fetch("/api/campaigns/scheduled");
+      if (!res.ok) throw new Error("Failed to fetch scheduled campaigns");
+      return res.json();
     },
   });
 }
