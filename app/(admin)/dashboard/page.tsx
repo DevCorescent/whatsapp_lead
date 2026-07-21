@@ -231,7 +231,7 @@ export default function AdminDashboardPage() {
         />
         <StatTile
           label="Churn Rate"
-          value={`${stats.churnRate.toFixed(1)}%`}
+          value={`${(stats.churnRate ?? 0).toFixed(1)}%`}
           icon={TrendingDown}
           tone="rose"
           delta="-0.6pt"
