@@ -379,6 +379,13 @@ function MenuItem({
 
 // ─── Provision modal ──────────────────────────────────────────────────────────
 
+interface ProvisionResult {
+  tenant: { id: string; name: string; slug: string };
+  user: { email: string; name: string };
+  plan: string;
+  tempPassword: string;
+}
+
 function ProvisionModal({ open, onClose }: { open: boolean; onClose: () => void }) {
   const provision = useProvisionTenant();
   const [form, setForm] = useState({
@@ -388,125 +395,177 @@ function ProvisionModal({ open, onClose }: { open: boolean; onClose: () => void 
     plan: "starter",
     trialDays: 14,
   });
+  const [result, setResult] = useState<ProvisionResult | null>(null);
+  const [copied, setCopied] = useState(false);
 
   const set = <K extends keyof typeof form>(key: K, value: (typeof form)[K]) =>
     setForm((f) => ({ ...f, [key]: value }));
 
   const slugify = (v: string) =>
-    v
-      .toLowerCase()
-      .trim()
-      .replace(/[^a-z0-9]+/g, "-")
-      .replace(/^-|-$/g, "");
+    v.toLowerCase().trim().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
 
   const submit = (e: React.FormEvent) => {
     e.preventDefault();
     provision.mutate(
       { ...form, slug: form.slug || slugify(form.name) },
       {
-        onSuccess: () => {
-          setForm({ name: "", slug: "", ownerEmail: "", plan: "starter", trialDays: 14 });
-          onClose();
+        onSuccess: (res: unknown) => {
+          const data = (res as { data: ProvisionResult }).data;
+          setResult(data);
         },
       },
     );
   };
 
+  const handleClose = () => {
+    setResult(null);
+    setCopied(false);
+    provision.reset();
+    setForm({ name: "", slug: "", ownerEmail: "", plan: "starter", trialDays: 14 });
+    onClose();
+  };
+
+  const copyCredentials = async () => {
+    if (!result) return;
+    try {
+      await navigator.clipboard.writeText(`Email: ${result.user.email}\nPassword: ${result.tempPassword}`);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch { /* ignore */ }
+  };
+
   return (
     <Modal
       open={open}
-      onClose={onClose}
-      title="Provision Tenant"
-      description="Create a workspace manually — used for enterprise onboarding."
+      onClose={handleClose}
+      title={result ? "Tenant Provisioned" : "Provision Tenant"}
+      description={result ? "Share these credentials with the client." : "Create a workspace manually — used for enterprise onboarding."}
     >
-      <form onSubmit={submit} className="space-y-4">
-        <Field label="Workspace name" htmlFor="t-name" required>
-          <input
-            id="t-name"
-            value={form.name}
-            onChange={(e) => {
-              set("name", e.target.value);
-              if (!form.slug) set("slug", slugify(e.target.value));
-            }}
-            required
-            placeholder="Nova Realty"
-            className={inputClass}
-          />
-        </Field>
-
-        <Field label="Slug" htmlFor="t-slug" required>
-          <input
-            id="t-slug"
-            value={form.slug}
-            onChange={(e) => set("slug", slugify(e.target.value))}
-            required
-            placeholder="nova-realty"
-            className={inputClass}
-          />
-        </Field>
-
-        <Field label="Owner email" htmlFor="t-email" required>
-          <input
-            id="t-email"
-            type="email"
-            value={form.ownerEmail}
-            onChange={(e) => set("ownerEmail", e.target.value)}
-            required
-            placeholder="owner@company.com"
-            className={inputClass}
-          />
-        </Field>
-
-        <div className="grid grid-cols-2 gap-4">
-          <Field label="Plan" htmlFor="t-plan" required>
-            <select
-              id="t-plan"
-              value={form.plan}
-              onChange={(e) => set("plan", e.target.value)}
-              className={inputClass}
+      {result ? (
+        <div className="space-y-4">
+          <div className="rounded-lg border border-emerald-200 bg-emerald-50 p-4">
+            <p className="text-sm font-semibold text-emerald-800">{result.tenant.name} is live</p>
+            <p className="mt-0.5 text-xs text-emerald-600">/{result.tenant.slug} · {result.plan} plan</p>
+          </div>
+          <div className="rounded-lg border border-slate-200 bg-slate-50 p-4 space-y-2">
+            <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Login credentials</p>
+            <div className="flex items-center justify-between gap-2">
+              <div>
+                <p className="font-mono text-sm text-slate-800">{result.user.email}</p>
+                <p className="font-mono text-sm text-slate-800">{result.tempPassword}</p>
+              </div>
+              <button
+                type="button"
+                onClick={copyCredentials}
+                className="shrink-0 rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-600 transition hover:bg-slate-100"
+              >
+                {copied ? "Copied!" : "Copy"}
+              </button>
+            </div>
+          </div>
+          <p className="text-xs text-slate-500">
+            An invite email was sent to <strong>{result.user.email}</strong> with these credentials. The client should change their password after first login.
+          </p>
+          <div className="flex justify-end pt-1">
+            <button
+              type="button"
+              onClick={handleClose}
+              className="rounded-lg bg-violet-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-violet-700"
             >
-              <option value="starter">Starter — ₹999/mo</option>
-              <option value="growth">Growth — ₹2,999/mo</option>
-              <option value="enterprise">Enterprise — ₹9,999/mo</option>
-            </select>
-          </Field>
-
-          <Field label="Trial days" htmlFor="t-trial">
+              Done
+            </button>
+          </div>
+        </div>
+      ) : (
+        <form onSubmit={submit} className="space-y-4">
+          <Field label="Workspace name" htmlFor="t-name" required>
             <input
-              id="t-trial"
-              type="number"
-              min={0}
-              max={90}
-              value={form.trialDays}
-              onChange={(e) => set("trialDays", Number(e.target.value))}
+              id="t-name"
+              value={form.name}
+              onChange={(e) => {
+                set("name", e.target.value);
+                if (!form.slug) set("slug", slugify(e.target.value));
+              }}
+              required
+              placeholder="Nova Realty"
               className={inputClass}
             />
           </Field>
-        </div>
 
-        {provision.isError && (
-          <p className="rounded-lg bg-rose-50 px-3 py-2 text-xs text-rose-700">
-            {(provision.error as Error).message}
-          </p>
-        )}
+          <Field label="Slug" htmlFor="t-slug" required>
+            <input
+              id="t-slug"
+              value={form.slug}
+              onChange={(e) => set("slug", slugify(e.target.value))}
+              required
+              placeholder="nova-realty"
+              className={inputClass}
+            />
+          </Field>
 
-        <div className="flex justify-end gap-2 pt-2">
-          <button
-            type="button"
-            onClick={onClose}
-            className="rounded-lg px-4 py-2 text-sm font-medium text-slate-600 hover:bg-slate-100"
-          >
-            Cancel
-          </button>
-          <button
-            type="submit"
-            disabled={provision.isPending}
-            className="rounded-lg bg-violet-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-violet-700 disabled:opacity-50"
-          >
-            {provision.isPending ? "Provisioning…" : "Provision Tenant"}
-          </button>
-        </div>
-      </form>
+          <Field label="Owner email" htmlFor="t-email" required>
+            <input
+              id="t-email"
+              type="email"
+              value={form.ownerEmail}
+              onChange={(e) => set("ownerEmail", e.target.value)}
+              required
+              placeholder="owner@company.com"
+              className={inputClass}
+            />
+          </Field>
+
+          <div className="grid grid-cols-2 gap-4">
+            <Field label="Plan" htmlFor="t-plan" required>
+              <select
+                id="t-plan"
+                value={form.plan}
+                onChange={(e) => set("plan", e.target.value)}
+                className={inputClass}
+              >
+                <option value="starter">Starter — ₹999/mo</option>
+                <option value="growth">Growth — ₹2,999/mo</option>
+                <option value="enterprise">Enterprise — ₹9,999/mo</option>
+              </select>
+            </Field>
+
+            <Field label="Trial days" htmlFor="t-trial">
+              <input
+                id="t-trial"
+                type="number"
+                min={0}
+                max={90}
+                value={form.trialDays}
+                onChange={(e) => set("trialDays", Number(e.target.value))}
+                className={inputClass}
+              />
+            </Field>
+          </div>
+
+          {provision.isError && (
+            <p className="rounded-lg bg-rose-50 px-3 py-2 text-xs text-rose-700">
+              {(provision.error as Error).message}
+            </p>
+          )}
+
+          <div className="flex justify-end gap-2 pt-2">
+            <button
+              type="button"
+              onClick={handleClose}
+              className="rounded-lg px-4 py-2 text-sm font-medium text-slate-600 hover:bg-slate-100"
+            >
+              Cancel
+            </button>
+            <button
+              type="submit"
+              disabled={provision.isPending}
+              className="rounded-lg bg-violet-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-violet-700 disabled:opacity-50"
+            >
+              {provision.isPending ? "Provisioning…" : "Provision Tenant"}
+            </button>
+          </div>
+        </form>
+      )}
     </Modal>
   );
 }
