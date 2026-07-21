@@ -85,8 +85,13 @@ function useAdminStats() {
     queryKey: ["admin", "stats"],
     queryFn: async () => {
       const res = await fetch("/api/admin/stats");
-      if (!res.ok) throw new Error(`Failed to load stats (${res.status})`);
+      if (!res.ok) {
+        const body = await res.text();
+        console.error("[admin/stats] HTTP", res.status, body);
+        throw new Error(`Failed to load stats (${res.status}): ${body}`);
+      }
       const json = await res.json();
+      console.log("[admin/stats] response:", json);
       return (json.data ?? json) as AdminStats;
     },
     retry: false,
