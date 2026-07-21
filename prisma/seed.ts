@@ -108,9 +108,27 @@ async function main() {
     },
   });
 
+  // ─── Super Admin ────────────────────────────────────────────────────────────
+  const superAdminPassword = await bcrypt.hash("SuperAdmin@2026", 12);
+
+  await prisma.user.upsert({
+    where: { email_tenantId: { email: "superadmin@whatscrm.app", tenantId: demoTenant.id } },
+    update: {},
+    create: {
+      tenantId: demoTenant.id,
+      name: "Super Admin",
+      email: "superadmin@whatscrm.app",
+      password: superAdminPassword,
+      role: "SUPER_ADMIN",
+    },
+  });
+
   console.log("✅ Demo tenant + user created");
   console.log("   Email: admin@demo.com");
   console.log("   Password: Demo@1234");
+  console.log("\n✅ Super Admin created");
+  console.log("   Email: superadmin@whatscrm.app");
+  console.log("   Password: SuperAdmin@2026");
   console.log("\n🎉 Seed complete!");
 }
 
