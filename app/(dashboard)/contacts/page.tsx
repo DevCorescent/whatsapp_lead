@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { Search, UserPlus } from "lucide-react";
+import { Download, Search, UserPlus } from "lucide-react";
 import { useContacts } from "@/hooks/useContacts";
 import { Button, Card, PageHeader, inputClass } from "@/components/ui";
 import { AddContactModal, CONTACT_SOURCES } from "@/components/contacts/AddContactModal";
@@ -88,10 +88,16 @@ export default function ContactsPage() {
         title="Contacts"
         description="Everyone who has ever messaged your WhatsApp business number."
         action={
-          <Button onClick={() => setModalOpen(true)}>
-            <UserPlus className="h-4 w-4" />
-            Add Contact
-          </Button>
+          <div className="flex gap-2">
+            <Button variant="secondary" onClick={() => window.location.assign("/api/contacts/export")}>
+              <Download className="h-4 w-4" />
+              Export CSV
+            </Button>
+            <Button onClick={() => setModalOpen(true)}>
+              <UserPlus className="h-4 w-4" />
+              Add Contact
+            </Button>
+          </div>
         }
       />
 

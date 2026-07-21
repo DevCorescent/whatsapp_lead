@@ -24,6 +24,7 @@ import {
   type AnalyticsData,
 } from "@/components/analytics/Charts";
 import { cn } from "@/lib/utils";
+import { downloadCsv } from "@/lib/csv";
 
 // ─── Period filter ────────────────────────────────────────────────────────────
 
@@ -89,8 +90,16 @@ export default function AnalyticsPage() {
   const d = data?.deltas;
 
   function handleExportCsv() {
-    // TODO [HEMANT]: wire up once GET /api/analytics returns real rows — build a
-    // CSV from the KPI + chart payload and trigger a Blob download.
+    const kpiRows = [
+      { metric: "Total Conversations", value: data?.totalConversations ?? "" },
+      { metric: "Open Conversations", value: data?.openConversations ?? "" },
+      { metric: "Resolved Today", value: data?.resolvedToday ?? "" },
+      { metric: "Total Messages", value: data?.totalMessages ?? "" },
+      { metric: "Total Leads", value: data?.totalLeads ?? "" },
+      { metric: "Won Deals", value: data?.wonDeals ?? "" },
+      { metric: "Conversion Rate %", value: data?.conversionRate ?? "" },
+    ];
+    downloadCsv(`analytics-${period}-${new Date().toISOString().slice(0, 10)}.csv`, kpiRows);
   }
 
   const kpis = [

@@ -57,6 +57,15 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
       return NextResponse.json({ success: false, error: "Can only rename DRAFT campaigns" }, { status: 400 });
     }
 
+    // If campaign has a future scheduledAt, set SCHEDULED instead of sending now
+    if (parsed.data.status === "RUNNING" && campaign.status === "DRAFT" && campaign.scheduledAt && campaign.scheduledAt > new Date()) {
+      const updated = await prisma.campaign.update({
+        where: { id },
+        data: { status: "SCHEDULED" },
+      });
+      return NextResponse.json({ success: true, data: updated });
+    }
+
     // If launching (DRAFT → RUNNING), send messages inline
     if (parsed.data.status === "RUNNING" && campaign.status === "DRAFT") {
       // Get WhatsApp credentials

@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { AlertTriangle, LayoutGrid, List, Plus, Search, X } from "lucide-react";
+import { AlertTriangle, Download, LayoutGrid, List, Plus, Search, X } from "lucide-react";
 import type { LeadStage, LeadScoreLabel } from "@prisma/client";
 import { useLeads } from "@/hooks/useLeads";
 import {
@@ -118,10 +118,16 @@ export default function LeadsPage() {
             : `${leads.length} lead${leads.length === 1 ? "" : "s"} · ${formatCurrency(pipelineValue)} in play`
         }
         action={
-          <Button onClick={() => openAddModal("NEW_LEAD")}>
-            <Plus className="h-4 w-4" />
-            Add Lead
-          </Button>
+          <div className="flex gap-2">
+            <Button variant="secondary" onClick={() => window.location.assign("/api/leads/export")}>
+              <Download className="h-4 w-4" />
+              Export CSV
+            </Button>
+            <Button onClick={() => openAddModal("NEW_LEAD")}>
+              <Plus className="h-4 w-4" />
+              Add Lead
+            </Button>
+          </div>
         }
       />
 
