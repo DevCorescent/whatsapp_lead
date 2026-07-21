@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Bot,
   Plus,
@@ -370,10 +370,38 @@ export default function ChatbotPage() {
 }
 
 function NewFlowModal({ open, onClose }: { open: boolean; onClose: () => void }) {
+  const qc = useQueryClient();
   const [name, setName] = useState("");
   const [keywords, setKeywords] = useState("");
   const [description, setDescription] = useState("");
   const [active, setActive] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  const create = useMutation({
+    mutationFn: async () => {
+      const r = await fetch("/api/chatbot/flows", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name: name.trim(),
+          description: description.trim() || undefined,
+          trigger: "KEYWORD",
+          keywords: keywords.split(",").map((k) => k.trim()).filter(Boolean),
+          isActive: active,
+          nodes: [],
+          edges: [],
+        }),
+      });
+      if (!r.ok) { const j = await r.json(); throw new Error(j.error ?? "Failed to create flow"); }
+      return r.json();
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["chatbot-flows"] });
+      setName(""); setKeywords(""); setDescription(""); setActive(true); setError(null);
+      onClose();
+    },
+    onError: (err) => setError((err as Error).message),
+  });
 
   return (
     <Modal
@@ -384,11 +412,7 @@ function NewFlowModal({ open, onClose }: { open: boolean; onClose: () => void })
     >
       <form
         className="space-y-4"
-        onSubmit={(e) => {
-          e.preventDefault();
-          // TODO [GAURANSH]: POST /api/chatbot/flows { name, keywords, description, isActive }
-          onClose();
-        }}
+        onSubmit={(e) => { e.preventDefault(); setError(null); create.mutate(); }}
       >
         <Field label="Flow name" htmlFor="flow-name" required>
           <input
@@ -434,12 +458,14 @@ function NewFlowModal({ open, onClose }: { open: boolean; onClose: () => void })
           <Toggle checked={active} onChange={setActive} label="Activate immediately" />
         </div>
 
+        {error && <p className="rounded-lg bg-rose-50 px-3 py-2 text-sm text-rose-600">{error}</p>}
+
         <div className="flex justify-end gap-2 pt-2">
           <Button type="button" variant="secondary" onClick={onClose}>
             Cancel
           </Button>
-          <Button type="submit" disabled={!name.trim()}>
-            Create Flow
+          <Button type="submit" disabled={!name.trim() || create.isPending}>
+            {create.isPending ? "Creating…" : "Create Flow"}
           </Button>
         </div>
       </form>

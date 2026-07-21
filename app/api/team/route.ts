@@ -4,6 +4,7 @@ import { UserRole } from "@prisma/client";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import bcrypt from "bcryptjs";
+import { sendInviteEmail } from "@/lib/email";
 
 const inviteSchema = z.object({
   name: z.string().min(1, "Name is required"),
@@ -93,6 +94,14 @@ export async function POST(req: NextRequest) {
         createdAt: true,
       },
     });
+
+    // Send invite email (non-blocking — don't fail the request if email fails)
+    const tenant = await prisma.tenant.findUnique({ where: { id: tenantId }, select: { name: true } });
+    const inviterName = session.user.name ?? "Your administrator";
+    const loginUrl = `${process.env.NEXT_PUBLIC_APP_URL ?? "http://localhost:3000"}/login`;
+    sendInviteEmail({ to: email, name, inviterName, tenantName: tenant?.name ?? "your workspace", tempPassword, loginUrl }).catch(
+      (err) => console.error("[TEAM INVITE EMAIL]", err)
+    );
 
     return NextResponse.json({ success: true, data: { ...user, tempPassword } }, { status: 201 });
   } catch (error) {

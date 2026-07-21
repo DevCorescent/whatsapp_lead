@@ -1,6 +1,7 @@
 "use client";
 
-import { useState, type ReactNode } from "react";
+import { useState, useEffect, type ReactNode } from "react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Sparkles,
   Reply,
@@ -23,8 +24,6 @@ import {
 } from "@/components/ui";
 import { Toggle } from "@/components/ui/Toggle";
 import { cn } from "@/lib/utils";
-
-// TODO [GAURANSH]: PATCH /api/settings/ai — persist this form into TenantSettings.
 
 const MODELS = [
   { value: "llama-3.3-70b-versatile", label: "Llama 3.3 70B Versatile — best quality" },
@@ -128,13 +127,58 @@ const INITIAL = {
 };
 
 export default function AISettingsPage() {
+  const qc = useQueryClient();
   const [form, setForm] = useState(INITIAL);
   const [testOpen, setTestOpen] = useState(false);
+
+  const { data: aiData } = useQuery({
+    queryKey: ["settings-ai"],
+    queryFn: async () => {
+      const r = await fetch("/api/settings/ai");
+      const j = await r.json();
+      return j.data as {
+        aiEnabled: boolean; aiModel: string; autoReply: boolean;
+        autoReplyDelay: number; aiPersonality: string | null;
+      };
+    },
+  });
+
+  useEffect(() => {
+    if (aiData) {
+      setForm((f) => ({
+        ...f,
+        aiEnabled: aiData.aiEnabled,
+        model: aiData.aiModel ?? f.model,
+        autoReply: aiData.autoReply,
+        replyDelay: aiData.autoReplyDelay,
+        personality: aiData.aiPersonality ?? f.personality,
+      }));
+    }
+  }, [aiData]);
 
   const set = <K extends keyof typeof INITIAL>(key: K, value: (typeof INITIAL)[K]) =>
     setForm((f) => ({ ...f, [key]: value }));
 
   const dirty = JSON.stringify(form) !== JSON.stringify(INITIAL);
+
+  const saveMutation = useMutation({
+    mutationFn: async () => {
+      const r = await fetch("/api/settings/ai", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          aiEnabled: form.aiEnabled,
+          aiModel: form.model,
+          autoReply: form.autoReply,
+          autoReplyDelay: form.replyDelay,
+          aiPersonality: form.personality,
+        }),
+      });
+      if (!r.ok) { const j = await r.json(); throw new Error(j.error ?? "Save failed"); }
+      return r.json();
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["settings-ai"] }),
+  });
 
   const toggleDay = (day: number) =>
     setForm((f) => ({
@@ -416,10 +460,8 @@ export default function AISettingsPage() {
               Reset
             </Button>
             <Button
-              disabled={!dirty}
-              onClick={() => {
-                // TODO [GAURANSH]: PATCH /api/settings/ai
-              }}
+              disabled={!dirty || saveMutation.isPending}
+              onClick={() => saveMutation.mutate()}
             >
               <Save className="h-4 w-4" />
               Save Changes
