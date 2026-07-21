@@ -10,7 +10,7 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { signIn } from "next-auth/react";
+import { signIn, getSession } from "next-auth/react";
 import Link from "next/link";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -59,7 +59,12 @@ export default function LoginPage() {
     if (result?.error) {
       setError("Invalid email or password");
     } else {
-      router.push("/inbox");
+      const session = await getSession();
+      if (session?.user?.role === "SUPER_ADMIN") {
+        router.push("/dashboard");
+      } else {
+        router.push("/inbox");
+      }
     }
   }
 

@@ -26,6 +26,7 @@ async function getPlanName(tenantId: string) {
 export default async function DashboardLayout({ children }: { children: ReactNode }) {
   const session = await auth();
   if (!session?.user) redirect("/login");
+  if (session.user.role === "SUPER_ADMIN") redirect("/dashboard");
 
   const plan = await getPlanName(session.user.tenantId);
 
