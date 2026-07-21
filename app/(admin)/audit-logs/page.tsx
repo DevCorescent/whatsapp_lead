@@ -81,7 +81,7 @@ export default function AuditLogsPage() {
         )}
       </div>
 
-      <AdminPanel bodyClassName="p-0">
+      <AdminPanel title="Log entries" bodyClassName="p-0">
         {isLoading ? (
           <div className="p-5"><AdminSkeletonRows rows={10} /></div>
         ) : logs.length === 0 ? (
