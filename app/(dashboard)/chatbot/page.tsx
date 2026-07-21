@@ -194,17 +194,17 @@ export default function ChatbotPage() {
           <div>
             <h2 className="text-lg font-semibold text-slate-900">Flow Builder</h2>
             <p className="text-sm text-slate-500">
-              Preview of the visual editor — drag-and-drop editing is coming soon.
+              Visual canvas — drag-and-drop editor coming in next update.
             </p>
           </div>
           <div className="flex items-center gap-2">
-            <Button variant="secondary" size="sm" aria-label="Zoom out">
+            <Button variant="secondary" size="sm" aria-label="Zoom out" disabled>
               <ZoomOut className="h-4 w-4" />
             </Button>
-            <Button variant="secondary" size="sm" aria-label="Zoom in">
+            <Button variant="secondary" size="sm" aria-label="Zoom in" disabled>
               <ZoomIn className="h-4 w-4" />
             </Button>
-            <Button variant="secondary" size="sm">
+            <Button variant="secondary" size="sm" disabled>
               <Play className="h-4 w-4" />
               Test
             </Button>
@@ -212,6 +212,17 @@ export default function ChatbotPage() {
               <Save className="h-4 w-4" />
               Save Flow
             </Button>
+          </div>
+        </div>
+
+        {/* Coming soon notice */}
+        <div className="mb-4 flex items-start gap-3 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3.5">
+          <Workflow className="mt-0.5 h-5 w-5 shrink-0 text-amber-600" />
+          <div className="text-sm">
+            <p className="font-semibold text-amber-800">Visual editor — coming soon</p>
+            <p className="mt-0.5 text-amber-700">
+              The canvas below is a preview only. Create and manage flows using the <strong>New Flow</strong> button above — they trigger automatically on keyword matches in your WhatsApp inbox.
+            </p>
           </div>
         </div>
 
@@ -262,6 +273,16 @@ export default function ChatbotPage() {
               backgroundSize: "18px 18px",
             }}
           >
+            {/* Coming soon overlay */}
+            <div className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-3 bg-white/70 backdrop-blur-[2px]">
+              <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-slate-100">
+                <Workflow className="h-7 w-7 text-slate-400" />
+              </div>
+              <div className="text-center">
+                <p className="font-semibold text-slate-700">Drag-and-drop editor coming soon</p>
+                <p className="mt-1 max-w-xs text-sm text-slate-500">Use <strong>New Flow</strong> to create flows now — they run automatically in the background.</p>
+              </div>
+            </div>
             <div className="relative h-[26rem] min-w-[56rem]">
               {/* Connector lines */}
               <svg className="absolute inset-0 h-full w-full" aria-hidden>
