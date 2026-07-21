@@ -1,28 +1,69 @@
 "use client";
 
 import { useState } from "react";
-import { Check, Copy, Eye, EyeOff, PlugZap, Save, Wifi, WifiOff } from "lucide-react";
-import { Button, Card, Field, inputClass } from "@/components/ui";
+import {
+  Check,
+  Copy,
+  Eye,
+  EyeOff,
+  Loader2,
+  PlugZap,
+  Save,
+  Wifi,
+  WifiOff,
+} from "lucide-react";
+import { Button, Card, Field, inputClass, SkeletonRows } from "@/components/ui";
 import { cn } from "@/lib/utils";
+import {
+  useSettings,
+  useUpdateSettings,
+  useTestWhatsApp,
+  type SettingsData,
+} from "@/hooks/useSettings";
 
-// TODO [SHALMON]: PATCH /api/settings (whatsapp) + POST /api/settings/whatsapp/test.
+type Banner = { kind: "success" | "error"; text: string } | null;
 
 export function WhatsAppTab() {
-  const [phoneNumberId, setPhoneNumberId] = useState("");
-  const [businessAccountId, setBusinessAccountId] = useState("");
+  const { data: settings, isLoading, isError } = useSettings();
+
+  if (isLoading) {
+    return (
+      <Card className="p-5">
+        <SkeletonRows rows={6} />
+      </Card>
+    );
+  }
+
+  if (isError || !settings) {
+    return (
+      <Card className="p-5 text-sm text-rose-600">
+        Couldn&apos;t load WhatsApp settings. Please refresh and try again.
+      </Card>
+    );
+  }
+
+  // Keyed on the connection state so the form remounts (and re-seeds its inputs)
+  // after a save changes whether a token is stored.
+  return <WhatsAppForm key={String(settings.whatsapp.hasApiKey)} settings={settings} />;
+}
+
+function WhatsAppForm({ settings }: { settings: SettingsData }) {
+  const update = useUpdateSettings();
+  const test = useTestWhatsApp();
+
+  const w = settings.whatsapp;
+  const [phoneNumberId, setPhoneNumberId] = useState(w.phoneNumberId);
+  const [businessAccountId, setBusinessAccountId] = useState(w.businessAccountId);
+  const [appId, setAppId] = useState(w.appId);
   const [apiKey, setApiKey] = useState("");
-  const [verifyToken, setVerifyToken] = useState("");
+  const [verifyToken, setVerifyToken] = useState(w.verifyToken);
   const [showKey, setShowKey] = useState(false);
   const [copied, setCopied] = useState(false);
+  const [banner, setBanner] = useState<Banner>(null);
 
-  // Without the settings API we can't know the real state — treat a filled-in
-  // credential set as "connected" so the card is never misleading.
-  const connected = Boolean(phoneNumberId && apiKey);
-
-  const webhookUrl =
-    typeof window !== "undefined"
-      ? `${window.location.origin}/api/webhook/whatsapp`
-      : "/api/webhook/whatsapp";
+  const hasSavedKey = w.hasApiKey;
+  const webhookUrl = w.webhookUrl;
+  const connected = (hasSavedKey || apiKey.trim().length > 0) && phoneNumberId.trim().length > 0;
 
   const copy = async () => {
     try {
@@ -34,8 +75,61 @@ export function WhatsAppTab() {
     }
   };
 
+  const save = async () => {
+    setBanner(null);
+    try {
+      await update.mutateAsync({
+        section: "whatsapp",
+        data: {
+          phoneNumberId: phoneNumberId.trim(),
+          businessAccountId: businessAccountId.trim(),
+          appId: appId.trim(),
+          verifyToken: verifyToken.trim(),
+          // Only send the token when a new one was typed, so a save without
+          // re-entering it never wipes the stored value.
+          ...(apiKey.trim() ? { apiKey: apiKey.trim() } : {}),
+        },
+      });
+      setApiKey("");
+      setBanner({ kind: "success", text: "WhatsApp settings saved." });
+    } catch (e) {
+      setBanner({ kind: "error", text: e instanceof Error ? e.message : "Failed to save." });
+    }
+  };
+
+  const runTest = async () => {
+    setBanner(null);
+    try {
+      const result = await test.mutateAsync({
+        phoneNumberId: phoneNumberId.trim() || undefined,
+        apiKey: apiKey.trim() || undefined,
+      });
+      const name = result.verifiedName ?? result.displayPhoneNumber ?? "your number";
+      setBanner({ kind: "success", text: `Connected to ${name}. Credentials are valid.` });
+    } catch (e) {
+      setBanner({
+        kind: "error",
+        text: e instanceof Error ? e.message : "Connection test failed.",
+      });
+    }
+  };
+
   return (
     <div className="space-y-5">
+      {banner && (
+        <div
+          role="status"
+          className={cn(
+            "rounded-lg px-4 py-2.5 text-sm ring-1 ring-inset",
+            banner.kind === "success"
+              ? "bg-emerald-50 text-emerald-800 ring-emerald-600/20"
+              : "bg-rose-50 text-rose-700 ring-rose-600/20",
+          )}
+        >
+          {banner.text}
+        </div>
+      )}
+
       {/* Connection status */}
       <Card
         className={cn(
@@ -74,9 +168,18 @@ export function WhatsAppTab() {
             </p>
           </div>
         </div>
-        <Button variant="secondary" disabled={!connected}>
-          <PlugZap className="h-4 w-4" />
-          Test Connection
+        <Button variant="secondary" disabled={!connected || test.isPending} onClick={runTest}>
+          {test.isPending ? (
+            <>
+              <Loader2 className="h-4 w-4 animate-spin" />
+              Testing…
+            </>
+          ) : (
+            <>
+              <PlugZap className="h-4 w-4" />
+              Test Connection
+            </>
+          )}
         </Button>
       </Card>
 
@@ -98,7 +201,7 @@ export function WhatsAppTab() {
               />
             </Field>
 
-            <Field label="Business Account ID" htmlFor="wa-business-id" required>
+            <Field label="Business Account ID" htmlFor="wa-business-id">
               <input
                 id="wa-business-id"
                 value={businessAccountId}
@@ -109,7 +212,17 @@ export function WhatsAppTab() {
             </Field>
           </div>
 
-          <Field label="API key" htmlFor="wa-api-key" required>
+          <Field label="App ID" htmlFor="wa-app-id">
+            <input
+              id="wa-app-id"
+              value={appId}
+              onChange={(e) => setAppId(e.target.value)}
+              className={cn(inputClass, "font-mono text-xs")}
+              placeholder="1234567890123456"
+            />
+          </Field>
+
+          <Field label="Access token" htmlFor="wa-api-key" required={!hasSavedKey}>
             <div className="relative">
               <input
                 id="wa-api-key"
@@ -117,19 +230,19 @@ export function WhatsAppTab() {
                 value={apiKey}
                 onChange={(e) => setApiKey(e.target.value)}
                 className={cn(inputClass, "pr-10 font-mono text-xs")}
-                placeholder="EAAG..."
+                placeholder={hasSavedKey ? "•••••••••• (leave blank to keep current)" : "EAAG..."}
               />
               <button
                 type="button"
                 onClick={() => setShowKey((s) => !s)}
-                aria-label={showKey ? "Hide API key" : "Show API key"}
+                aria-label={showKey ? "Hide access token" : "Show access token"}
                 className="absolute right-2 top-1/2 -translate-y-1/2 rounded p-1.5 text-slate-400 hover:bg-slate-100 hover:text-slate-600"
               >
                 {showKey ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
               </button>
             </div>
             <p className="mt-1.5 text-xs text-slate-500">
-              Stored encrypted. It is never shown to agents.
+              Stored encrypted. It is never shown to agents or returned by the API.
             </p>
           </Field>
 
@@ -169,15 +282,26 @@ export function WhatsAppTab() {
               placeholder="my-verify-token"
             />
             <p className="mt-1.5 text-xs text-slate-500">
-              Must match the token you enter in Meta&apos;s webhook config.
+              Must match the token you enter in Meta&apos;s webhook config, and the
+              <code className="mx-1 font-mono">WHATSAPP_VERIFY_TOKEN</code>
+              environment variable.
             </p>
           </Field>
         </div>
 
         <div className="mt-5 flex justify-end border-t border-slate-100 pt-4">
-          <Button>
-            <Save className="h-4 w-4" />
-            Save Changes
+          <Button onClick={save} disabled={update.isPending}>
+            {update.isPending ? (
+              <>
+                <Loader2 className="h-4 w-4 animate-spin" />
+                Saving…
+              </>
+            ) : (
+              <>
+                <Save className="h-4 w-4" />
+                Save Changes
+              </>
+            )}
           </Button>
         </div>
       </Card>

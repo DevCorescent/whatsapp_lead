@@ -3,6 +3,7 @@ import { z } from "zod";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { sendTextMessage } from "@/lib/whatsapp";
+import { decryptSecret } from "@/lib/crypto";
 
 const updateSchema = z.object({
   name: z.string().min(1).optional(),
@@ -71,7 +72,18 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
         include: { contact: { select: { phone: true } } },
       });
 
-      if (settings?.waPhoneNumberId && settings?.waApiKey && pendingContacts.length > 0) {
+      // The access token is stored encrypted at rest — decrypt before sending.
+      let waApiKey: string | null = null;
+      try {
+        waApiKey = decryptSecret(settings?.waApiKey);
+      } catch (error) {
+        console.error("[CAMPAIGN LAUNCH] Failed to decrypt WhatsApp token:", error);
+      }
+
+      if (settings?.waPhoneNumberId && waApiKey && pendingContacts.length > 0) {
+        // Capture as consts so the narrowed (non-null) values hold inside the loop.
+        const phoneNumberId = settings.waPhoneNumberId;
+        const apiKey = waApiKey;
         // Update campaign to RUNNING
         await prisma.campaign.update({
           where: { id },
@@ -87,7 +99,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
             const message = campaign.metadata && typeof campaign.metadata === "object"
               ? (campaign.metadata as Record<string, string>).message ?? "Hello from WhatsCRM"
               : "Hello from WhatsCRM";
-            await sendTextMessage(settings.waPhoneNumberId, settings.waApiKey, phone, message);
+            await sendTextMessage(phoneNumberId, apiKey, phone, message);
             await prisma.campaignContact.update({
               where: { id: cc.id },
               data: { status: "SENT", sentAt: new Date() },

@@ -89,8 +89,14 @@ export default function AnalyticsPage() {
   const d = data?.deltas;
 
   function handleExportCsv() {
-    // TODO [HEMANT]: wire up once GET /api/analytics returns real rows — build a
-    // CSV from the KPI + chart payload and trigger a Blob download.
+    // Download a KPI summary CSV. The request rides the session cookie, so a
+    // plain anchor click authenticates exactly like a page navigation.
+    const a = document.createElement("a");
+    a.href = "/api/export?resource=analytics";
+    a.download = "";
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
   }
 
   const kpis = [

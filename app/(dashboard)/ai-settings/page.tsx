@@ -9,29 +9,30 @@ import {
   RotateCcw,
   Save,
   FlaskConical,
+  Loader2,
   Bot,
   User,
 } from "lucide-react";
 import {
-  Avatar,
   Button,
   Card,
   Field,
   Modal,
   PageHeader,
+  SkeletonRows,
   inputClass,
 } from "@/components/ui";
 import { Toggle } from "@/components/ui/Toggle";
 import { cn } from "@/lib/utils";
-
-// TODO [GAURANSH]: PATCH /api/settings/ai — persist this form into TenantSettings.
+import { useSettings, useUpdateSettings, type SettingsData } from "@/hooks/useSettings";
 
 const MODELS = [
   { value: "llama-3.3-70b-versatile", label: "Llama 3.3 70B Versatile — best quality" },
   { value: "llama-3.1-8b-instant", label: "Llama 3.1 8B Instant — fastest, cheapest" },
 ];
 
-const PERSONALITIES = ["Professional", "Friendly", "Concise", "Consultative"];
+// Task-required response tones, plus two extra voices the UI already offered.
+const PERSONALITIES = ["Professional", "Friendly", "Casual", "Concise", "Consultative"];
 
 const TIMEZONES = [
   "Asia/Kolkata",
@@ -57,6 +58,43 @@ Answer in the customer's language, keep replies under 3 sentences, and always en
 If you don't know an answer, say so and offer to connect a human agent.`;
 
 const PROMPT_LIMIT = 2000;
+
+type FormState = {
+  aiEnabled: boolean;
+  model: string;
+  temperature: number;
+  maxTokens: number;
+  autoReply: boolean;
+  replyDelay: number;
+  offHoursOnly: boolean;
+  personality: string;
+  systemPrompt: string;
+  timezone: string;
+  startTime: string;
+  endTime: string;
+  businessDays: number[];
+  offHoursMessage: string;
+};
+
+/** Project the API's `ai` section onto the form's shape. */
+function toFormState(ai: SettingsData["ai"]): FormState {
+  return {
+    aiEnabled: ai.aiEnabled,
+    model: ai.model || MODELS[0].value,
+    temperature: ai.temperature,
+    maxTokens: ai.maxTokens,
+    autoReply: ai.autoReply,
+    replyDelay: ai.replyDelay,
+    offHoursOnly: ai.offHoursOnly,
+    personality: ai.responseTone || PERSONALITIES[0],
+    systemPrompt: ai.systemPrompt || DEFAULT_PROMPT,
+    timezone: ai.timezone || "Asia/Kolkata",
+    startTime: ai.startTime || "09:00",
+    endTime: ai.endTime || "18:00",
+    businessDays: ai.businessDays?.length ? ai.businessDays : [1, 2, 3, 4, 5],
+    offHoursMessage: ai.offHoursMessage || "",
+  };
+}
 
 function SettingsCard({
   icon: Icon,
@@ -107,34 +145,46 @@ function ToggleRow({
   );
 }
 
-const sliderClass = "h-1.5 w-full cursor-pointer appearance-none rounded-full bg-slate-200 accent-emerald-600";
-
-const INITIAL = {
-  aiEnabled: true,
-  model: MODELS[0].value,
-  temperature: 0.7,
-  maxTokens: 512,
-  autoReply: true,
-  replyDelay: 3,
-  offHoursOnly: false,
-  personality: PERSONALITIES[0],
-  systemPrompt: DEFAULT_PROMPT,
-  timezone: "Asia/Kolkata",
-  startTime: "09:00",
-  endTime: "18:00",
-  businessDays: [1, 2, 3, 4, 5],
-  offHoursMessage:
-    "Thanks for reaching out! Our team is offline right now — we'll reply first thing during business hours.",
-};
+const sliderClass =
+  "h-1.5 w-full cursor-pointer appearance-none rounded-full bg-slate-200 accent-emerald-600";
 
 export default function AISettingsPage() {
-  const [form, setForm] = useState(INITIAL);
-  const [testOpen, setTestOpen] = useState(false);
+  const { data: settings, isLoading, isError } = useSettings();
 
-  const set = <K extends keyof typeof INITIAL>(key: K, value: (typeof INITIAL)[K]) =>
+  return (
+    <div className="pb-24">
+      <PageHeader
+        title="AI Settings"
+        description="Control how the AI assistant replies to customers on WhatsApp."
+      />
+
+      {isLoading ? (
+        <Card className="p-5">
+          <SkeletonRows rows={8} />
+        </Card>
+      ) : isError || !settings ? (
+        <Card className="p-5 text-sm text-rose-600">
+          Couldn&apos;t load AI settings. Please refresh and try again.
+        </Card>
+      ) : (
+        <AISettingsForm settings={settings} />
+      )}
+    </div>
+  );
+}
+
+function AISettingsForm({ settings }: { settings: SettingsData }) {
+  const update = useUpdateSettings();
+  const initial = toFormState(settings.ai);
+
+  const [form, setForm] = useState<FormState>(initial);
+  const [testOpen, setTestOpen] = useState(false);
+  const [banner, setBanner] = useState<{ kind: "success" | "error"; text: string } | null>(null);
+
+  const set = <K extends keyof FormState>(key: K, value: FormState[K]) =>
     setForm((f) => ({ ...f, [key]: value }));
 
-  const dirty = JSON.stringify(form) !== JSON.stringify(INITIAL);
+  const dirty = JSON.stringify(form) !== JSON.stringify(initial);
 
   const toggleDay = (day: number) =>
     setForm((f) => ({
@@ -144,12 +194,49 @@ export default function AISettingsPage() {
         : [...f.businessDays, day].sort(),
     }));
 
+  const save = async () => {
+    setBanner(null);
+    try {
+      await update.mutateAsync({
+        section: "ai",
+        data: {
+          aiEnabled: form.aiEnabled,
+          model: form.model,
+          temperature: form.temperature,
+          maxTokens: form.maxTokens,
+          autoReply: form.autoReply,
+          replyDelay: form.replyDelay,
+          offHoursOnly: form.offHoursOnly,
+          responseTone: form.personality,
+          systemPrompt: form.systemPrompt,
+          timezone: form.timezone,
+          startTime: form.startTime,
+          endTime: form.endTime,
+          businessDays: form.businessDays,
+          offHoursMessage: form.offHoursMessage,
+        },
+      });
+      setBanner({ kind: "success", text: "AI settings saved." });
+    } catch (e) {
+      setBanner({ kind: "error", text: e instanceof Error ? e.message : "Failed to save." });
+    }
+  };
+
   return (
-    <div className="pb-24">
-      <PageHeader
-        title="AI Settings"
-        description="Control how the AI assistant replies to customers on WhatsApp."
-      />
+    <>
+      {banner && (
+        <div
+          role="status"
+          className={cn(
+            "mb-4 rounded-lg px-4 py-2.5 text-sm ring-1 ring-inset",
+            banner.kind === "success"
+              ? "bg-emerald-50 text-emerald-800 ring-emerald-600/20"
+              : "bg-rose-50 text-rose-700 ring-rose-600/20",
+          )}
+        >
+          {banner.text}
+        </div>
+      )}
 
       <div className="grid gap-5 lg:grid-cols-2">
         {/* ── AI Assistant ─────────────────────────────────────────────────── */}
@@ -279,7 +366,7 @@ export default function AISettingsPage() {
           title="Personality & Prompt"
           description="The voice and the instructions behind every reply."
         >
-          <Field label="AI personality" htmlFor="ai-personality">
+          <Field label="Response tone" htmlFor="ai-personality">
             <select
               id="ai-personality"
               value={form.personality}
@@ -320,7 +407,7 @@ export default function AISettingsPage() {
 
           <Button type="button" variant="secondary" onClick={() => setTestOpen(true)}>
             <FlaskConical className="h-4 w-4" />
-            Test Prompt
+            Preview
           </Button>
         </SettingsCard>
 
@@ -411,34 +498,42 @@ export default function AISettingsPage() {
             {dirty ? "You have unsaved changes." : "All changes saved."}
           </p>
           <div className="flex gap-2">
-            <Button variant="secondary" disabled={!dirty} onClick={() => setForm(INITIAL)}>
+            <Button
+              variant="secondary"
+              disabled={!dirty || update.isPending}
+              onClick={() => setForm(initial)}
+            >
               <RotateCcw className="h-4 w-4" />
               Reset
             </Button>
-            <Button
-              disabled={!dirty}
-              onClick={() => {
-                // TODO [GAURANSH]: PATCH /api/settings/ai
-              }}
-            >
-              <Save className="h-4 w-4" />
-              Save Changes
+            <Button disabled={!dirty || update.isPending} onClick={save}>
+              {update.isPending ? (
+                <>
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                  Saving…
+                </>
+              ) : (
+                <>
+                  <Save className="h-4 w-4" />
+                  Save Changes
+                </>
+              )}
             </Button>
           </div>
         </div>
       </div>
 
-      <TestPromptModal
+      <PreviewModal
         open={testOpen}
         onClose={() => setTestOpen(false)}
         personality={form.personality}
         model={form.model}
       />
-    </div>
+    </>
   );
 }
 
-function TestPromptModal({
+function PreviewModal({
   open,
   onClose,
   personality,
@@ -449,9 +544,6 @@ function TestPromptModal({
   personality: string;
   model: string;
 }) {
-  const [draft, setDraft] = useState("");
-
-  // Mock preview only — a real run needs POST /api/ai/reply.
   const preview = [
     { role: "user" as const, text: "Hi, how much does the Growth plan cost?" },
     {
@@ -469,8 +561,8 @@ function TestPromptModal({
     <Modal
       open={open}
       onClose={onClose}
-      title="Test Prompt"
-      description={`Preview using ${model} with a ${personality.toLowerCase()} tone.`}
+      title="Reply preview"
+      description={`An illustration of a ${personality.toLowerCase()} reply on ${model}.`}
     >
       <div className="space-y-3 rounded-xl bg-slate-50 p-4">
         {preview.map((m, i) => (
@@ -500,29 +592,12 @@ function TestPromptModal({
         ))}
       </div>
 
-      <p className="mt-3 rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-800 ring-1 ring-inset ring-amber-600/20">
-        This is a mock preview. Live testing needs the AI endpoint — TODO [GAURANSH]: POST
-        /api/ai/reply.
+      <p className="mt-3 rounded-lg bg-slate-50 px-3 py-2 text-xs text-slate-600 ring-1 ring-inset ring-slate-900/5">
+        This is an illustrative preview. Live replies are generated per conversation from your saved
+        prompt, tone, and model whenever the AI assistant is enabled.
       </p>
 
-      <div className="mt-4 flex gap-2">
-        <input
-          value={draft}
-          onChange={(e) => setDraft(e.target.value)}
-          className={inputClass}
-          placeholder="Type a customer message…"
-          aria-label="Test message"
-        />
-        <Button type="button" disabled>
-          Send
-        </Button>
-      </div>
-
-      <div className="mt-4 flex items-center justify-between border-t border-slate-100 pt-4">
-        <span className="flex items-center gap-2 text-xs text-slate-500">
-          <Avatar name="AI Assistant" size="xs" />
-          Replies as your workspace assistant
-        </span>
+      <div className="mt-4 flex items-center justify-end border-t border-slate-100 pt-4">
         <Button variant="secondary" onClick={onClose}>
           Close
         </Button>

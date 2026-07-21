@@ -248,8 +248,12 @@ function InviteModal({ open, onClose }: { open: boolean; onClose: () => void }) 
     },
     onSuccess: (json) => {
       queryClient.invalidateQueries({ queryKey: ["team"] });
-      const pwd = json.data?.tempPassword;
-      setSuccess(pwd ? `Invited! Temporary password: ${pwd}` : "Member invited successfully.");
+      // The temporary password is emailed to the invitee and never returned here.
+      setSuccess(
+        json.emailed
+          ? "Invitation sent. They'll receive an email with a temporary password."
+          : "Member added, but the invitation email could not be sent — check email configuration.",
+      );
       setName(""); setEmail(""); setRole("AGENT");
     },
     onError: (err: Error) => setError(err.message),
@@ -262,7 +266,7 @@ function InviteModal({ open, onClose }: { open: boolean; onClose: () => void }) 
       open={open}
       onClose={close}
       title="Invite Member"
-      description="Add a teammate to this workspace. They can log in with the temporary password."
+      description="Add a teammate to this workspace. We'll email them a temporary password to sign in with."
     >
       <form
         className="space-y-4"

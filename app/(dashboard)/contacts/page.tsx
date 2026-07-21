@@ -1,10 +1,12 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { Search, UserPlus } from "lucide-react";
+import { Search, Upload, UserPlus } from "lucide-react";
 import { useContacts } from "@/hooks/useContacts";
 import { Button, Card, PageHeader, inputClass } from "@/components/ui";
+import { ExportButton } from "@/components/ExportButton";
 import { AddContactModal, CONTACT_SOURCES } from "@/components/contacts/AddContactModal";
+import { ImportContactsModal } from "@/components/contacts/ImportContactsModal";
 import {
   ContactTable,
   contactTags,
@@ -23,6 +25,7 @@ export default function ContactsPage() {
   const [page, setPage] = useState(1);
   const [selected, setSelected] = useState<string[]>([]);
   const [modalOpen, setModalOpen] = useState(false);
+  const [importOpen, setImportOpen] = useState(false);
 
   // Debounce the search box so we don't fire a request per keystroke.
   useEffect(() => {
@@ -88,10 +91,17 @@ export default function ContactsPage() {
         title="Contacts"
         description="Everyone who has ever messaged your WhatsApp business number."
         action={
-          <Button onClick={() => setModalOpen(true)}>
-            <UserPlus className="h-4 w-4" />
-            Add Contact
-          </Button>
+          <div className="flex flex-wrap items-center gap-2">
+            <ExportButton resource="contacts" />
+            <Button variant="secondary" onClick={() => setImportOpen(true)}>
+              <Upload className="h-4 w-4" />
+              Import
+            </Button>
+            <Button onClick={() => setModalOpen(true)}>
+              <UserPlus className="h-4 w-4" />
+              Add Contact
+            </Button>
+          </div>
         }
       />
 
@@ -166,6 +176,7 @@ export default function ContactsPage() {
       />
 
       <AddContactModal open={modalOpen} onClose={() => setModalOpen(false)} />
+      <ImportContactsModal open={importOpen} onClose={() => setImportOpen(false)} />
     </div>
   );
 }

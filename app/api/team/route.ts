@@ -4,6 +4,7 @@ import { UserRole } from "@prisma/client";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import bcrypt from "bcryptjs";
+import { sendEmail, teamInviteEmail } from "@/lib/email";
 
 const inviteSchema = z.object({
   name: z.string().min(1, "Name is required"),
@@ -70,8 +71,10 @@ export async function POST(req: NextRequest) {
     const existing = await prisma.user.findUnique({ where: { email_tenantId: { email, tenantId } } });
     if (existing) return NextResponse.json({ success: false, error: "User with this email already exists" }, { status: 409 });
 
-    // Generate a temporary password
-    const tempPassword = Math.random().toString(36).slice(-10) + "A1!";
+    // Generate a cryptographically-strong temporary password. It is emailed to the
+    // invitee and never returned to the browser, so nothing in the UI can leak it.
+    const { randomBytes } = await import("node:crypto");
+    const tempPassword = randomBytes(9).toString("base64url") + "A1!";
     const hashedPassword = await bcrypt.hash(tempPassword, 10);
 
     const user = await prisma.user.create({
@@ -94,7 +97,28 @@ export async function POST(req: NextRequest) {
       },
     });
 
-    return NextResponse.json({ success: true, data: { ...user, tempPassword } }, { status: 201 });
+    // Deliver the invitation with login instructions and the temporary password.
+    const appUrl = process.env.NEXT_PUBLIC_APP_URL ?? new URL(req.url).origin;
+    const { subject, html } = teamInviteEmail({
+      inviteeName: name,
+      email,
+      workspaceName: session.user.tenantName ?? "your workspace",
+      inviterName: session.user.name ?? undefined,
+      tempPassword,
+      loginUrl: `${appUrl.replace(/\/$/, "")}/login`,
+    });
+    const emailResult = await sendEmail({ to: email, subject, html });
+
+    // In development without an email provider, surface the password in the server
+    // log so the invite is still usable end to end. Never in production, never to the client.
+    if (!emailResult.delivered && process.env.NODE_ENV !== "production") {
+      console.info(`[TEAM INVITE] Email not delivered. Temp password for ${email}: ${tempPassword}`);
+    }
+
+    return NextResponse.json(
+      { success: true, data: user, emailed: emailResult.delivered },
+      { status: 201 },
+    );
   } catch (error) {
     console.error("[TEAM POST]", error);
     return NextResponse.json({ success: false, error: "Failed to invite team member" }, { status: 500 });

@@ -1,8 +1,5 @@
 // Forgot Password — step 1 of the reset flow.
 // Step 2 lives at /reset-password?token=xxx (new password + confirm).
-//
-// TODO [SHALMON]: wire POST /api/auth/forgot-password
-// No endpoint exists yet, so success is simulated client-side below.
 
 "use client";
 
@@ -21,10 +18,15 @@ type ForgotPasswordValues = z.infer<typeof forgotPasswordSchema>;
 
 const RESEND_COOLDOWN = 30;
 
-// TODO [SHALMON]: wire POST /api/auth/forgot-password
-// The route does not exist yet, so we fake the round-trip and always succeed.
-async function sendResetLink() {
-  await new Promise((resolve) => setTimeout(resolve, 700));
+// The endpoint always responds 200 (it never reveals whether an account exists),
+// so this resolves for any well-formed email — the "check your inbox" screen is
+// shown regardless, which is the intended anti-enumeration behaviour.
+async function sendResetLink(email: string) {
+  await fetch("/api/auth/forgot-password", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ email }),
+  });
 }
 
 export default function ForgotPasswordPage() {
@@ -48,15 +50,15 @@ export default function ForgotPasswordPage() {
   }, [cooldown]);
 
   async function onSubmit(values: ForgotPasswordValues) {
-    await sendResetLink();
+    await sendResetLink(values.email);
     setSentTo(values.email);
     setCooldown(RESEND_COOLDOWN);
   }
 
   async function onResend() {
-    if (cooldown > 0 || resending) return;
+    if (cooldown > 0 || resending || !sentTo) return;
     setResending(true);
-    await sendResetLink();
+    await sendResetLink(sentTo);
     setResending(false);
     setCooldown(RESEND_COOLDOWN);
   }

@@ -15,6 +15,7 @@ import {
   inputClass,
 } from "@/components/ui";
 import { cn, daysBetween, formatCurrency, STAGE_LABEL, SCORE_STYLE } from "@/lib/utils";
+import { ExportButton } from "@/components/ExportButton";
 import { KanbanBoard, normalizeLeads } from "@/components/leads/KanbanBoard";
 import type { PipelineLead } from "@/components/leads/LeadCard";
 import { AddLeadModal } from "@/components/leads/AddLeadModal";
@@ -118,10 +119,13 @@ export default function LeadsPage() {
             : `${leads.length} lead${leads.length === 1 ? "" : "s"} · ${formatCurrency(pipelineValue)} in play`
         }
         action={
-          <Button onClick={() => openAddModal("NEW_LEAD")}>
-            <Plus className="h-4 w-4" />
-            Add Lead
-          </Button>
+          <div className="flex flex-wrap items-center gap-2">
+            <ExportButton resource="leads" />
+            <Button onClick={() => openAddModal("NEW_LEAD")}>
+              <Plus className="h-4 w-4" />
+              Add Lead
+            </Button>
+          </div>
         }
       />
 

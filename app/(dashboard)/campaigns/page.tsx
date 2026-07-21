@@ -26,6 +26,7 @@ import {
   inputClass,
 } from "@/components/ui";
 import { cn, formatCompact, formatDate } from "@/lib/utils";
+import { ExportButton } from "@/components/ExportButton";
 
 
 const STATUS_STYLE: Record<CampaignStatus, string> = {
@@ -123,10 +124,13 @@ export default function CampaignsPage() {
         title="Campaigns"
         description="Broadcast WhatsApp messages to a segment and track delivery in real time."
         action={
-          <Button onClick={() => setOpen(true)}>
-            <Plus className="h-4 w-4" />
-            Create Campaign
-          </Button>
+          <div className="flex flex-wrap items-center gap-2">
+            <ExportButton resource="campaigns" />
+            <Button onClick={() => setOpen(true)}>
+              <Plus className="h-4 w-4" />
+              Create Campaign
+            </Button>
+          </div>
         }
       />
 

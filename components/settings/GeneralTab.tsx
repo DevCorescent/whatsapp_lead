@@ -1,11 +1,10 @@
 "use client";
 
 import { useState } from "react";
-import { ImagePlus, Save, AlertTriangle } from "lucide-react";
-import { Button, Card, Field, inputClass } from "@/components/ui";
+import { ImagePlus, Loader2, Save, AlertTriangle } from "lucide-react";
+import { Button, Card, Field, inputClass, SkeletonRows } from "@/components/ui";
 import { cn } from "@/lib/utils";
-
-// TODO [SHALMON]: PATCH /api/settings (general) + DELETE /api/settings/workspace.
+import { useSettings, useUpdateSettings, type SettingsData } from "@/hooks/useSettings";
 
 const TIMEZONES = [
   "Asia/Kolkata",
@@ -16,15 +15,86 @@ const TIMEZONES = [
   "America/Los_Angeles",
 ];
 
+const LANGUAGES = [
+  { value: "en", label: "English" },
+  { value: "hi", label: "Hindi" },
+  { value: "es", label: "Spanish" },
+  { value: "ar", label: "Arabic" },
+  { value: "pt", label: "Portuguese" },
+  { value: "fr", label: "French" },
+];
+
+type Banner = { kind: "success" | "error"; text: string } | null;
+
 export function GeneralTab() {
-  const [name, setName] = useState("");
-  const [slug, setSlug] = useState("");
-  const [domain, setDomain] = useState("");
-  const [timezone, setTimezone] = useState("Asia/Kolkata");
+  const { data: settings, isLoading, isError } = useSettings();
+
+  if (isLoading) {
+    return (
+      <Card className="p-5">
+        <SkeletonRows rows={6} />
+      </Card>
+    );
+  }
+
+  if (isError || !settings) {
+    return (
+      <Card className="p-5 text-sm text-rose-600">
+        Couldn&apos;t load settings. Please refresh and try again.
+      </Card>
+    );
+  }
+
+  return <GeneralForm settings={settings} />;
+}
+
+function GeneralForm({ settings }: { settings: SettingsData }) {
+  const update = useUpdateSettings();
+  const g = settings.general;
+
+  const [name, setName] = useState(g.workspaceName);
+  const [slug, setSlug] = useState(g.slug);
+  const [domain, setDomain] = useState(g.domain);
+  const [language, setLanguage] = useState(g.language);
+  const [timezone, setTimezone] = useState(g.timezone);
   const [confirm, setConfirm] = useState("");
+  const [banner, setBanner] = useState<Banner>(null);
+
+  const save = async () => {
+    setBanner(null);
+    try {
+      await update.mutateAsync({
+        section: "general",
+        data: {
+          workspaceName: name.trim(),
+          slug: slug.trim(),
+          domain: domain.trim(),
+          language,
+          timezone,
+        },
+      });
+      setBanner({ kind: "success", text: "Workspace settings saved." });
+    } catch (e) {
+      setBanner({ kind: "error", text: e instanceof Error ? e.message : "Failed to save." });
+    }
+  };
 
   return (
     <div className="space-y-5">
+      {banner && (
+        <div
+          role="status"
+          className={cn(
+            "rounded-lg px-4 py-2.5 text-sm ring-1 ring-inset",
+            banner.kind === "success"
+              ? "bg-emerald-50 text-emerald-800 ring-emerald-600/20"
+              : "bg-rose-50 text-rose-700 ring-rose-600/20",
+          )}
+        >
+          {banner.text}
+        </div>
+      )}
+
       <Card className="p-5">
         <h2 className="font-semibold text-slate-900">Workspace</h2>
         <p className="mt-0.5 text-sm text-slate-500">
@@ -84,27 +154,53 @@ export function GeneralTab() {
               </p>
             </Field>
 
-            <Field label="Timezone" htmlFor="ws-tz">
-              <select
-                id="ws-tz"
-                value={timezone}
-                onChange={(e) => setTimezone(e.target.value)}
-                className={inputClass}
-              >
-                {TIMEZONES.map((tz) => (
-                  <option key={tz} value={tz}>
-                    {tz}
-                  </option>
-                ))}
-              </select>
-            </Field>
+            <div className="grid gap-4 sm:grid-cols-2">
+              <Field label="Language" htmlFor="ws-lang">
+                <select
+                  id="ws-lang"
+                  value={language}
+                  onChange={(e) => setLanguage(e.target.value)}
+                  className={inputClass}
+                >
+                  {LANGUAGES.map((l) => (
+                    <option key={l.value} value={l.value}>
+                      {l.label}
+                    </option>
+                  ))}
+                </select>
+              </Field>
+
+              <Field label="Timezone" htmlFor="ws-tz">
+                <select
+                  id="ws-tz"
+                  value={timezone}
+                  onChange={(e) => setTimezone(e.target.value)}
+                  className={inputClass}
+                >
+                  {TIMEZONES.map((tz) => (
+                    <option key={tz} value={tz}>
+                      {tz}
+                    </option>
+                  ))}
+                </select>
+              </Field>
+            </div>
           </div>
         </div>
 
         <div className="mt-5 flex justify-end border-t border-slate-100 pt-4">
-          <Button>
-            <Save className="h-4 w-4" />
-            Save Changes
+          <Button onClick={save} disabled={update.isPending}>
+            {update.isPending ? (
+              <>
+                <Loader2 className="h-4 w-4 animate-spin" />
+                Saving…
+              </>
+            ) : (
+              <>
+                <Save className="h-4 w-4" />
+                Save Changes
+              </>
+            )}
           </Button>
         </div>
       </Card>

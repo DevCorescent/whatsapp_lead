@@ -148,11 +148,21 @@ model TenantSettings {
   waBusinessAccountId  String?
   waApiKey             String?
   waWebhookVerifyToken String?
+  waAppId              String?
+  waAppSecret          String?
   aiEnabled            Boolean  @default(false)
   aiModel              String   @default("gpt-4o-mini")
   autoReply            Boolean  @default(false)
   autoReplyDelay       Int      @default(3)
+  autoReplyOffHoursOnly Boolean @default(false)
   aiPersonality        String?
+  aiSystemPrompt       String?
+  aiResponseTone       String?
+  aiTemperature        Float    @default(0.7)
+  aiMaxTokens          Int      @default(500)
+  language             String   @default("en")
+  notificationPrefs    Json?
+  onboardingCompleted  Boolean  @default(false)
   timezone             String   @default("Asia/Kolkata")
   businessHoursStart   String   @default("09:00")
   businessHoursEnd     String   @default("18:00")
@@ -194,9 +204,26 @@ model User {
   leadActivities  LeadActivity[]
   assignedTickets Ticket[]       @relation("AssignedTicketAgent")
   auditLogs       AuditLog[]
+  resetTokens     PasswordResetToken[]
 
   @@unique([email, tenantId])
   @@map("users")
+}
+
+// ─── PASSWORD RESET TOKEN ──────────────────────────────────────────────────────
+
+model PasswordResetToken {
+  id        String    @id @default(cuid())
+  userId    String
+  tokenHash String    @unique
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("password_reset_tokens")
 }
 
 // ─── CONTACT ──────────────────────────────────────────────────────────────────

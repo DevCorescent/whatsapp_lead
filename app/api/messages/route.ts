@@ -23,6 +23,7 @@ import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { pusher, tenantChannel, PusherEvent } from "@/lib/pusher";
 import { sendTextMessage } from "@/lib/whatsapp";
+import { decryptSecret } from "@/lib/crypto";
 import { sendMessageSchema } from "@/lib/validators/message";
 
 /**
@@ -88,9 +89,21 @@ async function resolveWhatsAppCredentials(
 
   if (!settings?.waPhoneNumberId || !settings.waApiKey) return null;
 
+  // The access token is stored encrypted at rest; decrypt it for the Cloud API
+  // call. A decryption failure (wrong/absent key) is treated as "not connected"
+  // rather than crashing the send — the message still saves as a note-less draft.
+  let apiKey: string | null;
+  try {
+    apiKey = decryptSecret(settings.waApiKey);
+  } catch (error) {
+    console.error("[MESSAGES] Failed to decrypt WhatsApp token:", error);
+    return null;
+  }
+  if (!apiKey) return null;
+
   return {
     phoneNumberId: settings.waPhoneNumberId,
-    apiKey: settings.waApiKey,
+    apiKey,
   };
 }
 

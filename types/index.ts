@@ -100,6 +100,11 @@ export interface WAMessage {
   video?: { id: string; mime_type: string };
   document?: { id: string; mime_type: string; filename?: string };
   location?: { latitude: number; longitude: number };
+  reaction?: { message_id: string; emoji: string };
+  contacts?: Array<{
+    name?: { formatted_name?: string };
+    phones?: Array<{ phone?: string; wa_id?: string }>;
+  }>;
   button?: { payload: string; text: string };
   interactive?: {
     type: string;

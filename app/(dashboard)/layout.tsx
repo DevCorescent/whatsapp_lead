@@ -4,6 +4,7 @@ import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { Sidebar } from "@/components/dashboard/Sidebar";
 import { Topbar } from "@/components/dashboard/Topbar";
+import { OnboardingGate } from "@/components/onboarding/OnboardingGate";
 
 /**
  * The plan badge lives in the sidebar but isn't on the JWT, so it's read here.
@@ -44,6 +45,8 @@ export default async function DashboardLayout({ children }: { children: ReactNod
         <Topbar tenantName={session.user.tenantName} />
         <main className="scrollbar-slim flex-1 overflow-auto p-4 lg:p-6">{children}</main>
       </div>
+
+      <OnboardingGate />
     </div>
   );
 }

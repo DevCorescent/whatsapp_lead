@@ -42,6 +42,7 @@ import { prisma } from "@/lib/prisma";
 import { generateReply } from "@/lib/ai";
 import { pusher, tenantChannel, PusherEvent } from "@/lib/pusher";
 import { markMessageAsRead, sendTextMessage } from "@/lib/whatsapp";
+import { decryptSecret } from "@/lib/crypto";
 import type {
   WAChange,
   WAEntry,
@@ -134,6 +135,12 @@ const META_TO_MESSAGE_TYPE: Record<string, MessageType> = {
   sticker: MessageType.STICKER,
   interactive: MessageType.INTERACTIVE,
   button: MessageType.INTERACTIVE,
+  // A reaction has no dedicated MessageType; it is persisted as a short text row
+  // carrying the emoji, with the reacted-to message id preserved in `metadata`.
+  reaction: MessageType.TEXT,
+  // A shared contact card (vCard) likewise has no enum of its own; it is stored as
+  // a text row naming the shared contact(s), with the full payload kept in `metadata`.
+  contacts: MessageType.TEXT,
 };
 
 /**
@@ -365,6 +372,21 @@ async function resolveReopen(
  * text at all — a null here is a legitimate outcome, not a parse failure.
  */
 function extractContent(message: WAMessage): string | null {
+  // A reaction carries only an emoji (empty when the customer removes their
+  // reaction); surface it as the message content, or null for a removal.
+  if (message.type === "reaction") {
+    return message.reaction?.emoji ? message.reaction.emoji : null;
+  }
+
+  // A shared contact card has no text body — summarise it by the shared name(s)
+  // so the inbox row and any transcript read meaningfully rather than empty.
+  if (message.type === "contacts") {
+    const names = (message.contacts ?? [])
+      .map((c) => c.name?.formatted_name?.trim())
+      .filter((n): n is string => Boolean(n));
+    return names.length ? `Shared contact: ${names.join(", ")}` : "[contact card]";
+  }
+
   return (
     message.text?.body ??
     message.image?.caption ??
@@ -438,6 +460,16 @@ async function saveInboundMessage(
   // Media with no caption still needs something in the inbox list, or the row renders empty.
   const preview = (content ?? `[${message.type}]`).slice(0, PREVIEW_MAX_LENGTH);
 
+  // A type Meta introduces (or one we have not enabled) is stored as TEXT rather than
+  // dropped, so an agent still sees it — but it is logged so the gap is visible and
+  // can be handled explicitly later rather than failing silently.
+  const mappedType = META_TO_MESSAGE_TYPE[message.type];
+  if (!mappedType) {
+    console.warn(
+      `[WEBHOOK] Unsupported inbound message type "${message.type}" (id ${message.id}) — stored as TEXT`
+    );
+  }
+
   try {
     const created = await prisma.$transaction(async (tx) => {
       const saved = await tx.message.create({
@@ -449,7 +481,7 @@ async function saveInboundMessage(
           // Arrival at our webhook is itself proof of delivery; Meta sends no separate
           // "delivered" status for messages inbound to the business.
           status: MessageStatus.DELIVERED,
-          type: META_TO_MESSAGE_TYPE[message.type] ?? MessageType.TEXT,
+          type: mappedType ?? MessageType.TEXT,
           content,
           mediaType: media ? message.type : null,
           mediaMimeType: media?.mime_type ?? null,
@@ -509,10 +541,20 @@ async function markInboundAsRead(
 ): Promise<void> {
   if (!tenant.waPhoneNumberId || !tenant.waApiKey) return;
 
+  // Stored encrypted at rest; a decryption failure degrades to "no read receipt".
+  let apiKey: string | null;
+  try {
+    apiKey = decryptSecret(tenant.waApiKey);
+  } catch (error) {
+    console.error("[WEBHOOK] Failed to decrypt WhatsApp token for read receipt:", error);
+    return;
+  }
+  if (!apiKey) return;
+
   try {
     await markMessageAsRead(
       tenant.waPhoneNumberId,
-      tenant.waApiKey,
+      apiKey,
       waMessageId
     );
   } catch (error) {
@@ -672,6 +714,19 @@ async function handleAutoReply(
     return;
   }
 
+  // The access token is stored encrypted at rest — decrypt before any Cloud API call.
+  let apiKey: string | null;
+  try {
+    apiKey = decryptSecret(tenant.waApiKey);
+  } catch (error) {
+    console.error(
+      `[WEBHOOK] Failed to decrypt WhatsApp token for tenant ${tenant.tenantId}:`,
+      error
+    );
+    return;
+  }
+  if (!apiKey) return;
+
   const history = await loadConversationHistory(
     tenant.tenantId,
     conversation.id
@@ -680,13 +735,21 @@ async function handleAutoReply(
   // Nothing to reply to — a thread whose only messages are media or notes gives the model no turn.
   if (!history.length) return;
 
+  // The workspace's configured prompt drives the reply. aiSystemPrompt is the field the
+  // AI Settings form writes; aiPersonality is the legacy fallback, then a safe default.
+  const systemPrompt =
+    tenant.aiSystemPrompt?.trim() ||
+    tenant.aiPersonality?.trim() ||
+    DEFAULT_AI_PERSONALITY;
+
   let reply: string;
   try {
     reply = (
-      await generateReply(
-        history,
-        tenant.aiPersonality?.trim() || DEFAULT_AI_PERSONALITY
-      )
+      await generateReply(history, systemPrompt, undefined, {
+        model: tenant.aiModel,
+        temperature: tenant.aiTemperature,
+        maxTokens: tenant.aiMaxTokens,
+      })
     ).trim();
   } catch (error) {
     console.error(
@@ -705,7 +768,7 @@ async function handleAutoReply(
   try {
     const sent = await sendTextMessage(
       tenant.waPhoneNumberId,
-      tenant.waApiKey,
+      apiKey,
       contact.phone,
       reply
     );
@@ -850,7 +913,11 @@ async function processIncomingMessage(
   if (isNew) {
     await markInboundAsRead(tenant, message.id);
     await broadcastMessage(tenant.tenantId, saved);
-    await handleAutoReply(tenant, conversation, contact);
+    // A reaction (e.g. a 👍 on an earlier message) is an acknowledgement, not a
+    // question — replying to it with the AI would be noise, so it is skipped.
+    if (message.type !== "reaction") {
+      await handleAutoReply(tenant, conversation, contact);
+    }
   }
 
   return { tenant, contact, conversation, message: saved };

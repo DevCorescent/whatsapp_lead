@@ -39,6 +39,29 @@ export function useCreateKnowledgeDoc() {
   });
 }
 
+export function useUploadKnowledgeDoc() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ file, name }: { file: File; name?: string }) => {
+      const formData = new FormData();
+      formData.append("file", file);
+      if (name) formData.append("name", name);
+      const res = await fetch("/api/knowledge", {
+        method: "POST",
+        body: formData,
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error((err as { error?: string }).error ?? "Failed to upload document");
+      }
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["knowledge"] });
+    },
+  });
+}
+
 export function useDeleteKnowledgeDoc() {
   const queryClient = useQueryClient();
   return useMutation({

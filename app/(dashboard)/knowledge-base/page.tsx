@@ -26,6 +26,7 @@ import {
   inputClass,
 } from "@/components/ui";
 import { cn, formatDate } from "@/lib/utils";
+import { useUploadKnowledgeDoc } from "@/hooks/useKnowledge";
 
 
 function useKnowledgeDocs() {
@@ -205,6 +206,10 @@ function UploadModal({ open, onClose }: { open: boolean; onClose: () => void }) 
     onError: (err: Error) => setError(err.message),
   });
 
+  const uploadFile = useUploadKnowledgeDoc();
+
+  const pending = upload.isPending || uploadFile.isPending;
+
   const addFiles = (list: FileList | null) => {
     if (!list) return;
     setFiles((prev) => [...prev, ...Array.from(list)]);
@@ -215,7 +220,7 @@ function UploadModal({ open, onClose }: { open: boolean; onClose: () => void }) 
       open={open}
       onClose={close}
       title="Upload Document"
-      description="PDF, DOCX or TXT up to 10 MB — or index a public web page."
+      description="PDF, DOCX or TXT up to 15 MB — or index a public web page."
     >
       <form
         className="space-y-4"
@@ -228,14 +233,12 @@ function UploadModal({ open, onClose }: { open: boolean; onClose: () => void }) 
               await upload.mutateAsync({ name, type: "URL", url: url.trim() });
             }
             for (const file of files) {
-              const text = await file.text();
-              const ext = (file.name.split(".").pop() ?? "TXT").toUpperCase();
-              await upload.mutateAsync({ name: file.name, type: ext, content: text });
+              await uploadFile.mutateAsync({ file });
             }
             queryClient.invalidateQueries({ queryKey: ["knowledge"] });
             close();
-          } catch {
-            // error handled by onError
+          } catch (err) {
+            setError(err instanceof Error ? err.message : "Upload failed");
           }
         }}
       >
@@ -264,7 +267,7 @@ function UploadModal({ open, onClose }: { open: boolean; onClose: () => void }) 
           <p className="mt-2 text-sm font-medium text-slate-800">
             Drag files here or click to browse
           </p>
-          <p className="mt-0.5 text-xs text-slate-500">Accepts PDF, DOCX, TXT or a URL</p>
+          <p className="mt-0.5 text-xs text-slate-500">PDF, DOCX or TXT up to 15 MB — or a URL</p>
           <input
             ref={inputRef}
             type="file"
@@ -333,8 +336,8 @@ function UploadModal({ open, onClose }: { open: boolean; onClose: () => void }) 
           <Button type="button" variant="secondary" onClick={close}>
             Cancel
           </Button>
-          <Button type="submit" disabled={(files.length === 0 && !url.trim()) || upload.isPending}>
-            {upload.isPending ? "Uploading…" : "Upload & Index"}
+          <Button type="submit" disabled={(files.length === 0 && !url.trim()) || pending}>
+            {pending ? "Uploading…" : "Upload & Index"}
           </Button>
         </div>
       </form>
