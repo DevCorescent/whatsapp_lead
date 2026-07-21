@@ -13,6 +13,19 @@ function slugify(text: string) {
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
+
+    // Validate access token if env var is configured
+    const requiredToken = process.env.SIGNUP_ACCESS_TOKEN;
+    if (requiredToken) {
+      const providedToken = (body as Record<string, unknown>).accessToken;
+      if (!providedToken || providedToken !== requiredToken) {
+        return NextResponse.json(
+          { success: false, error: "Invalid access token. Contact us to get access." },
+          { status: 403 }
+        );
+      }
+    }
+
     const parsed = registerSchema.safeParse(body);
 
     if (!parsed.success) {
