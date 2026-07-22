@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { auth } from "@/lib/auth";
+import { getBusinessScope } from "@/lib/business";
 import { prisma } from "@/lib/prisma";
 import { runCampaign, CampaignClaimError } from "@/lib/campaigns/runner";
 
@@ -30,14 +30,14 @@ async function runAndRespond(id: string) {
 }
 
 export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
-  const session = await auth();
-  if (!session?.user) return NextResponse.json({ success: false, error: "Unauthorized" }, { status: 401 });
-  const { tenantId } = session.user;
+  const scope = await getBusinessScope();
+  if (!scope) return NextResponse.json({ success: false, error: "Unauthorized" }, { status: 401 });
+  const { tenantId, businessId } = scope;
 
   try {
     const { id } = await params;
     const campaign = await prisma.campaign.findFirst({
-      where: { id, tenantId },
+      where: { id, tenantId, businessId },
       include: {
         template: true,
         contacts: {
@@ -57,9 +57,9 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
 }
 
 export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
-  const session = await auth();
-  if (!session?.user) return NextResponse.json({ success: false, error: "Unauthorized" }, { status: 401 });
-  const { tenantId } = session.user;
+  const scope = await getBusinessScope();
+  if (!scope) return NextResponse.json({ success: false, error: "Unauthorized" }, { status: 401 });
+  const { tenantId, businessId } = scope;
 
   try {
     const { id } = await params;
@@ -69,7 +69,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
     const parsed = updateSchema.safeParse(body);
     if (!parsed.success) return NextResponse.json({ success: false, error: parsed.error.issues[0].message }, { status: 400 });
 
-    const campaign = await prisma.campaign.findFirst({ where: { id, tenantId } });
+    const campaign = await prisma.campaign.findFirst({ where: { id, tenantId, businessId } });
     if (!campaign) return NextResponse.json({ success: false, error: "Campaign not found" }, { status: 404 });
 
     const { name, action, scheduledAt: scheduledAtRaw } = parsed.data;
@@ -115,7 +115,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
       // Atomic guard: only a SCHEDULED campaign can be cancelled, and only if the
       // scheduler has not already claimed it (-> PROCESSING) in the meantime.
       const res = await prisma.campaign.updateMany({
-        where: { id, tenantId, status: "SCHEDULED" },
+        where: { id, tenantId, businessId, status: "SCHEDULED" },
         data: { status: "CANCELLED" },
       });
       if (res.count === 0) {
@@ -152,13 +152,13 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
 }
 
 export async function DELETE(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
-  const session = await auth();
-  if (!session?.user) return NextResponse.json({ success: false, error: "Unauthorized" }, { status: 401 });
-  const { tenantId } = session.user;
+  const scope = await getBusinessScope();
+  if (!scope) return NextResponse.json({ success: false, error: "Unauthorized" }, { status: 401 });
+  const { tenantId, businessId } = scope;
 
   try {
     const { id } = await params;
-    const campaign = await prisma.campaign.findFirst({ where: { id, tenantId } });
+    const campaign = await prisma.campaign.findFirst({ where: { id, tenantId, businessId } });
     if (!campaign) return NextResponse.json({ success: false, error: "Campaign not found" }, { status: 404 });
     if (campaign.status !== "DRAFT") return NextResponse.json({ success: false, error: "Only DRAFT campaigns can be deleted" }, { status: 400 });
 

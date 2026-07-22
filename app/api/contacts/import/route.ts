@@ -11,7 +11,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { Prisma } from "@prisma/client";
-import { auth } from "@/lib/auth";
+import { getBusinessScope } from "@/lib/business";
 import { prisma } from "@/lib/prisma";
 import { resolveTenantPlan } from "@/lib/billing/usage";
 import { isUnlimited } from "@/lib/billing/tiers";
@@ -49,11 +49,11 @@ interface RowError {
 }
 
 export async function POST(req: NextRequest) {
-  const session = await auth();
-  if (!session?.user) {
+  const scope = await getBusinessScope();
+  if (!scope) {
     return NextResponse.json({ success: false, error: "Unauthorized" }, { status: 401 });
   }
-  const { tenantId } = session.user;
+  const { tenantId, businessId } = scope;
 
   let body: unknown;
   try {
@@ -74,7 +74,7 @@ export async function POST(req: NextRequest) {
     // Load existing phones and emails once so duplicate detection is a set lookup,
     // not a query per row. Emails are keyed lowercase since they are case-insensitive.
     const existing = await prisma.contact.findMany({
-      where: { tenantId },
+      where: { tenantId, businessId },
       select: { phone: true, email: true },
     });
     const seenPhones = new Set(existing.map((c) => c.phone));
@@ -140,6 +140,7 @@ export async function POST(req: NextRequest) {
         await prisma.contact.create({
           data: {
             tenantId,
+            businessId,
             phone,
             name: raw.name?.trim() || phone,
             ...(email ? { email } : {}),
@@ -151,8 +152,8 @@ export async function POST(req: NextRequest) {
                     create: tags.map((name) => ({
                       tag: {
                         connectOrCreate: {
-                          where: { name_tenantId: { name, tenantId } },
-                          create: { name, tenantId },
+                          where: { name_businessId: { name, businessId } },
+                          create: { name, tenantId, businessId },
                         },
                       },
                     })),

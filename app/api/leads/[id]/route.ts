@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { LeadStage } from "@prisma/client";
-import { auth } from "@/lib/auth";
+import { getBusinessScope } from "@/lib/business";
 import { prisma } from "@/lib/prisma";
 import { scoreLabelFor } from "@/lib/utils";
 
@@ -21,14 +21,14 @@ const updateLeadSchema = z.object({
 }).strict();
 
 export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
-  const session = await auth();
-  if (!session?.user) return NextResponse.json({ success: false, error: "Unauthorized" }, { status: 401 });
-  const { tenantId } = session.user;
+  const scope = await getBusinessScope();
+  if (!scope) return NextResponse.json({ success: false, error: "Unauthorized" }, { status: 401 });
+  const { tenantId, businessId } = scope;
 
   try {
     const { id } = await params;
     const lead = await prisma.lead.findFirst({
-      where: { id, tenantId },
+      where: { id, tenantId, businessId },
       include: {
         contact: { select: { id: true, name: true, phone: true, email: true, company: true, avatarUrl: true } },
         assignedTo: { select: { id: true, name: true, avatar: true } },
@@ -48,9 +48,9 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
 }
 
 export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
-  const session = await auth();
-  if (!session?.user) return NextResponse.json({ success: false, error: "Unauthorized" }, { status: 401 });
-  const { tenantId, id: userId } = session.user;
+  const scope = await getBusinessScope();
+  if (!scope) return NextResponse.json({ success: false, error: "Unauthorized" }, { status: 401 });
+  const { tenantId, businessId, userId } = scope;
 
   try {
     const { id } = await params;
@@ -60,7 +60,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
     const parsed = updateLeadSchema.safeParse(body);
     if (!parsed.success) return NextResponse.json({ success: false, error: parsed.error.issues[0].message }, { status: 400 });
 
-    const existing = await prisma.lead.findFirst({ where: { id, tenantId } });
+    const existing = await prisma.lead.findFirst({ where: { id, tenantId, businessId } });
     if (!existing) return NextResponse.json({ success: false, error: "Lead not found" }, { status: 404 });
 
     const { stage, score, ...rest } = parsed.data;
@@ -115,13 +115,13 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
 }
 
 export async function DELETE(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
-  const session = await auth();
-  if (!session?.user) return NextResponse.json({ success: false, error: "Unauthorized" }, { status: 401 });
-  const { tenantId } = session.user;
+  const scope = await getBusinessScope();
+  if (!scope) return NextResponse.json({ success: false, error: "Unauthorized" }, { status: 401 });
+  const { tenantId, businessId } = scope;
 
   try {
     const { id } = await params;
-    const existing = await prisma.lead.findFirst({ where: { id, tenantId } });
+    const existing = await prisma.lead.findFirst({ where: { id, tenantId, businessId } });
     if (!existing) return NextResponse.json({ success: false, error: "Lead not found" }, { status: 404 });
 
     await prisma.lead.delete({ where: { id } });

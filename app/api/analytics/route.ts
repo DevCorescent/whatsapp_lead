@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
+import { getBusinessScope } from "@/lib/business";
 
 const querySchema = z.object({
   period: z.enum(["today", "7d", "30d", "90d"]).default("30d"),
@@ -26,9 +26,9 @@ function periodToDate(period: string): Date {
 }
 
 export async function GET(req: NextRequest) {
-  const session = await auth();
-  if (!session?.user) return NextResponse.json({ success: false, error: "Unauthorized" }, { status: 401 });
-  const { tenantId } = session.user;
+  const scope = await getBusinessScope();
+  if (!scope) return NextResponse.json({ success: false, error: "Unauthorized" }, { status: 401 });
+  const { businessId } = scope;
 
   try {
     const { searchParams } = new URL(req.url);
@@ -57,48 +57,48 @@ export async function GET(req: NextRequest) {
       campaignsRaw,
     ] = await Promise.all([
       // All conversations (total)
-      prisma.conversation.count({ where: { tenantId } }),
+      prisma.conversation.count({ where: { businessId } }),
       // Open conversations
-      prisma.conversation.count({ where: { tenantId, status: "OPEN" } }),
+      prisma.conversation.count({ where: { businessId, status: "OPEN" } }),
       // Resolved today
-      prisma.conversation.count({ where: { tenantId, status: "RESOLVED", updatedAt: { gte: todayStart } } }),
+      prisma.conversation.count({ where: { businessId, status: "RESOLVED", updatedAt: { gte: todayStart } } }),
       // Total messages in period
-      prisma.message.count({ where: { tenantId, createdAt: { gte: since } } }),
+      prisma.message.count({ where: { businessId, createdAt: { gte: since } } }),
       // Total leads in period
-      prisma.lead.count({ where: { tenantId, createdAt: { gte: since } } }),
+      prisma.lead.count({ where: { businessId, createdAt: { gte: since } } }),
       // Won leads
-      prisma.lead.count({ where: { tenantId, stage: "WON" } }),
+      prisma.lead.count({ where: { businessId, stage: "WON" } }),
       // All leads for conversion rate
-      prisma.lead.count({ where: { tenantId } }),
+      prisma.lead.count({ where: { businessId } }),
       // Messages over time (for chart)
       prisma.message.findMany({
-        where: { tenantId, createdAt: { gte: since } },
+        where: { businessId, createdAt: { gte: since } },
         select: { direction: true, createdAt: true },
         orderBy: { createdAt: "asc" },
       }),
       // Pipeline distribution by stage
       prisma.lead.groupBy({
         by: ["stage"],
-        where: { tenantId },
+        where: { businessId },
         _count: { stage: true },
         _sum: { value: true },
       }),
       // Score distribution
       prisma.lead.groupBy({
         by: ["scoreLabel"],
-        where: { tenantId },
+        where: { businessId },
         _count: { scoreLabel: true },
       }),
       // Agent conversation counts (with resolved)
       prisma.conversation.groupBy({
         by: ["assignedToId"],
-        where: { tenantId, assignedToId: { not: null } },
+        where: { businessId, assignedToId: { not: null } },
         _count: { id: true },
       }),
       // Campaign performance. SENT/PROCESSING are the scheduling module's terminal
       // and in-flight statuses; COMPLETED/RUNNING are kept for legacy campaigns.
       prisma.campaign.findMany({
-        where: { tenantId, status: { in: ["SENT", "PROCESSING", "COMPLETED", "RUNNING"] } },
+        where: { businessId, status: { in: ["SENT", "PROCESSING", "COMPLETED", "RUNNING"] } },
         select: {
           id: true,
           name: true,
@@ -148,7 +148,7 @@ export async function GET(req: NextRequest) {
       agentIds.length > 0
         ? prisma.conversation.groupBy({
             by: ["assignedToId"],
-            where: { tenantId, assignedToId: { in: agentIds }, status: "RESOLVED" },
+            where: { businessId, assignedToId: { in: agentIds }, status: "RESOLVED" },
             _count: { id: true },
           })
         : Promise.resolve([] as { assignedToId: string | null; _count: { id: number } }[]),

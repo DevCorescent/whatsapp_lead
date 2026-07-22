@@ -1,11 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
-import { auth } from "@/lib/auth";
+import { getBusinessScope } from "@/lib/business";
 import { prisma } from "@/lib/prisma";
 
 export async function GET(req: NextRequest) {
-  const session = await auth();
-  if (!session?.user) return NextResponse.json({ success: false, error: "Unauthorized" }, { status: 401 });
-  const { tenantId } = session.user;
+  const scope = await getBusinessScope();
+  if (!scope) return NextResponse.json({ success: false, error: "Unauthorized" }, { status: 401 });
+  const { tenantId, businessId } = scope;
 
   const q = new URL(req.url).searchParams.get("q")?.trim() ?? "";
 
@@ -24,6 +24,7 @@ export async function GET(req: NextRequest) {
       prisma.contact.findMany({
         where: {
           tenantId,
+          businessId,
           OR: [
             { name: { contains: q, mode: "insensitive" } },
             { phone: { contains: q, mode: "insensitive" } },
@@ -36,6 +37,7 @@ export async function GET(req: NextRequest) {
       prisma.lead.findMany({
         where: {
           tenantId,
+          businessId,
           OR: [
             { title: { contains: q, mode: "insensitive" } },
             { contact: { name: { contains: q, mode: "insensitive" } } },
@@ -52,6 +54,7 @@ export async function GET(req: NextRequest) {
       prisma.conversation.findMany({
         where: {
           tenantId,
+          businessId,
           OR: [
             { contact: { name: { contains: q, mode: "insensitive" } } },
             { contact: { phone: { contains: q, mode: "insensitive" } } },
@@ -69,6 +72,7 @@ export async function GET(req: NextRequest) {
       prisma.message.findMany({
         where: {
           tenantId,
+          businessId,
           content: { contains: q, mode: "insensitive" },
         },
         select: { id: true, conversationId: true, content: true, createdAt: true, direction: true },
@@ -77,6 +81,7 @@ export async function GET(req: NextRequest) {
       prisma.campaign.findMany({
         where: {
           tenantId,
+          businessId,
           name: { contains: q, mode: "insensitive" },
         },
         select: { id: true, name: true, status: true },

@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { TicketStatus, TicketPriority } from "@prisma/client";
-import { auth } from "@/lib/auth";
+import { getBusinessScope } from "@/lib/business";
 import { prisma } from "@/lib/prisma";
 
 const querySchema = z.object({
@@ -27,9 +27,9 @@ function slaDeadline(priority: TicketPriority): Date {
 }
 
 export async function GET(req: NextRequest) {
-  const session = await auth();
-  if (!session?.user) return NextResponse.json({ success: false, error: "Unauthorized" }, { status: 401 });
-  const { tenantId } = session.user;
+  const scope = await getBusinessScope();
+  if (!scope) return NextResponse.json({ success: false, error: "Unauthorized" }, { status: 401 });
+  const { tenantId, businessId } = scope;
 
   try {
     const { searchParams } = new URL(req.url);
@@ -45,6 +45,7 @@ export async function GET(req: NextRequest) {
     const { status, priority, assigneeId, page, limit } = parsed.data;
     const where = {
       tenantId,
+      businessId,
       ...(status !== undefined && { status }),
       ...(priority !== undefined && { priority }),
       ...(assigneeId !== undefined && { assignedToId: assigneeId }),
@@ -81,9 +82,9 @@ export async function GET(req: NextRequest) {
 }
 
 export async function POST(req: NextRequest) {
-  const session = await auth();
-  if (!session?.user) return NextResponse.json({ success: false, error: "Unauthorized" }, { status: 401 });
-  const { tenantId } = session.user;
+  const scope = await getBusinessScope();
+  if (!scope) return NextResponse.json({ success: false, error: "Unauthorized" }, { status: 401 });
+  const { tenantId, businessId } = scope;
 
   try {
     let body: unknown;
@@ -96,7 +97,7 @@ export async function POST(req: NextRequest) {
 
     // If conversationId provided, verify it belongs to this tenant
     if (conversationId) {
-      const conv = await prisma.conversation.findFirst({ where: { id: conversationId, tenantId } });
+      const conv = await prisma.conversation.findFirst({ where: { id: conversationId, tenantId, businessId } });
       if (!conv) return NextResponse.json({ success: false, error: "Conversation not found" }, { status: 404 });
       // Check if ticket already exists for this conversation
       const existingTicket = await prisma.ticket.findUnique({ where: { conversationId } });
@@ -118,6 +119,7 @@ export async function POST(req: NextRequest) {
     const ticket = await prisma.ticket.create({
       data: {
         tenantId,
+        businessId,
         subject,
         priority,
         ...(department && { department }),

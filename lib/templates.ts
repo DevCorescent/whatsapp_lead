@@ -16,7 +16,7 @@
 
 import type { MessageTemplate } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
-import { decryptSecret } from "@/lib/crypto";
+import { resolveWhatsAppCreds } from "@/lib/business";
 import {
   createMessageTemplate,
   getMessageTemplate,
@@ -161,30 +161,21 @@ export class TemplateCredsError extends Error {
 }
 
 /**
- * Load and decrypt the tenant's WhatsApp Business Account credentials for
- * template operations. Throws a friendly TemplateCredsError when WhatsApp is not
- * fully connected. The access token never leaves the server.
+ * Load and decrypt a business's WhatsApp Business Account credentials for template
+ * operations. Templates live on the WABA, and each business has its own, so creds
+ * are keyed by business (falling back to the tenant's legacy settings). Throws a
+ * friendly TemplateCredsError when WhatsApp is not fully connected. The access
+ * token never leaves the server.
  */
-export async function getTenantTemplateCreds(tenantId: string): Promise<{ wabaId: string; apiKey: string }> {
-  const settings = await prisma.tenantSettings.findUnique({
-    where: { tenantId },
-    select: { waBusinessAccountId: true, waApiKey: true },
-  });
+export async function getBusinessTemplateCreds(businessId: string): Promise<{ wabaId: string; apiKey: string }> {
+  const creds = await resolveWhatsAppCreds(businessId);
 
-  let apiKey: string | null = null;
-  try {
-    apiKey = decryptSecret(settings?.waApiKey);
-  } catch (error) {
-    console.error("[TEMPLATES] Failed to decrypt WhatsApp token:", error);
-    throw new TemplateCredsError("Stored WhatsApp access token could not be decrypted.");
-  }
-
-  if (!settings?.waBusinessAccountId || !apiKey) {
+  if (!creds.businessAccountId || !creds.apiKey) {
     throw new TemplateCredsError(
-      "Connect WhatsApp first: add your Business Account ID and access token in Settings → WhatsApp.",
+      "Connect WhatsApp first: add your Business Account ID and access token in the business settings.",
     );
   }
-  return { wabaId: settings.waBusinessAccountId, apiKey };
+  return { wabaId: creds.businessAccountId, apiKey: creds.apiKey };
 }
 
 // ─── Orchestration ───────────────────────────────────────────────────────────
@@ -195,8 +186,8 @@ export async function getTenantTemplateCreds(tenantId: string): Promise<{ wabaId
  * via the atomic status claim). On success stores the Meta template ID and moves
  * the local status to SUBMITTED.
  */
-export async function submitTemplate(id: string, tenantId: string): Promise<MessageTemplate> {
-  const template = await prisma.messageTemplate.findFirst({ where: { id, tenantId } });
+export async function submitTemplate(id: string, businessId: string): Promise<MessageTemplate> {
+  const template = await prisma.messageTemplate.findFirst({ where: { id, businessId } });
   if (!template) throw new TemplateCredsError("Template not found");
 
   if (!["DRAFT", "REJECTED"].includes(template.status)) {
@@ -208,12 +199,12 @@ export async function submitTemplate(id: string, tenantId: string): Promise<Mess
   const placeholderError = validatePlaceholders(template.body, template.variables);
   if (placeholderError) throw new TemplateCredsError(placeholderError);
 
-  const { wabaId, apiKey } = await getTenantTemplateCreds(tenantId);
+  const { wabaId, apiKey } = await getBusinessTemplateCreds(businessId);
 
   // Duplicate-submission guard: atomically move out of the submittable states so
   // two concurrent submits can't both hit Meta.
   const claim = await prisma.messageTemplate.updateMany({
-    where: { id, tenantId, status: { in: ["DRAFT", "REJECTED"] } },
+    where: { id, businessId, status: { in: ["DRAFT", "REJECTED"] } },
     data: { status: "SUBMITTED" },
   });
   if (claim.count === 0) {
@@ -249,12 +240,12 @@ export async function submitTemplate(id: string, tenantId: string): Promise<Mess
 }
 
 /** Refresh one template's status from Meta. No-op (returns as-is) if never submitted. */
-export async function refreshTemplate(id: string, tenantId: string): Promise<MessageTemplate> {
-  const template = await prisma.messageTemplate.findFirst({ where: { id, tenantId } });
+export async function refreshTemplate(id: string, businessId: string): Promise<MessageTemplate> {
+  const template = await prisma.messageTemplate.findFirst({ where: { id, businessId } });
   if (!template) throw new TemplateCredsError("Template not found");
   if (!template.waTemplateId) return template;
 
-  const { apiKey } = await getTenantTemplateCreds(tenantId);
+  const { apiKey } = await getBusinessTemplateCreds(businessId);
   const meta = await getMessageTemplate(template.waTemplateId, apiKey);
   const status = mapMetaStatus(meta.status);
 
@@ -268,16 +259,16 @@ export async function refreshTemplate(id: string, tenantId: string): Promise<Mes
   });
 }
 
-/** Sync every in-review template for one tenant (used by the manual "Sync all"). */
-export async function syncTenantTemplates(tenantId: string): Promise<{ synced: number }> {
+/** Sync every in-review template for one business (used by the manual "Sync all"). */
+export async function syncBusinessTemplates(businessId: string): Promise<{ synced: number }> {
   const pending = await prisma.messageTemplate.findMany({
-    where: { tenantId, status: { in: ["SUBMITTED", "PENDING"] }, waTemplateId: { not: null } },
+    where: { businessId, status: { in: ["SUBMITTED", "PENDING"] }, waTemplateId: { not: null } },
     select: { id: true },
   });
   let synced = 0;
   for (const { id } of pending) {
     try {
-      await refreshTemplate(id, tenantId);
+      await refreshTemplate(id, businessId);
       synced++;
     } catch (error) {
       console.error(`[TEMPLATES SYNC] ${id} failed:`, error);
@@ -286,17 +277,17 @@ export async function syncTenantTemplates(tenantId: string): Promise<{ synced: n
   return { synced };
 }
 
-/** Sync every in-review template across all tenants (used by the cron). */
+/** Sync every in-review template across all businesses (used by the cron). */
 export async function syncAllTemplates(): Promise<{ total: number; synced: number }> {
   const pending = await prisma.messageTemplate.findMany({
     where: { status: { in: ["SUBMITTED", "PENDING"] }, waTemplateId: { not: null } },
-    select: { id: true, tenantId: true },
+    select: { id: true, businessId: true },
     take: 500,
   });
   let synced = 0;
-  for (const { id, tenantId } of pending) {
+  for (const { id, businessId } of pending) {
     try {
-      await refreshTemplate(id, tenantId);
+      await refreshTemplate(id, businessId);
       synced++;
     } catch (error) {
       console.error(`[TEMPLATES CRON] ${id} failed:`, error);

@@ -12,8 +12,8 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { Prisma } from "@prisma/client";
-import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
+import { getBusinessScope } from "@/lib/business";
 import { updateTemplateSchema } from "@/lib/validators/templates";
 import {
   validateTemplateName,
@@ -25,20 +25,20 @@ import {
 const EDIT_ROLES = ["SUPER_ADMIN", "TENANT_OWNER", "ADMIN"];
 
 export async function GET(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
-  const session = await auth();
-  if (!session?.user) return NextResponse.json({ success: false, error: "Unauthorized" }, { status: 401 });
-  const { tenantId } = session.user;
+  const scope = await getBusinessScope();
+  if (!scope) return NextResponse.json({ success: false, error: "Unauthorized" }, { status: 401 });
+  const { businessId } = scope;
 
   const { id } = await params;
-  const template = await prisma.messageTemplate.findFirst({ where: { id, tenantId } });
+  const template = await prisma.messageTemplate.findFirst({ where: { id, businessId } });
   if (!template) return NextResponse.json({ success: false, error: "Template not found" }, { status: 404 });
   return NextResponse.json({ success: true, data: template });
 }
 
 export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
-  const session = await auth();
-  if (!session?.user) return NextResponse.json({ success: false, error: "Unauthorized" }, { status: 401 });
-  const { tenantId, role } = session.user;
+  const scope = await getBusinessScope();
+  if (!scope) return NextResponse.json({ success: false, error: "Unauthorized" }, { status: 401 });
+  const { businessId, role } = scope;
   if (!EDIT_ROLES.includes(role)) return NextResponse.json({ success: false, error: "Forbidden" }, { status: 403 });
 
   const { id } = await params;
@@ -49,7 +49,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
   const parsed = updateTemplateSchema.safeParse(body);
   if (!parsed.success) return NextResponse.json({ success: false, error: parsed.error.issues[0].message }, { status: 400 });
 
-  const template = await prisma.messageTemplate.findFirst({ where: { id, tenantId } });
+  const template = await prisma.messageTemplate.findFirst({ where: { id, businessId } });
   if (!template) return NextResponse.json({ success: false, error: "Template not found" }, { status: 404 });
 
   // Approved / in-review templates are immutable — only drafts and rejected ones edit.
@@ -71,7 +71,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
   if (placeholderError) return NextResponse.json({ success: false, error: placeholderError }, { status: 400 });
 
   if (d.name && d.name !== template.name) {
-    const clash = await prisma.messageTemplate.findFirst({ where: { name: d.name, tenantId, id: { not: id } } });
+    const clash = await prisma.messageTemplate.findFirst({ where: { name: d.name, businessId, id: { not: id } } });
     if (clash) return NextResponse.json({ success: false, error: "A template with this name already exists" }, { status: 409 });
   }
 
@@ -100,13 +100,13 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
 }
 
 export async function DELETE(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
-  const session = await auth();
-  if (!session?.user) return NextResponse.json({ success: false, error: "Unauthorized" }, { status: 401 });
-  const { tenantId, role } = session.user;
+  const scope = await getBusinessScope();
+  if (!scope) return NextResponse.json({ success: false, error: "Unauthorized" }, { status: 401 });
+  const { businessId, role } = scope;
   if (!EDIT_ROLES.includes(role)) return NextResponse.json({ success: false, error: "Forbidden" }, { status: 403 });
 
   const { id } = await params;
-  const template = await prisma.messageTemplate.findFirst({ where: { id, tenantId } });
+  const template = await prisma.messageTemplate.findFirst({ where: { id, businessId } });
   if (!template) return NextResponse.json({ success: false, error: "Template not found" }, { status: 404 });
 
   if (!DELETABLE_STATUSES.includes(template.status)) {

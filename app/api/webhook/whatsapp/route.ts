@@ -37,12 +37,12 @@ import {
   MessageType,
   Prisma,
 } from "@prisma/client";
-import type { Contact, Conversation, Message } from "@prisma/client";
+import type { Business, Contact, Conversation, Message } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { generateReply } from "@/lib/ai";
 import { pusher, tenantChannel, PusherEvent } from "@/lib/pusher";
 import { markMessageAsRead, sendTextMessage } from "@/lib/whatsapp";
-import { decryptSecret } from "@/lib/crypto";
+import { resolveWhatsAppCreds, type ResolvedWhatsAppCreds } from "@/lib/business";
 import type {
   WAChange,
   WAEntry,
@@ -178,55 +178,76 @@ const STATUS_RANK: Record<MessageStatus, number> = {
 };
 
 /**
- * TenantSettings with its parent Tenant eagerly loaded.
+ * A business resolved from an inbound WhatsApp number, carried through the whole
+ * ingestion chain.
  *
- * Callers need both halves on every inbound event — the settings carry the WhatsApp
- * credentials and AI flags, while the tenant carries `isActive` and the `tenantId` that
- * scopes every downstream write — so they are resolved together in a single round trip.
+ * `business` holds the per-business AI settings and prompt; `tenantId` scopes the
+ * writes that keep the legacy tenant column populated; `creds` are the decrypted
+ * WhatsApp credentials used to reply and mark-as-read. Every event in a webhook
+ * change belongs to the same business by construction, so this is resolved once
+ * per change and threaded through.
  */
-export type ResolvedTenant = Prisma.TenantSettingsGetPayload<{
-  include: { tenant: true };
-}>;
+export interface ResolvedBusiness {
+  business: Business;
+  tenantId: string;
+  creds: ResolvedWhatsAppCreds;
+}
 
 /**
- * Resolve the owning tenant for an inbound WhatsApp event.
+ * Resolve the owning business for an inbound WhatsApp event.
  *
- * Meta identifies the receiving business number by `metadata.phone_number_id`, which is the
- * only tenant discriminator present on a webhook payload. This lookup is therefore the point
- * at which an untrusted, unauthenticated request is bound to exactly one tenant — every
- * subsequent query in the request depends on the `tenantId` established here, so failing loudly
- * is preferable to processing an event we cannot attribute.
+ * Meta identifies the receiving number by `metadata.phone_number_id`. Each Business
+ * owns exactly one such id (`whatsappPhoneNumberId`, globally unique), so this lookup
+ * binds an untrusted, unauthenticated request to exactly one business — and therefore
+ * to exactly one knowledge base and AI configuration. This is what keeps the chatbot
+ * from ever mixing data between businesses.
  *
- * Note: `waPhoneNumberId` is nullable and carries no unique constraint in the schema, so this
- * is a `findFirst` rather than a `findUnique`. A duplicated number across two tenants would
- * silently route traffic to whichever row is returned first; that is a data-integrity problem
- * to be enforced at provisioning time, not something this helper can detect.
+ * Backward compatibility: a tenant that configured its number on the legacy
+ * TenantSettings (before businesses existed, and whose default business was not
+ * backfilled with the id) is still routed — to that tenant's default business — so a
+ * single-number installation keeps working with no manual step.
  *
  * @param phoneNumberId - Meta's `value.metadata.phone_number_id` for the receiving number.
- * @returns The tenant's settings with the parent tenant included.
- * @throws {Error} If no tenant has this number configured, or the resolved tenant is inactive.
+ * @returns The resolved business, its tenantId, and decrypted send credentials.
+ * @throws {Error} If no business/tenant has this number, or the business/tenant is inactive.
  */
-async function resolveTenant(phoneNumberId: string): Promise<ResolvedTenant> {
-  const settings = await prisma.tenantSettings.findFirst({
-    where: { waPhoneNumberId: phoneNumberId },
-    include: { tenant: true },
+async function resolveBusiness(phoneNumberId: string): Promise<ResolvedBusiness> {
+  let business = await prisma.business.findUnique({
+    where: { whatsappPhoneNumberId: phoneNumberId },
+    include: { tenant: { select: { isActive: true, slug: true } } },
   });
 
-  if (!settings) {
+  if (!business) {
+    const settings = await prisma.tenantSettings.findFirst({
+      where: { waPhoneNumberId: phoneNumberId },
+      select: { tenantId: true },
+    });
+    if (settings) {
+      business = await prisma.business.findFirst({
+        where: { tenantId: settings.tenantId },
+        orderBy: { createdAt: "asc" },
+        include: { tenant: { select: { isActive: true, slug: true } } },
+      });
+    }
+  }
+
+  if (!business) {
     throw new Error(
-      `No tenant configured for WhatsApp phone_number_id "${phoneNumberId}"`
+      `No business configured for WhatsApp phone_number_id "${phoneNumberId}"`
     );
   }
 
-  // A suspended or deleted workspace must not accumulate new conversations, contacts or
-  // AI spend, even though Meta will keep delivering to a number that is still subscribed.
-  if (!settings.tenant.isActive) {
-    throw new Error(
-      `Tenant inactive: "${settings.tenant.slug}" (${settings.tenantId})`
-    );
+  // A suspended tenant or business must not accumulate new conversations, contacts or
+  // AI spend, even though Meta keeps delivering to a number that is still subscribed.
+  if (!business.tenant.isActive) {
+    throw new Error(`Tenant inactive for business "${business.slug}" (${business.id})`);
+  }
+  if (business.status !== "ACTIVE") {
+    throw new Error(`Business inactive: "${business.slug}" (${business.id})`);
   }
 
-  return settings;
+  const creds = await resolveWhatsAppCreds(business.id);
+  return { business, tenantId: business.tenantId, creds };
 }
 
 /**
@@ -251,19 +272,22 @@ async function resolveTenant(phoneNumberId: string): Promise<ResolvedTenant> {
  */
 async function upsertContact(
   tenantId: string,
+  businessId: string,
   phone: string,
   name?: string
 ): Promise<Contact> {
   const profileName = name?.trim();
 
   return prisma.contact.upsert({
-    where: { phone_tenantId: { phone, tenantId } },
+    // A phone is unique per business now, so the same customer can be an independent
+    // contact in two businesses of one tenant without colliding.
+    where: { phone_businessId: { phone, businessId } },
     // Omitting `name` entirely leaves the stored value untouched; Prisma maintains
     // `updatedAt` on its own via the schema's `@updatedAt` attribute.
     update: profileName ? { name: profileName } : {},
     // A contact with no profile name is still addressable by number, so the phone
     // doubles as the display name until an agent or a later payload supplies a better one.
-    create: { tenantId, phone, name: profileName || phone },
+    create: { tenantId, businessId, phone, name: profileName || phone },
   });
 }
 
@@ -292,17 +316,18 @@ async function upsertContact(
  */
 async function findOrCreateConversation(
   tenantId: string,
+  businessId: string,
   contactId: string
 ): Promise<Conversation> {
   const existing = await prisma.conversation.findFirst({
-    where: { tenantId, contactId },
+    where: { businessId, contactId },
     orderBy: { createdAt: "desc" },
   });
 
   if (existing) return existing;
 
   return prisma.conversation.create({
-    data: { tenantId, contactId },
+    data: { tenantId, businessId, contactId },
   });
 }
 
@@ -450,6 +475,7 @@ function extractTimestamp(message: WAMessage): Date {
  */
 async function saveInboundMessage(
   tenantId: string,
+  businessId: string,
   conversationId: string,
   message: WAMessage
 ): Promise<SavedInboundMessage> {
@@ -475,6 +501,7 @@ async function saveInboundMessage(
       const saved = await tx.message.create({
         data: {
           tenantId,
+          businessId,
           conversationId,
           waMessageId: message.id,
           direction: MessageDirection.INBOUND,
@@ -536,33 +563,54 @@ async function saveInboundMessage(
  * because a tick did not turn blue.
  */
 async function markInboundAsRead(
-  tenant: ResolvedTenant,
+  creds: ResolvedWhatsAppCreds,
   waMessageId: string
 ): Promise<void> {
-  if (!tenant.waPhoneNumberId || !tenant.waApiKey) return;
-
-  // Stored encrypted at rest; a decryption failure degrades to "no read receipt".
-  let apiKey: string | null;
-  try {
-    apiKey = decryptSecret(tenant.waApiKey);
-  } catch (error) {
-    console.error("[WEBHOOK] Failed to decrypt WhatsApp token for read receipt:", error);
-    return;
-  }
-  if (!apiKey) return;
+  // Credentials are resolved (and decrypted) once per change; a business with no
+  // WhatsApp connection simply skips the cosmetic read receipt.
+  if (!creds.phoneNumberId || !creds.apiKey) return;
 
   try {
-    await markMessageAsRead(
-      tenant.waPhoneNumberId,
-      apiKey,
-      waMessageId
-    );
+    await markMessageAsRead(creds.phoneNumberId, creds.apiKey, waMessageId);
   } catch (error) {
     console.error(
       `[WEBHOOK] Failed to mark message ${waMessageId} as read:`,
       error
     );
   }
+}
+
+/** Longest slice of a business's knowledge base fed to the model as reply context. */
+const KNOWLEDGE_CONTEXT_MAX = 6000;
+
+/**
+ * Load the current business's knowledge base as grounding text for its chatbot.
+ *
+ * Scoped strictly to `businessId`, so a reply can only ever be grounded in the
+ * knowledge of the business that owns the receiving number — the chatbot can never
+ * answer one business using another's documents. Returns undefined when the
+ * business has no knowledge, in which case the model replies from its persona alone.
+ */
+async function loadBusinessKnowledge(businessId: string): Promise<string | undefined> {
+  const docs = await prisma.knowledgeDoc.findMany({
+    where: { businessId, content: { not: null } },
+    select: { name: true, content: true },
+    orderBy: { updatedAt: "desc" },
+    take: 20,
+  });
+  if (!docs.length) return undefined;
+
+  let ctx = "";
+  for (const d of docs) {
+    if (!d.content) continue;
+    const block = `# ${d.name}\n${d.content}\n\n`;
+    if (ctx.length + block.length > KNOWLEDGE_CONTEXT_MAX) {
+      ctx += block.slice(0, Math.max(0, KNOWLEDGE_CONTEXT_MAX - ctx.length));
+      break;
+    }
+    ctx += block;
+  }
+  return ctx.trim() || undefined;
 }
 
 /**
@@ -609,13 +657,13 @@ async function broadcastMessage(
  * preview — there is nothing to say about them.
  */
 async function loadConversationHistory(
-  tenantId: string,
+  businessId: string,
   conversationId: string
 ): Promise<{ role: "user" | "assistant"; content: string }[]> {
   const messages: { direction: MessageDirection; content: string | null }[] =
     await prisma.message.findMany({
       where: {
-        tenantId,
+        businessId,
         conversationId,
         isNote: false,
         content: { not: null },
@@ -654,6 +702,7 @@ async function loadConversationHistory(
  */
 async function saveOutboundMessage(
   tenantId: string,
+  businessId: string,
   conversationId: string,
   content: string,
   waMessageId: string | null
@@ -662,6 +711,7 @@ async function saveOutboundMessage(
     const saved = await tx.message.create({
       data: {
         tenantId,
+        businessId,
         conversationId,
         waMessageId,
         direction: MessageDirection.OUTBOUND,
@@ -701,54 +751,46 @@ async function saveOutboundMessage(
  * more queries for rows the caller is holding.
  */
 async function handleAutoReply(
-  tenant: ResolvedTenant,
+  resolved: ResolvedBusiness,
   conversation: Conversation,
   contact: Contact
 ): Promise<void> {
-  if (!tenant.aiEnabled || !tenant.autoReply) return;
+  const { business, tenantId, creds } = resolved;
 
-  if (!tenant.waPhoneNumberId || !tenant.waApiKey) {
+  // AI flags come from the BUSINESS, not the tenant — each business decides on its
+  // own whether its number auto-replies, using its own model and prompt.
+  if (!business.aiEnabled || !business.autoReply) return;
+
+  if (!creds.phoneNumberId || !creds.apiKey) {
     console.warn(
-      `[WEBHOOK] Auto-reply enabled for tenant ${tenant.tenantId} but WhatsApp credentials are missing`
+      `[WEBHOOK] Auto-reply enabled for business ${business.id} but WhatsApp credentials are missing`
     );
     return;
   }
 
-  // The access token is stored encrypted at rest — decrypt before any Cloud API call.
-  let apiKey: string | null;
-  try {
-    apiKey = decryptSecret(tenant.waApiKey);
-  } catch (error) {
-    console.error(
-      `[WEBHOOK] Failed to decrypt WhatsApp token for tenant ${tenant.tenantId}:`,
-      error
-    );
-    return;
-  }
-  if (!apiKey) return;
-
-  const history = await loadConversationHistory(
-    tenant.tenantId,
-    conversation.id
-  );
+  const history = await loadConversationHistory(business.id, conversation.id);
 
   // Nothing to reply to — a thread whose only messages are media or notes gives the model no turn.
   if (!history.length) return;
 
-  // The workspace's configured prompt drives the reply. aiSystemPrompt is the field the
-  // AI Settings form writes; aiPersonality is the legacy fallback, then a safe default.
+  // The business's configured prompt drives the reply. aiSystemPrompt is the field
+  // the AI Settings form writes; aiPersonality is the legacy fallback, then a safe default.
   const systemPrompt =
-    tenant.aiSystemPrompt?.trim() ||
-    tenant.aiPersonality?.trim() ||
+    business.aiSystemPrompt?.trim() ||
+    business.aiPersonality?.trim() ||
     DEFAULT_AI_PERSONALITY;
+
+  // Ground the reply ONLY in this business's knowledge base, so the chatbot can
+  // never answer using another business's documents.
+  const knowledgeContext = await loadBusinessKnowledge(business.id);
 
   let reply: string;
   try {
     reply = (
-      await generateReply(history, systemPrompt, undefined, {
-        model: tenant.aiModel,
-        temperature: tenant.aiTemperature,
-        maxTokens: tenant.aiMaxTokens,
+      await generateReply(history, systemPrompt, knowledgeContext, {
+        model: business.aiModel ?? undefined,
+        temperature: business.aiTemperature,
+        maxTokens: business.aiMaxTokens,
       })
     ).trim();
   } catch (error) {
@@ -767,8 +809,8 @@ async function handleAutoReply(
   let waMessageId: string | null;
   try {
     const sent = await sendTextMessage(
-      tenant.waPhoneNumberId,
-      apiKey,
+      creds.phoneNumberId,
+      creds.apiKey,
       contact.phone,
       reply
     );
@@ -784,13 +826,14 @@ async function handleAutoReply(
   }
 
   const outbound = await saveOutboundMessage(
-    tenant.tenantId,
+    tenantId,
+    business.id,
     conversation.id,
     reply,
     waMessageId
   );
 
-  await broadcastMessage(tenant.tenantId, outbound);
+  await broadcastMessage(tenantId, outbound);
 }
 
 /**
@@ -818,20 +861,20 @@ async function handleAutoReply(
  * @returns The updated Message, or null if the receipt was unknown, foreign, or stale.
  */
 async function processStatusUpdate(
-  tenantId: string,
+  businessId: string,
   status: WAStatus
 ): Promise<Message | null> {
   const message = await prisma.message.findUnique({
     where: { waMessageId: status.id },
-    select: { id: true, tenantId: true, status: true },
+    select: { id: true, businessId: true, status: true },
   });
 
   // Receipts routinely arrive for messages we have not written yet, or never sent at all.
   if (!message) return null;
 
-  if (message.tenantId !== tenantId) {
+  if (message.businessId !== businessId) {
     console.warn(
-      `[WEBHOOK] Status receipt ${status.id} does not belong to tenant ${tenantId} — ignoring`
+      `[WEBHOOK] Status receipt ${status.id} does not belong to business ${businessId} — ignoring`
     );
     return null;
   }
@@ -856,7 +899,7 @@ async function processStatusUpdate(
  * state this function has already established.
  */
 export interface InboundMessageResult {
-  tenant: ResolvedTenant;
+  resolved: ResolvedBusiness;
   contact: Contact;
   conversation: Conversation;
   message: Message;
@@ -889,38 +932,43 @@ export interface InboundMessageResult {
  * @returns The resolved tenant, contact, conversation and the persisted message.
  */
 async function processIncomingMessage(
-  tenant: ResolvedTenant,
+  resolved: ResolvedBusiness,
   message: WAMessage,
   contactName?: string
 ): Promise<InboundMessageResult> {
+  const { business, tenantId, creds } = resolved;
+
   const contact = await upsertContact(
-    tenant.tenantId,
+    tenantId,
+    business.id,
     message.from,
     contactName
   );
 
   const conversation = await findOrCreateConversation(
-    tenant.tenantId,
+    tenantId,
+    business.id,
     contact.id
   );
 
   const { message: saved, isNew } = await saveInboundMessage(
-    tenant.tenantId,
+    tenantId,
+    business.id,
     conversation.id,
     message
   );
 
   if (isNew) {
-    await markInboundAsRead(tenant, message.id);
-    await broadcastMessage(tenant.tenantId, saved);
+    await markInboundAsRead(creds, message.id);
+    await broadcastMessage(tenantId, saved);
     // A reaction (e.g. a 👍 on an earlier message) is an acknowledgement, not a
     // question — replying to it with the AI would be noise, so it is skipped.
     if (message.type !== "reaction") {
-      await handleAutoReply(tenant, conversation, contact);
+      await handleAutoReply(resolved, conversation, contact);
     }
   }
 
-  return { tenant, contact, conversation, message: saved };
+  return { resolved, contact, conversation, message: saved };
 }
 
 /**
@@ -950,7 +998,7 @@ async function processChange(change: WAChange): Promise<void> {
   // Nothing actionable in this change — a field update we do not subscribe to.
   if (!messages?.length && !statuses?.length) return;
 
-  const tenant = await resolveTenant(metadata.phone_number_id);
+  const resolved = await resolveBusiness(metadata.phone_number_id);
 
   for (const message of messages ?? []) {
     // Match each sender to their own profile entry. Meta can batch messages from several contacts
@@ -958,11 +1006,11 @@ async function processChange(change: WAChange): Promise<void> {
     // sender's name — creating the second contact with the wrong person's name entirely.
     const profile = contacts?.find((contact) => contact.wa_id === message.from);
 
-    await processIncomingMessage(tenant, message, profile?.profile?.name);
+    await processIncomingMessage(resolved, message, profile?.profile?.name);
   }
 
   for (const status of statuses ?? []) {
-    await processStatusUpdate(tenant.tenantId, status);
+    await processStatusUpdate(resolved.business.id, status);
   }
 }
 

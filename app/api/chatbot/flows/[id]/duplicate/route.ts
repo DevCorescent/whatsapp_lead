@@ -8,7 +8,7 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { Prisma } from "@prisma/client";
-import { auth } from "@/lib/auth";
+import { getBusinessScope } from "@/lib/business";
 import { prisma } from "@/lib/prisma";
 
 const EDIT_ROLES = ["SUPER_ADMIN", "TENANT_OWNER", "ADMIN", "MANAGER"];
@@ -26,11 +26,11 @@ const flowSelect = {
 } as const;
 
 export async function POST(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
-  const session = await auth();
-  if (!session?.user) {
+  const scope = await getBusinessScope();
+  if (!scope) {
     return NextResponse.json({ success: false, error: "Unauthorized" }, { status: 401 });
   }
-  const { tenantId, role } = session.user;
+  const { tenantId, businessId, role } = scope;
   if (!EDIT_ROLES.includes(role)) {
     return NextResponse.json({ success: false, error: "Forbidden" }, { status: 403 });
   }
@@ -38,7 +38,7 @@ export async function POST(_req: NextRequest, { params }: { params: Promise<{ id
   try {
     const { id } = await params;
     const source = await prisma.chatbotFlow.findFirst({
-      where: { id, tenantId },
+      where: { id, tenantId, businessId },
       select: { name: true, description: true, keywords: true, trigger: true, nodes: true, edges: true },
     });
     if (!source) {
@@ -48,6 +48,7 @@ export async function POST(_req: NextRequest, { params }: { params: Promise<{ id
     const copy = await prisma.chatbotFlow.create({
       data: {
         tenantId,
+        businessId,
         name: `${source.name} (copy)`,
         description: source.description,
         keywords: source.keywords,

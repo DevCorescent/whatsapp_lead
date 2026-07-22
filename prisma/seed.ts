@@ -108,7 +108,23 @@ async function main() {
     },
   });
 
-  console.log("✅ Demo tenant + user created");
+  // ─── Default Business ───────────────────────────────────────────────────────
+  // Every tenant owns at least one business; seed one so the demo workspace has a
+  // working current-business context out of the box.
+  const existingBusiness = await prisma.business.findFirst({
+    where: { tenantId: demoTenant.id },
+  });
+  if (!existingBusiness) {
+    await prisma.business.create({
+      data: {
+        tenantId: demoTenant.id,
+        name: "Demo Business",
+        slug: "default",
+      },
+    });
+  }
+
+  console.log("✅ Demo tenant + user + business created");
   console.log("   Email: admin@demo.com");
   console.log("   Password: Demo@1234");
   console.log("\n🎉 Seed complete!");

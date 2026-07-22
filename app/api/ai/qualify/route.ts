@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
+import { getBusinessScope } from "@/lib/business";
 import { qualifyLead } from "@/lib/ai";
 import { scoreLabelFor } from "@/lib/utils";
 import { assertWithinLimit, incrementAiUsage, LimitError } from "@/lib/billing/usage";
@@ -11,9 +11,9 @@ const schema = z.object({
 });
 
 export async function POST(req: NextRequest) {
-  const session = await auth();
-  if (!session?.user) return NextResponse.json({ success: false, error: "Unauthorized" }, { status: 401 });
-  const { tenantId, id: userId } = session.user;
+  const scope = await getBusinessScope();
+  if (!scope) return NextResponse.json({ success: false, error: "Unauthorized" }, { status: 401 });
+  const { tenantId, businessId, userId } = scope;
 
   try {
     let body: unknown;
@@ -34,13 +34,13 @@ export async function POST(req: NextRequest) {
 
     // Get lead + contact + conversation messages
     const lead = await prisma.lead.findFirst({
-      where: { id: leadId, tenantId },
+      where: { id: leadId, businessId },
       include: {
         contact: {
           select: { id: true, name: true, phone: true },
           include: {
             conversations: {
-              where: { tenantId },
+              where: { businessId },
               include: {
                 messages: {
                   select: { direction: true, content: true, createdAt: true },

@@ -18,12 +18,15 @@ import {
   Sparkles,
   UserCog,
   Settings,
+  Building2,
   LogOut,
   Menu,
   X,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Avatar } from "@/components/ui";
+import { BusinessSwitcher } from "@/components/dashboard/BusinessSwitcher";
+import type { BusinessesResponse } from "@/hooks/useBusinesses";
 
 /** Grouped so eleven links don't read as one undifferentiated wall. */
 const NAV = [
@@ -50,6 +53,7 @@ const NAV = [
      items: [
        { href: "/tickets", label: "Tickets", icon: Ticket },
        { href: "/analytics", label: "Analytics", icon: BarChart2 },
+       { href: "/businesses", label: "Businesses", icon: Building2 },
        { href: "/team", label: "Team", icon: UserCog },
        { href: "/billing", label: "Billing", icon: CreditCard },
        { href: "/settings", label: "Settings", icon: Settings },
@@ -80,7 +84,13 @@ function prettyRole(role?: string | null) {
     .join(" ");
 }
 
-export function Sidebar({ user }: { user: SidebarUser }) {
+export function Sidebar({
+  user,
+  businesses,
+}: {
+  user: SidebarUser;
+  businesses?: BusinessesResponse;
+}) {
   const pathname = usePathname();
   const [mobileOpen, setMobileOpen] = useState(false);
   const plan = (user.plan ?? "Starter").toUpperCase();
@@ -144,15 +154,26 @@ export function Sidebar({ user }: { user: SidebarUser }) {
         ))}
       </nav>
 
-      {/* Two clean lines: who you are, then which plan. The old single-row layout
-          truncated the role to "tenant own…" and jammed the badge against it. */}
-      <div className="shrink-0 border-t border-slate-100 p-3">
+      {/* The business switcher replaces the old static workspace label: it names the
+          current business and lets the user switch the entire CRM context in place. */}
+      <div className="shrink-0 space-y-2.5 border-t border-slate-100 p-3">
+        <BusinessSwitcher initialData={businesses} />
+
         <div className="flex items-center gap-2.5">
           <Avatar name={user.name} src={user.avatar} size="sm" />
           <div className="min-w-0 flex-1">
             <p className="truncate text-sm font-medium text-slate-900">{user.name ?? "User"}</p>
             <p className="truncate text-xs text-slate-500">{prettyRole(user.role)}</p>
           </div>
+          <span
+            className={cn(
+              "shrink-0 rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide",
+              PLAN_STYLE[plan] ?? PLAN_STYLE.STARTER,
+            )}
+            title={`${user.tenantName ?? "Workspace"} · ${plan}`}
+          >
+            {plan}
+          </span>
           <button
             onClick={() => signOut({ callbackUrl: "/login" })}
             className="rounded-lg p-1.5 text-slate-400 transition hover:bg-rose-50 hover:text-rose-600"
@@ -161,18 +182,6 @@ export function Sidebar({ user }: { user: SidebarUser }) {
           >
             <LogOut className="h-4 w-4" />
           </button>
-        </div>
-
-        <div className="mt-2.5 flex items-center justify-between rounded-lg bg-slate-50 px-2.5 py-1.5">
-          <span className="truncate text-xs text-slate-500">{user.tenantName ?? "Workspace"}</span>
-          <span
-            className={cn(
-              "ml-2 shrink-0 rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide",
-              PLAN_STYLE[plan] ?? PLAN_STYLE.STARTER,
-            )}
-          >
-            {plan}
-          </span>
         </div>
       </div>
     </>

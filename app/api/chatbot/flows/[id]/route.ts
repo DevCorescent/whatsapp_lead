@@ -14,7 +14,7 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { Prisma } from "@prisma/client";
-import { auth } from "@/lib/auth";
+import { getBusinessScope } from "@/lib/business";
 import { prisma } from "@/lib/prisma";
 import { updateFlowSchema } from "@/lib/validators/chatbot";
 import { validateFlow, type FlowNode, type FlowEdge } from "@/lib/chatbot";
@@ -34,16 +34,16 @@ const flowSelect = {
 } as const;
 
 export async function GET(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
-  const session = await auth();
-  if (!session?.user) {
+  const scope = await getBusinessScope();
+  if (!scope) {
     return NextResponse.json({ success: false, error: "Unauthorized" }, { status: 401 });
   }
-  const { tenantId } = session.user;
+  const { tenantId, businessId } = scope;
 
   try {
     const { id } = await params;
     const flow = await prisma.chatbotFlow.findFirst({
-      where: { id, tenantId },
+      where: { id, tenantId, businessId },
       select: flowSelect,
     });
     if (!flow) {
@@ -57,11 +57,11 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
 }
 
 export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
-  const session = await auth();
-  if (!session?.user) {
+  const scope = await getBusinessScope();
+  if (!scope) {
     return NextResponse.json({ success: false, error: "Unauthorized" }, { status: 401 });
   }
-  const { tenantId, role } = session.user;
+  const { tenantId, businessId, role } = scope;
   if (!EDIT_ROLES.includes(role)) {
     return NextResponse.json({ success: false, error: "Forbidden" }, { status: 403 });
   }
@@ -85,7 +85,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
 
   try {
     const existing = await prisma.chatbotFlow.findFirst({
-      where: { id, tenantId },
+      where: { id, tenantId, businessId },
       select: { id: true, nodes: true, edges: true },
     });
     if (!existing) {
@@ -134,11 +134,11 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
 }
 
 export async function DELETE(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
-  const session = await auth();
-  if (!session?.user) {
+  const scope = await getBusinessScope();
+  if (!scope) {
     return NextResponse.json({ success: false, error: "Unauthorized" }, { status: 401 });
   }
-  const { tenantId, role } = session.user;
+  const { tenantId, businessId, role } = scope;
   if (!EDIT_ROLES.includes(role)) {
     return NextResponse.json({ success: false, error: "Forbidden" }, { status: 403 });
   }
@@ -146,7 +146,7 @@ export async function DELETE(_req: NextRequest, { params }: { params: Promise<{ 
   try {
     const { id } = await params;
     const existing = await prisma.chatbotFlow.findFirst({
-      where: { id, tenantId },
+      where: { id, tenantId, businessId },
       select: { id: true },
     });
     if (!existing) {

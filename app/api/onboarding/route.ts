@@ -8,8 +8,8 @@
 // ============================================================================
 
 import { NextResponse } from "next/server";
-import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
+import { getBusinessScope } from "@/lib/business";
 
 /** Ensure a settings row exists (a tenant created before this field shipped may lack one). */
 async function ensureSettings(tenantId: string) {
@@ -19,28 +19,33 @@ async function ensureSettings(tenantId: string) {
 }
 
 export async function GET() {
-  const session = await auth();
-  if (!session?.user) {
+  const scope = await getBusinessScope();
+  if (!scope) {
     return NextResponse.json({ success: false, error: "Unauthorized" }, { status: 401 });
   }
-  const { tenantId } = session.user;
+  const { tenantId, businessId, business } = scope;
 
   try {
     const settings = await ensureSettings(tenantId);
 
     // Derive step completion from real workspace state so the checklist reflects
-    // what the tenant has actually done, not just what they've clicked.
+    // what the tenant has actually done, not just what they've clicked. WhatsApp and
+    // knowledge are checked for the CURRENT business; team stays tenant-wide.
     const [teamCount, knowledgeCount] = await Promise.all([
       prisma.user.count({ where: { tenantId } }),
-      prisma.knowledgeDoc.count({ where: { tenantId } }),
+      prisma.knowledgeDoc.count({ where: { businessId } }),
     ]);
+
+    const whatsappConnected =
+      Boolean(business.whatsappAccessToken && business.whatsappPhoneNumberId) ||
+      Boolean(settings.waApiKey && settings.waPhoneNumberId);
 
     return NextResponse.json({
       success: true,
       data: {
         completed: settings.onboardingCompleted,
         steps: {
-          whatsapp: Boolean(settings.waApiKey && settings.waPhoneNumberId),
+          whatsapp: whatsappConnected,
           team: teamCount > 1, // more than just the owner
           knowledge: knowledgeCount > 0,
         },
@@ -53,11 +58,11 @@ export async function GET() {
 }
 
 export async function POST() {
-  const session = await auth();
-  if (!session?.user) {
+  const scope = await getBusinessScope();
+  if (!scope) {
     return NextResponse.json({ success: false, error: "Unauthorized" }, { status: 401 });
   }
-  const { tenantId } = session.user;
+  const { tenantId } = scope;
 
   try {
     await ensureSettings(tenantId);

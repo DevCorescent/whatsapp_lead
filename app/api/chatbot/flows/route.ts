@@ -12,7 +12,7 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { Prisma } from "@prisma/client";
-import { auth } from "@/lib/auth";
+import { getBusinessScope } from "@/lib/business";
 import { prisma } from "@/lib/prisma";
 import { createFlowSchema } from "@/lib/validators/chatbot";
 import type { FlowNode } from "@/lib/chatbot";
@@ -32,15 +32,15 @@ const flowSelect = {
 } as const;
 
 export async function GET() {
-  const session = await auth();
-  if (!session?.user) {
+  const scope = await getBusinessScope();
+  if (!scope) {
     return NextResponse.json({ success: false, error: "Unauthorized" }, { status: 401 });
   }
-  const { tenantId } = session.user;
+  const { tenantId, businessId } = scope;
 
   try {
     const flows = await prisma.chatbotFlow.findMany({
-      where: { tenantId },
+      where: { tenantId, businessId },
       select: flowSelect,
       orderBy: { updatedAt: "desc" },
     });
@@ -52,11 +52,11 @@ export async function GET() {
 }
 
 export async function POST(req: NextRequest) {
-  const session = await auth();
-  if (!session?.user) {
+  const scope = await getBusinessScope();
+  if (!scope) {
     return NextResponse.json({ success: false, error: "Unauthorized" }, { status: 401 });
   }
-  const { tenantId, role } = session.user;
+  const { tenantId, businessId, role } = scope;
   if (!EDIT_ROLES.includes(role)) {
     return NextResponse.json({ success: false, error: "Forbidden" }, { status: 403 });
   }
@@ -89,6 +89,7 @@ export async function POST(req: NextRequest) {
     const flow = await prisma.chatbotFlow.create({
       data: {
         tenantId,
+        businessId,
         name: parsed.data.name,
         description: parsed.data.description ?? null,
         keywords: parsed.data.keywords ?? [],

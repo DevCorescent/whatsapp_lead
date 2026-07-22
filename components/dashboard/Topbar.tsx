@@ -2,7 +2,7 @@
 
 import { useState, useRef, useEffect } from "react";
 import Link from "next/link";
-import { Search, Bell, ChevronDown } from "lucide-react";
+import { Search, Bell, ChevronDown, Building2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Avatar } from "@/components/ui";
 import { useSearch } from "@/hooks/useSearch";
@@ -20,7 +20,13 @@ const STATUS_DOT: Record<AgentStatus, string> = {
  * PageHeader, and showing it twice made the top of each screen read as a stutter
  * ("Analytics" over "Analytics"). The bar is search plus presence, nothing else.
  */
-export function Topbar({ tenantName }: { tenantName?: string | null }) {
+export function Topbar({
+  businessName,
+  tenantName,
+}: {
+  businessName?: string | null;
+  tenantName?: string | null;
+}) {
   const [status, setStatus] = useState<AgentStatus>("Online");
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
@@ -219,8 +225,14 @@ export function Topbar({ tenantName }: { tenantName?: string | null }) {
       </div>
 
       <div className="ml-auto flex items-center gap-1.5">
-        {tenantName && (
-          <span className="mr-1 hidden text-sm text-slate-500 md:inline">{tenantName}</span>
+        {businessName && (
+          <span
+            className="mr-1 hidden items-center gap-1.5 rounded-lg bg-slate-50 px-2.5 py-1 text-sm font-medium text-slate-600 ring-1 ring-inset ring-slate-200/70 md:inline-flex"
+            title={tenantName ? `${tenantName} · ${businessName}` : businessName}
+          >
+            <Building2 className="h-3.5 w-3.5 text-emerald-600" />
+            {businessName}
+          </span>
         )}
 
         <button

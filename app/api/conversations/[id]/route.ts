@@ -20,7 +20,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { ConversationStatus } from "@prisma/client";
 import { z } from "zod";
-import { auth } from "@/lib/auth";
+import { getBusinessScope } from "@/lib/business";
 import { prisma } from "@/lib/prisma";
 
 /**
@@ -81,9 +81,13 @@ type UpdateConversationInput = z.infer<typeof updateConversationSchema>;
  * indistinguishable from one that does not exist, which is the only answer that leaks nothing: a
  * distinct 403 would confirm the row is real and tell the caller they had found something.
  */
-async function resolveConversation(tenantId: string, conversationId: string) {
+async function resolveConversation(
+  tenantId: string,
+  businessId: string,
+  conversationId: string
+) {
   return prisma.conversation.findFirst({
-    where: { id: conversationId, tenantId },
+    where: { id: conversationId, tenantId, businessId },
     select: {
       id: true,
       status: true,
@@ -120,17 +124,18 @@ async function resolveConversation(tenantId: string, conversationId: string) {
  */
 async function loadConversationMessages(
   tenantId: string,
+  businessId: string,
   conversationId: string,
   page: number
 ) {
   const [messages, total] = await Promise.all([
     prisma.message.findMany({
-      where: { tenantId, conversationId },
+      where: { tenantId, businessId, conversationId },
       orderBy: { createdAt: "desc" },
       skip: (page - FIRST_PAGE) * MESSAGES_PAGE_SIZE,
       take: MESSAGES_PAGE_SIZE,
     }),
-    prisma.message.count({ where: { tenantId, conversationId } }),
+    prisma.message.count({ where: { tenantId, businessId, conversationId } }),
   ]);
 
   return {
@@ -219,15 +224,15 @@ export async function GET(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
-  const session = await auth();
-  if (!session?.user) {
+  const scope = await getBusinessScope();
+  if (!scope) {
     return NextResponse.json(
       { success: false, error: "Unauthorized" },
       { status: 401 }
     );
   }
 
-  const { tenantId } = session.user;
+  const { tenantId, businessId } = scope;
 
   try {
     const { id } = await params;
@@ -245,7 +250,7 @@ export async function GET(
       );
     }
 
-    const conversation = await resolveConversation(tenantId, id);
+    const conversation = await resolveConversation(tenantId, businessId, id);
     if (!conversation) {
       return NextResponse.json(
         { success: false, error: "Conversation not found" },
@@ -255,6 +260,7 @@ export async function GET(
 
     const { messages, pagination } = await loadConversationMessages(
       tenantId,
+      businessId,
       id,
       parsed.data.page
     );
@@ -284,15 +290,15 @@ export async function PATCH(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
-  const session = await auth();
-  if (!session?.user) {
+  const scope = await getBusinessScope();
+  if (!scope) {
     return NextResponse.json(
       { success: false, error: "Unauthorized" },
       { status: 401 }
     );
   }
 
-  const { tenantId } = session.user;
+  const { tenantId, businessId } = scope;
 
   try {
     const { id } = await params;
@@ -305,7 +311,7 @@ export async function PATCH(
       );
     }
 
-    const conversation = await resolveConversation(tenantId, id);
+    const conversation = await resolveConversation(tenantId, businessId, id);
     if (!conversation) {
       return NextResponse.json(
         { success: false, error: "Conversation not found" },

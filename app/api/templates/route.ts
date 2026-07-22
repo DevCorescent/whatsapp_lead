@@ -8,22 +8,22 @@
 // ============================================================================
 
 import { NextRequest, NextResponse } from "next/server";
-import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
+import { getBusinessScope } from "@/lib/business";
 import { createTemplateSchema } from "@/lib/validators/templates";
 import { validateTemplateName, validatePlaceholders } from "@/lib/templates";
 
 const EDIT_ROLES = ["SUPER_ADMIN", "TENANT_OWNER", "ADMIN"];
 
 export async function GET(req: NextRequest) {
-  const session = await auth();
-  if (!session?.user) return NextResponse.json({ success: false, error: "Unauthorized" }, { status: 401 });
-  const { tenantId } = session.user;
+  const scope = await getBusinessScope();
+  if (!scope) return NextResponse.json({ success: false, error: "Unauthorized" }, { status: 401 });
+  const { businessId } = scope;
 
   try {
     const status = new URL(req.url).searchParams.get("status") ?? undefined;
     const templates = await prisma.messageTemplate.findMany({
-      where: { tenantId, ...(status && { status }) },
+      where: { businessId, ...(status && { status }) },
       orderBy: { createdAt: "desc" },
     });
     return NextResponse.json({ success: true, data: templates });
@@ -34,9 +34,9 @@ export async function GET(req: NextRequest) {
 }
 
 export async function POST(req: NextRequest) {
-  const session = await auth();
-  if (!session?.user) return NextResponse.json({ success: false, error: "Unauthorized" }, { status: 401 });
-  const { tenantId, role } = session.user;
+  const scope = await getBusinessScope();
+  if (!scope) return NextResponse.json({ success: false, error: "Unauthorized" }, { status: 401 });
+  const { tenantId, businessId, role } = scope;
   if (!EDIT_ROLES.includes(role)) {
     return NextResponse.json({ success: false, error: "Forbidden" }, { status: 403 });
   }
@@ -56,13 +56,14 @@ export async function POST(req: NextRequest) {
     const placeholderError = validatePlaceholders(data.body, data.variables);
     if (placeholderError) return NextResponse.json({ success: false, error: placeholderError }, { status: 400 });
 
-    // Names are unique per tenant (Meta also enforces this on the WABA).
-    const existing = await prisma.messageTemplate.findFirst({ where: { name: data.name, tenantId } });
+    // Names are unique per business (Meta also enforces this on the WABA).
+    const existing = await prisma.messageTemplate.findFirst({ where: { name: data.name, businessId } });
     if (existing) return NextResponse.json({ success: false, error: "A template with this name already exists" }, { status: 409 });
 
     const template = await prisma.messageTemplate.create({
       data: {
         tenantId,
+        businessId,
         name: data.name,
         category: data.category,
         language: data.language,

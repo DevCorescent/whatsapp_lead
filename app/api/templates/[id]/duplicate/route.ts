@@ -3,32 +3,33 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { Prisma } from "@prisma/client";
-import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
+import { getBusinessScope } from "@/lib/business";
 
 const EDIT_ROLES = ["SUPER_ADMIN", "TENANT_OWNER", "ADMIN"];
 
 export async function POST(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
-  const session = await auth();
-  if (!session?.user) return NextResponse.json({ success: false, error: "Unauthorized" }, { status: 401 });
-  const { tenantId, role } = session.user;
+  const scope = await getBusinessScope();
+  if (!scope) return NextResponse.json({ success: false, error: "Unauthorized" }, { status: 401 });
+  const { tenantId, businessId, role } = scope;
   if (!EDIT_ROLES.includes(role)) return NextResponse.json({ success: false, error: "Forbidden" }, { status: 403 });
 
   try {
     const { id } = await params;
-    const source = await prisma.messageTemplate.findFirst({ where: { id, tenantId } });
+    const source = await prisma.messageTemplate.findFirst({ where: { id, businessId } });
     if (!source) return NextResponse.json({ success: false, error: "Template not found" }, { status: 404 });
 
-    // Find a free "<name>_copy[_n]" — names are unique per tenant.
+    // Find a free "<name>_copy[_n]" — names are unique per business.
     const base = `${source.name}_copy`.slice(0, 505);
     let name = base;
-    for (let i = 2; await prisma.messageTemplate.findFirst({ where: { name, tenantId } }); i++) {
+    for (let i = 2; await prisma.messageTemplate.findFirst({ where: { name, businessId } }); i++) {
       name = `${base}_${i}`;
     }
 
     const copy = await prisma.messageTemplate.create({
       data: {
         tenantId,
+        businessId,
         name,
         category: source.category,
         language: source.language,

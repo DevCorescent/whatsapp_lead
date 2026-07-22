@@ -19,7 +19,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { ConversationStatus } from "@prisma/client";
 import { z } from "zod";
-import { auth } from "@/lib/auth";
+import { getBusinessScope } from "@/lib/business";
 import { prisma } from "@/lib/prisma";
 
 /**
@@ -73,11 +73,13 @@ const CONVERSATION_LIST_SELECT = {
  */
 async function listConversations(
   tenantId: string,
+  businessId: string,
   filters: ListConversationsFilters
 ) {
   return prisma.conversation.findMany({
     where: {
       tenantId,
+      businessId,
       ...(filters.status !== undefined && { status: filters.status }),
       ...(filters.assigneeId !== undefined && { assignedToId: filters.assigneeId }),
     },
@@ -94,15 +96,15 @@ async function listConversations(
  * into an invitation to read another workspace.
  */
 export async function GET(req: NextRequest) {
-  const session = await auth();
-  if (!session?.user) {
+  const scope = await getBusinessScope();
+  if (!scope) {
     return NextResponse.json(
       { success: false, error: "Unauthorized" },
       { status: 401 }
     );
   }
 
-  const { tenantId } = session.user;
+  const { tenantId, businessId } = scope;
 
   try {
     const { searchParams } = new URL(req.url);
@@ -121,7 +123,7 @@ export async function GET(req: NextRequest) {
       );
     }
 
-    const conversations = await listConversations(tenantId, parsed.data);
+    const conversations = await listConversations(tenantId, businessId, parsed.data);
 
     return NextResponse.json({ success: true, data: conversations });
   } catch (error) {

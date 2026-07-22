@@ -6,17 +6,17 @@
 // ============================================================================
 
 import { NextResponse } from "next/server";
-import { auth } from "@/lib/auth";
+import { getBusinessScope } from "@/lib/business";
 import { prisma } from "@/lib/prisma";
 
 export async function GET() {
-  const session = await auth();
-  if (!session?.user) return NextResponse.json({ success: false, error: "Unauthorized" }, { status: 401 });
-  const { tenantId } = session.user;
+  const scope = await getBusinessScope();
+  if (!scope) return NextResponse.json({ success: false, error: "Unauthorized" }, { status: 401 });
+  const { tenantId, businessId } = scope;
 
   try {
     const campaigns = await prisma.campaign.findMany({
-      where: { tenantId, status: "SCHEDULED" },
+      where: { tenantId, businessId, status: "SCHEDULED" },
       include: {
         template: { select: { id: true, name: true } },
         _count: { select: { contacts: true } },

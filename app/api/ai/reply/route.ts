@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
+import { getBusinessScope } from "@/lib/business";
 import { generateReply } from "@/lib/ai";
 import { assertWithinLimit, incrementAiUsage, LimitError } from "@/lib/billing/usage";
 
@@ -10,9 +10,9 @@ const schema = z.object({
 });
 
 export async function POST(req: NextRequest) {
-  const session = await auth();
-  if (!session?.user) return NextResponse.json({ success: false, error: "Unauthorized" }, { status: 401 });
-  const { tenantId } = session.user;
+  const scope = await getBusinessScope();
+  if (!scope) return NextResponse.json({ success: false, error: "Unauthorized" }, { status: 401 });
+  const { tenantId, businessId, business } = scope;
 
   try {
     let body: unknown;
@@ -32,7 +32,7 @@ export async function POST(req: NextRequest) {
     }
 
     const conversation = await prisma.conversation.findFirst({
-      where: { id: conversationId, tenantId },
+      where: { id: conversationId, businessId },
       include: {
         messages: {
           where: { isNote: false },
@@ -45,9 +45,10 @@ export async function POST(req: NextRequest) {
 
     if (!conversation) return NextResponse.json({ success: false, error: "Conversation not found" }, { status: 404 });
 
-    // Get knowledge base context
+    // Knowledge context is scoped to THIS business only — a suggested reply can never
+    // draw on another business's knowledge base.
     const knowledgeDocs = await prisma.knowledgeDoc.findMany({
-      where: { tenantId, isIndexed: true },
+      where: { businessId, content: { not: null } },
       select: { content: true },
       take: 5,
     });
@@ -62,8 +63,17 @@ export async function POST(req: NextRequest) {
 
     if (messages.length === 0) return NextResponse.json({ success: false, error: "No messages to reply to" }, { status: 400 });
 
-    const systemPrompt = "You are a helpful WhatsApp CRM assistant. Suggest a concise, professional reply to the customer's last message.";
-    const reply = await generateReply(messages, systemPrompt, knowledgeContext);
+    // Use the business's own AI persona/prompt when configured, so a suggested reply
+    // sounds like the selected business.
+    const systemPrompt =
+      business.aiSystemPrompt?.trim() ||
+      business.aiPersonality?.trim() ||
+      "You are a helpful WhatsApp CRM assistant. Suggest a concise, professional reply to the customer's last message.";
+    const reply = await generateReply(messages, systemPrompt, knowledgeContext, {
+      model: business.aiModel ?? undefined,
+      temperature: business.aiTemperature,
+      maxTokens: business.aiMaxTokens,
+    });
     await incrementAiUsage(tenantId);
     return NextResponse.json({ success: true, data: { reply } });
   } catch (error) {

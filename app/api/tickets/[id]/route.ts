@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { TicketStatus, TicketPriority } from "@prisma/client";
-import { auth } from "@/lib/auth";
+import { getBusinessScope } from "@/lib/business";
 import { prisma } from "@/lib/prisma";
 
 const updateSchema = z.object({
@@ -13,14 +13,14 @@ const updateSchema = z.object({
 }).strict();
 
 export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
-  const session = await auth();
-  if (!session?.user) return NextResponse.json({ success: false, error: "Unauthorized" }, { status: 401 });
-  const { tenantId } = session.user;
+  const scope = await getBusinessScope();
+  if (!scope) return NextResponse.json({ success: false, error: "Unauthorized" }, { status: 401 });
+  const { tenantId, businessId } = scope;
 
   try {
     const { id } = await params;
     const ticket = await prisma.ticket.findFirst({
-      where: { id, tenantId },
+      where: { id, tenantId, businessId },
       include: {
         assignedTo: { select: { id: true, name: true, avatar: true } },
         conversation: {
@@ -45,9 +45,9 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
 }
 
 export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
-  const session = await auth();
-  if (!session?.user) return NextResponse.json({ success: false, error: "Unauthorized" }, { status: 401 });
-  const { tenantId } = session.user;
+  const scope = await getBusinessScope();
+  if (!scope) return NextResponse.json({ success: false, error: "Unauthorized" }, { status: 401 });
+  const { tenantId, businessId } = scope;
 
   try {
     const { id } = await params;
@@ -57,7 +57,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
     const parsed = updateSchema.safeParse(body);
     if (!parsed.success) return NextResponse.json({ success: false, error: parsed.error.issues[0].message }, { status: 400 });
 
-    const existing = await prisma.ticket.findFirst({ where: { id, tenantId } });
+    const existing = await prisma.ticket.findFirst({ where: { id, tenantId, businessId } });
     if (!existing) return NextResponse.json({ success: false, error: "Ticket not found" }, { status: 404 });
 
     const { status, ...rest } = parsed.data;
@@ -87,9 +87,9 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
 }
 
 export async function DELETE(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
-  const session = await auth();
-  if (!session?.user) return NextResponse.json({ success: false, error: "Unauthorized" }, { status: 401 });
-  const { tenantId, role } = session.user;
+  const scope = await getBusinessScope();
+  if (!scope) return NextResponse.json({ success: false, error: "Unauthorized" }, { status: 401 });
+  const { tenantId, businessId, role } = scope;
 
   try {
     const { id } = await params;
@@ -98,7 +98,7 @@ export async function DELETE(req: NextRequest, { params }: { params: Promise<{ i
       return NextResponse.json({ success: false, error: "Forbidden" }, { status: 403 });
     }
 
-    const existing = await prisma.ticket.findFirst({ where: { id, tenantId } });
+    const existing = await prisma.ticket.findFirst({ where: { id, tenantId, businessId } });
     if (!existing) return NextResponse.json({ success: false, error: "Ticket not found" }, { status: 404 });
 
     await prisma.ticket.delete({ where: { id } });

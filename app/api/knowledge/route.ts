@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { auth } from "@/lib/auth";
+import { getBusinessScope } from "@/lib/business";
 import { prisma } from "@/lib/prisma";
 import { detectDocType, extractText } from "@/lib/extract";
 import { saveFile } from "@/lib/storage";
@@ -15,13 +15,13 @@ const createDocSchema = z.object({
 }).refine((d) => d.content || d.url, { message: "Either content or url is required" });
 
 export async function GET(req: NextRequest) {
-  const session = await auth();
-  if (!session?.user) return NextResponse.json({ success: false, error: "Unauthorized" }, { status: 401 });
-  const { tenantId } = session.user;
+  const scope = await getBusinessScope();
+  if (!scope) return NextResponse.json({ success: false, error: "Unauthorized" }, { status: 401 });
+  const { tenantId, businessId } = scope;
 
   try {
     const docs = await prisma.knowledgeDoc.findMany({
-      where: { tenantId },
+      where: { tenantId, businessId },
       select: {
         id: true,
         name: true,
@@ -43,9 +43,9 @@ export async function GET(req: NextRequest) {
 }
 
 export async function POST(req: NextRequest) {
-  const session = await auth();
-  if (!session?.user) return NextResponse.json({ success: false, error: "Unauthorized" }, { status: 401 });
-  const { tenantId } = session.user;
+  const scope = await getBusinessScope();
+  if (!scope) return NextResponse.json({ success: false, error: "Unauthorized" }, { status: 401 });
+  const { tenantId, businessId } = scope;
 
   // Branch: multipart file upload (TXT / PDF / DOCX)
   const contentType = req.headers.get("content-type") ?? "";
@@ -82,6 +82,7 @@ export async function POST(req: NextRequest) {
       const doc = await prisma.knowledgeDoc.create({
         data: {
           tenantId,
+          businessId,
           name,
           type,
           content,
@@ -126,6 +127,7 @@ export async function POST(req: NextRequest) {
     const doc = await prisma.knowledgeDoc.create({
       data: {
         tenantId,
+        businessId,
         name,
         type,
         ...(content && { content }),

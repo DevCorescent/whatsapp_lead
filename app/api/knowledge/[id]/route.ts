@@ -1,15 +1,15 @@
 import { NextRequest, NextResponse } from "next/server";
-import { auth } from "@/lib/auth";
+import { getBusinessScope } from "@/lib/business";
 import { prisma } from "@/lib/prisma";
 
 export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
-  const session = await auth();
-  if (!session?.user) return NextResponse.json({ success: false, error: "Unauthorized" }, { status: 401 });
-  const { tenantId } = session.user;
+  const scope = await getBusinessScope();
+  if (!scope) return NextResponse.json({ success: false, error: "Unauthorized" }, { status: 401 });
+  const { tenantId, businessId } = scope;
 
   try {
     const { id } = await params;
-    const doc = await prisma.knowledgeDoc.findFirst({ where: { id, tenantId } });
+    const doc = await prisma.knowledgeDoc.findFirst({ where: { id, tenantId, businessId } });
     if (!doc) return NextResponse.json({ success: false, error: "Document not found" }, { status: 404 });
     return NextResponse.json({ success: true, data: doc });
   } catch (error) {
@@ -19,13 +19,13 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
 }
 
 export async function DELETE(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
-  const session = await auth();
-  if (!session?.user) return NextResponse.json({ success: false, error: "Unauthorized" }, { status: 401 });
-  const { tenantId } = session.user;
+  const scope = await getBusinessScope();
+  if (!scope) return NextResponse.json({ success: false, error: "Unauthorized" }, { status: 401 });
+  const { tenantId, businessId } = scope;
 
   try {
     const { id } = await params;
-    const doc = await prisma.knowledgeDoc.findFirst({ where: { id, tenantId } });
+    const doc = await prisma.knowledgeDoc.findFirst({ where: { id, tenantId, businessId } });
     if (!doc) return NextResponse.json({ success: false, error: "Document not found" }, { status: 404 });
     await prisma.knowledgeDoc.delete({ where: { id } });
     return NextResponse.json({ success: true });

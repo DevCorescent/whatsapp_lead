@@ -19,11 +19,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import { MessageDirection, MessageStatus, MessageType } from "@prisma/client";
 import type { Contact, Conversation, Message } from "@prisma/client";
-import { auth } from "@/lib/auth";
+import { getBusinessScope, resolveWhatsAppCreds } from "@/lib/business";
 import { prisma } from "@/lib/prisma";
 import { pusher, tenantChannel, PusherEvent } from "@/lib/pusher";
 import { sendTextMessage } from "@/lib/whatsapp";
-import { decryptSecret } from "@/lib/crypto";
 import { sendMessageSchema } from "@/lib/validators/message";
 
 /**
@@ -52,16 +51,17 @@ type ConversationWithContact = Conversation & { contact: Contact };
  */
 async function resolveConversation(
   tenantId: string,
+  businessId: string,
   conversationId: string
 ): Promise<ConversationWithContact | null> {
   return prisma.conversation.findFirst({
-    where: { id: conversationId, tenantId },
+    where: { id: conversationId, tenantId, businessId },
     include: { contact: true },
   });
 }
 
 /**
- * The WhatsApp credentials a tenant sends under.
+ * The WhatsApp credentials a business sends under.
  *
  * Kept as its own type so the send path can state, in its signature, that it will not run without
  * both halves — rather than threading two nullable columns through and null-checking at the point
@@ -73,38 +73,18 @@ interface WhatsAppCredentials {
 }
 
 /**
- * Resolve the tenant's WhatsApp credentials, or null when the workspace has not connected a number.
+ * Resolve the current business's WhatsApp credentials, or null when it has not connected a number.
  *
- * Both columns are nullable in the schema — a workspace exists before it is wired to Meta — so an
- * unconfigured tenant is an ordinary state, not an error, and is reported to the caller as a
- * precondition failure rather than an exception.
+ * Delegates to the shared resolver so an agent's reply goes out from the SAME number the selected
+ * business receives on — with a fallback to the tenant's legacy settings for a single-business
+ * install. An unconnected business is an ordinary state, reported as a precondition failure.
  */
-async function resolveWhatsAppCredentials(
-  tenantId: string
+async function resolveBusinessCredentials(
+  businessId: string
 ): Promise<WhatsAppCredentials | null> {
-  const settings = await prisma.tenantSettings.findUnique({
-    where: { tenantId },
-    select: { waPhoneNumberId: true, waApiKey: true },
-  });
-
-  if (!settings?.waPhoneNumberId || !settings.waApiKey) return null;
-
-  // The access token is stored encrypted at rest; decrypt it for the Cloud API
-  // call. A decryption failure (wrong/absent key) is treated as "not connected"
-  // rather than crashing the send — the message still saves as a note-less draft.
-  let apiKey: string | null;
-  try {
-    apiKey = decryptSecret(settings.waApiKey);
-  } catch (error) {
-    console.error("[MESSAGES] Failed to decrypt WhatsApp token:", error);
-    return null;
-  }
-  if (!apiKey) return null;
-
-  return {
-    phoneNumberId: settings.waPhoneNumberId,
-    apiKey,
-  };
+  const creds = await resolveWhatsAppCreds(businessId);
+  if (!creds.phoneNumberId || !creds.apiKey) return null;
+  return { phoneNumberId: creds.phoneNumberId, apiKey: creds.apiKey };
 }
 
 /**
@@ -129,6 +109,7 @@ async function resolveWhatsAppCredentials(
  */
 async function saveNote(
   tenantId: string,
+  businessId: string,
   conversationId: string,
   sentById: string,
   content: string
@@ -136,6 +117,7 @@ async function saveNote(
   return prisma.message.create({
     data: {
       tenantId,
+      businessId,
       conversationId,
       sentById,
       direction: MessageDirection.OUTBOUND,
@@ -169,6 +151,7 @@ async function saveNote(
  */
 async function saveOutboundMessage(
   tenantId: string,
+  businessId: string,
   conversationId: string,
   sentById: string,
   content: string,
@@ -178,6 +161,7 @@ async function saveOutboundMessage(
     const saved = await tx.message.create({
       data: {
         tenantId,
+        businessId,
         conversationId,
         sentById,
         waMessageId,
@@ -243,15 +227,15 @@ async function broadcastMessage(
  * looking at a message in their thread that never left the building.
  */
 export async function POST(req: NextRequest) {
-  const session = await auth();
-  if (!session?.user) {
+  const scope = await getBusinessScope();
+  if (!scope) {
     return NextResponse.json(
       { success: false, error: "Unauthorized" },
       { status: 401 }
     );
   }
 
-  const { tenantId, id: userId } = session.user;
+  const { tenantId, businessId, userId } = scope;
 
   try {
     const parsed = sendMessageSchema.safeParse(await req.json());
@@ -284,7 +268,7 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const conversation = await resolveConversation(tenantId, conversationId);
+    const conversation = await resolveConversation(tenantId, businessId, conversationId);
     if (!conversation) {
       return NextResponse.json(
         { success: false, error: "Conversation not found" },
@@ -293,16 +277,16 @@ export async function POST(req: NextRequest) {
     }
 
     if (isNote) {
-      const note = await saveNote(tenantId, conversationId, userId, body);
+      const note = await saveNote(tenantId, businessId, conversationId, userId, body);
       await broadcastMessage(tenantId, note);
 
       return NextResponse.json({ success: true, data: note }, { status: 201 });
     }
 
-    const credentials = await resolveWhatsAppCredentials(tenantId);
+    const credentials = await resolveBusinessCredentials(businessId);
     if (!credentials) {
       return NextResponse.json(
-        { success: false, error: "WhatsApp is not connected for this workspace" },
+        { success: false, error: "WhatsApp is not connected for this business" },
         { status: 409 }
       );
     }
@@ -316,6 +300,7 @@ export async function POST(req: NextRequest) {
 
     const message = await saveOutboundMessage(
       tenantId,
+      businessId,
       conversationId,
       userId,
       body,

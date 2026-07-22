@@ -7,7 +7,7 @@
 // ============================================================================
 
 import { NextRequest, NextResponse } from "next/server";
-import { auth } from "@/lib/auth";
+import { getBusinessScope } from "@/lib/business";
 import { prisma } from "@/lib/prisma";
 import { toCsv, type CsvColumn } from "@/lib/csv";
 
@@ -28,11 +28,11 @@ function csvResponse(csv: string, resource: string): NextResponse {
 }
 
 export async function GET(req: NextRequest) {
-  const session = await auth();
-  if (!session?.user) {
+  const scope = await getBusinessScope();
+  if (!scope) {
     return NextResponse.json({ success: false, error: "Unauthorized" }, { status: 401 });
   }
-  const { tenantId } = session.user;
+  const { tenantId, businessId } = scope;
 
   const resource = new URL(req.url).searchParams.get("resource") as Resource | null;
   if (!resource || !RESOURCES.includes(resource)) {
@@ -45,7 +45,7 @@ export async function GET(req: NextRequest) {
   try {
     if (resource === "contacts") {
       const rows = await prisma.contact.findMany({
-        where: { tenantId },
+        where: { tenantId, businessId },
         include: { tags: { include: { tag: { select: { name: true } } } } },
         orderBy: { createdAt: "desc" },
       });
@@ -65,7 +65,7 @@ export async function GET(req: NextRequest) {
 
     if (resource === "leads") {
       const rows = await prisma.lead.findMany({
-        where: { tenantId },
+        where: { tenantId, businessId },
         include: {
           contact: { select: { name: true, phone: true } },
           assignedTo: { select: { name: true } },
@@ -89,7 +89,7 @@ export async function GET(req: NextRequest) {
 
     if (resource === "campaigns") {
       const rows = await prisma.campaign.findMany({
-        where: { tenantId },
+        where: { tenantId, businessId },
         orderBy: { createdAt: "desc" },
       });
       const columns: CsvColumn<(typeof rows)[number]>[] = [
@@ -121,13 +121,13 @@ export async function GET(req: NextRequest) {
       messagesThisMonth,
       totalCampaigns,
     ] = await Promise.all([
-      prisma.contact.count({ where: { tenantId } }),
-      prisma.lead.count({ where: { tenantId } }),
-      prisma.lead.count({ where: { tenantId, stage: "WON" } }),
-      prisma.conversation.count({ where: { tenantId } }),
-      prisma.conversation.count({ where: { tenantId, status: "OPEN" } }),
-      prisma.message.count({ where: { tenantId, createdAt: { gte: startOfMonth } } }),
-      prisma.campaign.count({ where: { tenantId } }),
+      prisma.contact.count({ where: { tenantId, businessId } }),
+      prisma.lead.count({ where: { tenantId, businessId } }),
+      prisma.lead.count({ where: { tenantId, businessId, stage: "WON" } }),
+      prisma.conversation.count({ where: { tenantId, businessId } }),
+      prisma.conversation.count({ where: { tenantId, businessId, status: "OPEN" } }),
+      prisma.message.count({ where: { tenantId, businessId, createdAt: { gte: startOfMonth } } }),
+      prisma.campaign.count({ where: { tenantId, businessId } }),
     ]);
 
     const conversionRate = totalLeads > 0 ? Math.round((wonLeads / totalLeads) * 100) : 0;

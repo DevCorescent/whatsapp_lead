@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { CampaignStatus, Prisma } from "@prisma/client";
-import { auth } from "@/lib/auth";
+import { getBusinessScope } from "@/lib/business";
 import { prisma } from "@/lib/prisma";
 import { runCampaign, CampaignClaimError } from "@/lib/campaigns/runner";
 import { assertWithinLimit, LimitError } from "@/lib/billing/usage";
@@ -26,9 +26,9 @@ const createCampaignSchema = z.object({
 }).refine((d) => d.templateId || d.message, { message: "Either templateId or message is required" });
 
 export async function GET(req: NextRequest) {
-  const session = await auth();
-  if (!session?.user) return NextResponse.json({ success: false, error: "Unauthorized" }, { status: 401 });
-  const { tenantId } = session.user;
+  const scope = await getBusinessScope();
+  if (!scope) return NextResponse.json({ success: false, error: "Unauthorized" }, { status: 401 });
+  const { tenantId, businessId } = scope;
 
   try {
     const { searchParams } = new URL(req.url);
@@ -42,6 +42,7 @@ export async function GET(req: NextRequest) {
     const { status, page, limit } = parsed.data;
     const where = {
       tenantId,
+      businessId,
       ...(status !== undefined && { status }),
     };
 
@@ -71,9 +72,9 @@ export async function GET(req: NextRequest) {
 }
 
 export async function POST(req: NextRequest) {
-  const session = await auth();
-  if (!session?.user) return NextResponse.json({ success: false, error: "Unauthorized" }, { status: 401 });
-  const { tenantId } = session.user;
+  const scope = await getBusinessScope();
+  if (!scope) return NextResponse.json({ success: false, error: "Unauthorized" }, { status: 401 });
+  const { tenantId, businessId } = scope;
 
   try {
     let body: unknown;
@@ -110,17 +111,17 @@ export async function POST(req: NextRequest) {
     let contacts: { id: string; phone: string }[] = [];
     if (all) {
       contacts = await prisma.contact.findMany({
-        where: { tenantId, isBlocked: false, optedOut: false },
+        where: { tenantId, businessId, isBlocked: false, optedOut: false },
         select: { id: true, phone: true },
       });
     } else if (tagIds && tagIds.length > 0) {
       contacts = await prisma.contact.findMany({
-        where: { tenantId, isBlocked: false, optedOut: false, tags: { some: { tagId: { in: tagIds } } } },
+        where: { tenantId, businessId, isBlocked: false, optedOut: false, tags: { some: { tagId: { in: tagIds } } } },
         select: { id: true, phone: true },
       });
     } else if (contactIds && contactIds.length > 0) {
       contacts = await prisma.contact.findMany({
-        where: { id: { in: contactIds }, tenantId, isBlocked: false, optedOut: false },
+        where: { id: { in: contactIds }, tenantId, businessId, isBlocked: false, optedOut: false },
         select: { id: true, phone: true },
       });
     }
@@ -130,6 +131,7 @@ export async function POST(req: NextRequest) {
     const campaign = await prisma.campaign.create({
       data: {
         tenantId,
+        businessId,
         name,
         ...(templateId && { templateId }),
         status: initialStatus,

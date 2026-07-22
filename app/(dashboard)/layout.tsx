@@ -2,6 +2,8 @@ import type { ReactNode } from "react";
 import { redirect } from "next/navigation";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
+import { getBusinessScope, listBusinesses, publicBusiness } from "@/lib/business";
+import type { BusinessesResponse } from "@/hooks/useBusinesses";
 import { Sidebar } from "@/components/dashboard/Sidebar";
 import { Topbar } from "@/components/dashboard/Topbar";
 import { OnboardingGate } from "@/components/onboarding/OnboardingGate";
@@ -27,7 +29,25 @@ export default async function DashboardLayout({ children }: { children: ReactNod
   const session = await auth();
   if (!session?.user) redirect("/login");
 
-  const plan = await getPlanName(session.user.tenantId);
+  // Resolves (and, for a tenant that predates businesses, lazily creates) the
+  // current business — this is where a legacy single-tenant install transparently
+  // gains its default business on first dashboard load.
+  const scope = await getBusinessScope();
+  if (!scope) redirect("/login");
+
+  const [plan, list] = await Promise.all([
+    getPlanName(scope.tenantId),
+    listBusinesses(scope.tenantId),
+  ]);
+
+  const businesses: BusinessesResponse = {
+    success: true,
+    currentBusinessId: scope.businessId,
+    data: list.map((b) => {
+      const pub = publicBusiness(b);
+      return { ...pub, createdAt: pub.createdAt.toISOString(), updatedAt: pub.updatedAt.toISOString() };
+    }),
+  };
 
   return (
     <div className="flex h-screen overflow-hidden bg-[#f6f7f9]">
@@ -39,10 +59,11 @@ export default async function DashboardLayout({ children }: { children: ReactNod
           tenantName: session.user.tenantName,
           plan,
         }}
+        businesses={businesses}
       />
 
       <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
-        <Topbar tenantName={session.user.tenantName} />
+        <Topbar businessName={scope.business.name} tenantName={session.user.tenantName} />
         <main className="scrollbar-slim flex-1 overflow-auto p-4 lg:p-6">{children}</main>
       </div>
 

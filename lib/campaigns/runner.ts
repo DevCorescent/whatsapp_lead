@@ -16,7 +16,7 @@
 import { CampaignStatus } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { sendTextMessage } from "@/lib/whatsapp";
-import { decryptSecret } from "@/lib/crypto";
+import { resolveWhatsAppCreds } from "@/lib/business";
 
 /** Statuses a campaign may be in and still be eligible to start sending. */
 const CLAIMABLE: CampaignStatus[] = ["DRAFT", "SCHEDULED", "FAILED", "CANCELLED"];
@@ -80,28 +80,20 @@ export async function runCampaign(campaignId: string): Promise<RunCampaignResult
   try {
     const campaign = await prisma.campaign.findUnique({
       where: { id: campaignId },
-      select: { id: true, tenantId: true, metadata: true },
+      select: { id: true, tenantId: true, businessId: true, metadata: true },
     });
     if (!campaign) throw new Error("Campaign not found after claim");
 
-    const settings = await prisma.tenantSettings.findUnique({
-      where: { tenantId: campaign.tenantId },
-      select: { waPhoneNumberId: true, waApiKey: true },
-    });
+    // Credentials come from the campaign's OWN business — each business sends from
+    // its own WhatsApp number — with a fallback to the tenant's legacy settings.
+    const creds = await resolveWhatsAppCreds(campaign.businessId);
 
-    let waApiKey: string | null = null;
-    try {
-      waApiKey = decryptSecret(settings?.waApiKey);
-    } catch (error) {
-      console.error("[CAMPAIGN RUNNER] Failed to decrypt WhatsApp token:", error);
+    if (!creds.phoneNumberId || !creds.apiKey) {
+      return await markFailed(campaignId, "WhatsApp is not connected for this business. Add credentials in the business settings.");
     }
 
-    if (!settings?.waPhoneNumberId || !waApiKey) {
-      return await markFailed(campaignId, "WhatsApp is not connected. Add credentials in Settings.");
-    }
-
-    const phoneNumberId = settings.waPhoneNumberId;
-    const apiKey = waApiKey;
+    const phoneNumberId = creds.phoneNumberId;
+    const apiKey = creds.apiKey;
     const body = messageFromMetadata(campaign.metadata);
 
     const pending = await prisma.campaignContact.findMany({
