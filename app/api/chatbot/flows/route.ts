@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { auth } from "@/lib/auth";
-import { prisma } from "@/lib/prisma";
+import { isPrismaDatabaseUnavailable, prisma } from "@/lib/prisma";
 
 const createSchema = z.object({
   name: z.string().min(1, "Name is required"),
@@ -32,6 +32,9 @@ export async function GET(req: NextRequest) {
 
     return NextResponse.json({ success: true, data: flows });
   } catch (error) {
+    if (isPrismaDatabaseUnavailable(error)) {
+      return NextResponse.json({ success: true, data: [], offline: true });
+    }
     console.error("[CHATBOT FLOWS GET]", error);
     return NextResponse.json({ success: false, error: "Failed to fetch flows" }, { status: 500 });
   }
@@ -66,6 +69,12 @@ export async function POST(req: NextRequest) {
 
     return NextResponse.json({ success: true, data: flow }, { status: 201 });
   } catch (error) {
+    if (isPrismaDatabaseUnavailable(error)) {
+      return NextResponse.json(
+        { success: false, error: "Database unavailable. Opened a local draft builder instead." },
+        { status: 503 },
+      );
+    }
     console.error("[CHATBOT FLOWS POST]", error);
     return NextResponse.json({ success: false, error: "Failed to create flow" }, { status: 500 });
   }

@@ -3,6 +3,12 @@ import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { createContactSchema } from "@/lib/validators/contact";
 
+function normalizeSource(value: unknown) {
+  if (typeof value !== "string") return null;
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : null;
+}
+
 export async function GET(req: NextRequest) {
   const session = await auth();
   if (!session?.user) return NextResponse.json({ success: false, error: "Unauthorized" }, { status: 401 });
@@ -66,6 +72,7 @@ export async function POST(req: NextRequest) {
 
   try {
     const { tags, ...data } = parsed.data;
+    const source = normalizeSource(data.source);
 
     const existing = await prisma.contact.findUnique({
       where: { phone_tenantId: { phone: data.phone, tenantId: session.user.tenantId } },
@@ -80,6 +87,7 @@ export async function POST(req: NextRequest) {
     const contact = await prisma.contact.create({
       data: {
         ...data,
+        source,
         tenantId: session.user.tenantId,
         ...(tags && tags.length > 0 && {
           tags: { create: tags.map((tagId) => ({ tagId })) },

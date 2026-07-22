@@ -22,3 +22,11 @@ export const prisma =
   });
 
 if (process.env.NODE_ENV !== "production") globalForPrisma.prisma = prisma;
+
+export function isPrismaDatabaseUnavailable(error: unknown): boolean {
+  if (!error || typeof error !== "object") return false;
+  const code = "code" in error ? (error as { code?: unknown }).code : undefined;
+  if (code === "P1001") return true;
+  const message = "message" in error ? String((error as { message?: unknown }).message ?? "") : "";
+  return message.includes("Can't reach database server") || message.includes("DatabaseNotReachable");
+}

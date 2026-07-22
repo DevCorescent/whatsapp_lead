@@ -95,15 +95,57 @@ export function daysBetween(from?: Date | string | null) {
 
 // ─── Domain display maps ──────────────────────────────────────────────────────
 
-export const LEAD_STAGES: { stage: LeadStage; label: string; accent: string; dot: string }[] = [
-  { stage: "NEW_LEAD", label: "New Lead", accent: "border-t-blue-400", dot: "bg-blue-400" },
-  { stage: "CONTACTED", label: "Contacted", accent: "border-t-violet-400", dot: "bg-violet-400" },
-  { stage: "QUALIFIED", label: "Qualified", accent: "border-t-amber-400", dot: "bg-amber-400" },
-  { stage: "PROPOSAL_SENT", label: "Proposal Sent", accent: "border-t-orange-400", dot: "bg-orange-400" },
-  { stage: "NEGOTIATION", label: "Negotiation", accent: "border-t-pink-400", dot: "bg-pink-400" },
-  { stage: "WON", label: "Won", accent: "border-t-emerald-500", dot: "bg-emerald-500" },
-  { stage: "LOST", label: "Lost", accent: "border-t-rose-400", dot: "bg-rose-400" },
+/**
+ * Fixed stage-colour palette. Kept as a closed set of named colours (not free-form
+ * strings) so every Tailwind class is statically present and survives purge, and so
+ * tenant customisation stays inside the design system. Each colour maps to the exact
+ * classes the pipeline already uses.
+ */
+export const STAGE_COLORS = {
+  blue: { label: "Blue", accent: "border-t-blue-400", dot: "bg-blue-400" },
+  violet: { label: "Violet", accent: "border-t-violet-400", dot: "bg-violet-400" },
+  amber: { label: "Amber", accent: "border-t-amber-400", dot: "bg-amber-400" },
+  orange: { label: "Orange", accent: "border-t-orange-400", dot: "bg-orange-400" },
+  pink: { label: "Pink", accent: "border-t-pink-400", dot: "bg-pink-400" },
+  emerald: { label: "Emerald", accent: "border-t-emerald-500", dot: "bg-emerald-500" },
+  rose: { label: "Rose", accent: "border-t-rose-400", dot: "bg-rose-400" },
+  teal: { label: "Teal", accent: "border-t-teal-400", dot: "bg-teal-400" },
+  sky: { label: "Sky", accent: "border-t-sky-400", dot: "bg-sky-400" },
+  indigo: { label: "Indigo", accent: "border-t-indigo-400", dot: "bg-indigo-400" },
+  slate: { label: "Slate", accent: "border-t-slate-400", dot: "bg-slate-400" },
+} as const;
+
+export type StageColor = keyof typeof STAGE_COLORS;
+export const STAGE_COLOR_KEYS = Object.keys(STAGE_COLORS) as StageColor[];
+
+/**
+ * Canonical default stage definitions — the single source the backend serves from
+ * (GET /api/lead-stages) and the fallback when a tenant has no custom config. `color`
+ * drives `accent`/`dot`, so there is one place a stage's colour is defined.
+ */
+const STAGE_DEFS: { stage: LeadStage; label: string; color: StageColor }[] = [
+  { stage: "NEW_LEAD", label: "New Lead", color: "blue" },
+  { stage: "CONTACTED", label: "Contacted", color: "violet" },
+  { stage: "QUALIFIED", label: "Qualified", color: "amber" },
+  { stage: "PROPOSAL_SENT", label: "Proposal Sent", color: "orange" },
+  { stage: "NEGOTIATION", label: "Negotiation", color: "pink" },
+  { stage: "WON", label: "Won", color: "emerald" },
+  { stage: "LOST", label: "Lost", color: "rose" },
 ];
+
+export const LEAD_STAGES: {
+  stage: LeadStage;
+  label: string;
+  color: StageColor;
+  accent: string;
+  dot: string;
+}[] = STAGE_DEFS.map((d) => ({
+  stage: d.stage,
+  label: d.label,
+  color: d.color,
+  accent: STAGE_COLORS[d.color].accent,
+  dot: STAGE_COLORS[d.color].dot,
+}));
 
 export const STAGE_LABEL: Record<LeadStage, string> = Object.fromEntries(
   LEAD_STAGES.map((s) => [s.stage, s.label]),

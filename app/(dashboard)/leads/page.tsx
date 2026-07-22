@@ -1,9 +1,10 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { AlertTriangle, Download, LayoutGrid, List, Plus, Search, X } from "lucide-react";
 import type { LeadStage, LeadScoreLabel } from "@prisma/client";
 import { useLeads } from "@/hooks/useLeads";
+import { useLeadStages } from "@/hooks/useLeadStages";
 import {
   Avatar,
   Badge,
@@ -24,6 +25,8 @@ const SCORE_OPTIONS: LeadScoreLabel[] = ["COLD", "WARM", "HOT", "QUALIFIED"];
 
 export default function LeadsPage() {
   const { data, isLoading, refetch } = useLeads();
+  const { stages } = useLeadStages();
+  const defaultStage: LeadStage = stages[0]?.key ?? "NEW_LEAD";
 
   const [view, setView] = useState<"kanban" | "list">("kanban");
   const [search, setSearch] = useState("");
@@ -36,11 +39,20 @@ export default function LeadsPage() {
 
   /**
    * Optimistic stage moves live here rather than inside the board so they survive
-   * a refetch and any change to the filters. PATCH /api/leads/:id is still a 501
-   * stub, so in practice the override is rolled back and the user gets a toast.
+   * a refetch and any change to the filters. PATCH /api/leads/:id is live, so a
+   * successful move is reconciled with a refetch; a failed one is rolled back with a toast.
    */
   const [overrides, setOverrides] = useState<Record<string, LeadStage>>({});
   const [toast, setToast] = useState<string | null>(null);
+
+  /**
+   * Cards with an in-flight PATCH. Two roles: `savingIds` drives the per-card spinner and blocks
+   * re-dragging in the UI, while `inFlight` (a ref, not state) is the authoritative guard that
+   * stops a second PATCH for the same lead from being fired before the first resolves — a ref
+   * because the guard must see the latest value synchronously within one event, not on re-render.
+   */
+  const [savingIds, setSavingIds] = useState<Record<string, true>>({});
+  const inFlight = useRef<Set<string>>(new Set());
 
   const allLeads = useMemo(() => {
     const leads = normalizeLeads(data);
@@ -84,27 +96,39 @@ export default function LeadsPage() {
 
   async function moveLead(lead: PipelineLead, stage: LeadStage) {
     if (lead.stage === stage) return;
+    // A move already saving for this lead must complete before another is accepted — otherwise a
+    // fast second drag races the first PATCH and the two responses can land out of order.
+    if (inFlight.current.has(lead.id)) return;
+
     const previous = lead.stage;
+    inFlight.current.add(lead.id);
 
     setToast(null);
     setOverrides((o) => ({ ...o, [lead.id]: stage })); // optimistic move
+    setSavingIds((s) => ({ ...s, [lead.id]: true }));
 
     try {
-      // TODO [GAURANSH]: PATCH /api/leads/:id — currently returns 501 Not Implemented.
       const res = await fetch(`/api/leads/${lead.id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ stage }),
       });
       if (!res.ok) throw new Error(String(res.status));
-    } catch (err) {
+
+      // Reconcile with the server's own copy so the optimistic override is backed by real data;
+      // the override (keyed by id) keeps re-applying the same stage until the refetch lands, so the
+      // card never flickers between the two.
+      refetch();
+    } catch {
       setOverrides((o) => ({ ...o, [lead.id]: previous })); // revert
-      const code = err instanceof Error ? err.message : "";
-      setToast(
-        code === "501"
-          ? `Couldn't move "${lead.title}" to ${STAGE_LABEL[stage]} — the leads API isn't live yet.`
-          : `Couldn't move "${lead.title}" to ${STAGE_LABEL[stage]}. Change reverted.`,
-      );
+      setToast(`Couldn't move "${lead.title}" to ${STAGE_LABEL[stage]}. Change reverted.`);
+    } finally {
+      inFlight.current.delete(lead.id);
+      setSavingIds((s) => {
+        const next = { ...s };
+        delete next[lead.id];
+        return next;
+      });
     }
   }
 
@@ -123,7 +147,7 @@ export default function LeadsPage() {
               <Download className="h-4 w-4" />
               Export CSV
             </Button>
-            <Button onClick={() => openAddModal("NEW_LEAD")}>
+            <Button onClick={() => openAddModal(defaultStage)}>
               <Plus className="h-4 w-4" />
               Add Lead
             </Button>
@@ -220,6 +244,7 @@ export default function LeadsPage() {
         <KanbanBoard
           leads={leads}
           isLoading={isLoading}
+          savingIds={savingIds}
           onAddLead={openAddModal}
           onSelectLead={(lead) => setSelectedId(lead.id)}
           onMoveLead={moveLead}
@@ -229,7 +254,7 @@ export default function LeadsPage() {
           leads={leads}
           isLoading={isLoading}
           onSelectLead={(lead) => setSelectedId(lead.id)}
-          onAddLead={() => openAddModal("NEW_LEAD")}
+          onAddLead={() => openAddModal(defaultStage)}
         />
       )}
 
@@ -309,7 +334,7 @@ function LeadTable({
   return (
     <Card className="overflow-hidden">
       <div className="scrollbar-slim overflow-x-auto">
-        <table className="w-full min-w-[52rem] text-left text-sm">
+        <table className="w-full min-w-208 text-left text-sm">
           <thead className="border-b border-slate-200 bg-slate-50 text-xs uppercase tracking-wide text-slate-500">
             <tr>
               <th className="px-4 py-3 font-medium">Lead</th>

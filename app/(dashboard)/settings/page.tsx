@@ -1,16 +1,18 @@
 "use client";
 
 import { useState } from "react";
-import { Building2, MessageSquare, CreditCard, Bell } from "lucide-react";
+import { Building2, MessageSquare, CreditCard, Bell, KanbanSquare } from "lucide-react";
 import { PageHeader } from "@/components/ui";
 import { GeneralTab } from "@/components/settings/GeneralTab";
 import { WhatsAppTab } from "@/components/settings/WhatsAppTab";
 import { BillingTab } from "@/components/settings/BillingTab";
 import { NotificationsTab } from "@/components/settings/NotificationsTab";
+import { LeadStagesTab } from "@/components/settings/LeadStagesTab";
 import { cn } from "@/lib/utils";
 
 const TABS = [
   { key: "general", label: "General", icon: Building2 },
+  { key: "pipeline", label: "Lead Pipeline Stages", icon: KanbanSquare },
   { key: "whatsapp", label: "WhatsApp", icon: MessageSquare },
   { key: "billing", label: "Billing", icon: CreditCard },
   { key: "notifications", label: "Notifications", icon: Bell },
@@ -51,6 +53,7 @@ export default function SettingsPage() {
 
       <div className="max-w-4xl">
         {tab === "general" && <GeneralTab />}
+        {tab === "pipeline" && <LeadStagesTab />}
         {tab === "whatsapp" && <WhatsAppTab />}
         {tab === "billing" && <BillingTab />}
         {tab === "notifications" && <NotificationsTab />}

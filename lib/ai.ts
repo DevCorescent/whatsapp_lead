@@ -6,20 +6,21 @@ const MODEL = process.env.GROQ_MODEL ?? "llama-3.3-70b-versatile";
 export async function generateReply(
   conversationHistory: { role: "user" | "assistant"; content: string }[],
   systemPrompt: string,
-  knowledgeContext?: string
+  knowledgeContext?: string,
+  options?: { model?: string; temperature?: number }
 ): Promise<string> {
   const systemContent = knowledgeContext
     ? `${systemPrompt}\n\nRelevant knowledge:\n${knowledgeContext}`
     : systemPrompt;
 
   const completion = await groq.chat.completions.create({
-    model: MODEL,
+    model: options?.model || MODEL,
     messages: [
       { role: "system", content: systemContent },
       ...conversationHistory,
     ],
     max_tokens: 500,
-    temperature: 0.7,
+    temperature: options?.temperature ?? 0.7,
   });
 
   return completion.choices[0]?.message?.content ?? "";

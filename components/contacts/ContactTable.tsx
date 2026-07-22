@@ -15,7 +15,8 @@ import {
 } from "lucide-react";
 import type { LeadStage } from "@prisma/client";
 import { Avatar, Badge, Button, Card, EmptyState, SkeletonRows } from "@/components/ui";
-import { LEAD_STAGES, STAGE_LABEL, cn, timeAgo } from "@/lib/utils";
+import { STAGE_LABEL, cn, timeAgo } from "@/lib/utils";
+import { useLeadStages } from "@/hooks/useLeadStages";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 // The backend is still a 501 stub, so nothing about the payload shape is
@@ -88,12 +89,16 @@ export function TagPill({ tag }: { tag: TagChip }) {
 }
 
 export function StageBadge({ stage }: { stage: LeadStage | null }) {
+  // Label + colour follow the tenant's stage config (shared cached query), falling
+  // back to the enum defaults. Hooks must run unconditionally, so call before the
+  // early return.
+  const { allStages } = useLeadStages();
   if (!stage) return <span className="text-xs text-slate-400">—</span>;
-  const meta = LEAD_STAGES.find((s) => s.stage === stage);
+  const meta = allStages.find((s) => s.key === stage);
   return (
     <Badge className="gap-1.5">
       <span className={cn("h-1.5 w-1.5 rounded-full", meta?.dot ?? "bg-slate-400")} />
-      {STAGE_LABEL[stage] ?? stage}
+      {meta?.label ?? STAGE_LABEL[stage] ?? stage}
     </Badge>
   );
 }

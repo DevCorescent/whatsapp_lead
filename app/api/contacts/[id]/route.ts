@@ -5,6 +5,12 @@ import { updateContactSchema } from "@/lib/validators/contact";
 
 type Params = { params: Promise<{ id: string }> };
 
+function normalizeSource(value: unknown) {
+  if (typeof value !== "string") return null;
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : null;
+}
+
 export async function GET(req: NextRequest, { params }: Params) {
   const session = await auth();
   if (!session?.user) return NextResponse.json({ success: false, error: "Unauthorized" }, { status: 401 });
@@ -49,6 +55,10 @@ export async function PATCH(req: NextRequest, { params }: Params) {
   }
 
   const { tags, ...data } = parsed.data;
+  const sanitizedData = {
+    ...data,
+    ...(data.source !== undefined ? { source: normalizeSource(data.source) } : {}),
+  };
 
   const updated = await prisma.$transaction(async (tx) => {
     if (tags !== undefined) {
@@ -62,7 +72,7 @@ export async function PATCH(req: NextRequest, { params }: Params) {
 
     return tx.contact.update({
       where: { id },
-      data,
+      data: sanitizedData,
       include: { tags: { include: { tag: true } } },
     });
   });

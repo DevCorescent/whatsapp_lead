@@ -17,7 +17,8 @@ import {
 } from "recharts";
 import { BarChart2 } from "lucide-react";
 import { Avatar, Card, EmptyState, Skeleton } from "@/components/ui";
-import { cn, LEAD_STAGES } from "@/lib/utils";
+import { cn } from "@/lib/utils";
+import { useLeadStages } from "@/hooks/useLeadStages";
 
 // ─── Palette ──────────────────────────────────────────────────────────────────
 // Validated for CVD separation, chroma and contrast against a white surface.
@@ -238,9 +239,11 @@ export function LeadPipelineChart({
 }) {
   const counts = new Map((data ?? []).map((r) => [r.stage, r.count]));
 
-  // LEAD_STAGES drives both the order (funnel order, not data order) and labels.
+  // The tenant's stage config drives both the order (funnel order, not data order)
+  // and the labels — same source as the pipeline.
+  const { stages } = useLeadStages();
   const rows = hasRows(data)
-    ? LEAD_STAGES.map((s) => ({ name: s.label, count: counts.get(s.stage) ?? 0 }))
+    ? stages.map((s) => ({ name: s.label, count: counts.get(s.key) ?? 0 }))
     : [];
 
   return (
@@ -437,7 +440,7 @@ export function AgentPerformanceTable({
         />
       ) : (
         <div className="overflow-x-auto">
-          <table className="w-full min-w-[640px] text-sm">
+          <table className="w-full min-w-160 text-sm">
             <thead>
               <tr className="border-b border-slate-100 text-left text-xs font-medium text-slate-500">
                 <th className="px-5 py-2.5 font-medium">Agent</th>

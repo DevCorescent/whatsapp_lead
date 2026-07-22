@@ -24,6 +24,18 @@ export function useContacts(filters?: ContactFilters) {
   });
 }
 
+export function useContactSources() {
+  return useQuery<string[]>({
+    queryKey: ["contacts", "sources"],
+    queryFn: async () => {
+      const res = await fetch("/api/contacts/sources");
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error ?? "Failed to fetch contact sources");
+      return Array.isArray(json.data) ? json.data : [];
+    },
+  });
+}
+
 export function useContact(id: string) {
   return useQuery({
     queryKey: ["contacts", id],
@@ -51,6 +63,7 @@ export function useCreateContact() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["contacts"] });
+      queryClient.invalidateQueries({ queryKey: ["contacts", "sources"] });
     },
   });
 }

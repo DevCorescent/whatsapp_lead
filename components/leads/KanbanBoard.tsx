@@ -5,6 +5,7 @@ import { Plus, Inbox } from "lucide-react";
 import type { LeadStage, LeadScoreLabel } from "@prisma/client";
 import { Button, EmptyState, Skeleton } from "@/components/ui";
 import { cn, formatCurrency, LEAD_STAGES, scoreLabelFor } from "@/lib/utils";
+import { useLeadStages } from "@/hooks/useLeadStages";
 import { LeadCard, type LeadsByStage, type PipelineLead } from "./LeadCard";
 
 // ─── Normalisation ────────────────────────────────────────────────────────────
@@ -103,18 +104,26 @@ export function groupByStage(leads: PipelineLead[]): LeadsByStage {
 export function KanbanBoard({
   leads,
   isLoading,
+  savingIds,
   onAddLead,
   onSelectLead,
   onMoveLead,
 }: {
   leads: PipelineLead[];
   isLoading?: boolean;
+  /** Ids of leads with an in-flight stage change; drives the per-card saving state. */
+  savingIds?: Record<string, true>;
   onAddLead: (stage: LeadStage) => void;
   onSelectLead: (lead: PipelineLead) => void;
   onMoveLead: (lead: PipelineLead, stage: LeadStage) => void;
 }) {
   const [dragging, setDragging] = useState<PipelineLead | null>(null);
   const [dragOver, setDragOver] = useState<LeadStage | null>(null);
+
+  // Columns, their order and visibility come from the backend (GET /api/lead-stages)
+  // via the shared hook — no hardcoded stage array here. Leads are still bucketed by
+  // the `LeadStage` enum key, so the pipeline flow is unchanged.
+  const { stages } = useLeadStages();
 
   const board = groupByStage(leads);
 
@@ -129,8 +138,8 @@ export function KanbanBoard({
   return (
     <div className="flex flex-col gap-4">
       <div className="scrollbar-slim flex gap-4 overflow-x-auto pb-4">
-        {LEAD_STAGES.map(({ stage, label, accent, dot }) => {
-          const items = board[stage];
+        {stages.map(({ key: stage, label, accent, dot }) => {
+          const items = board[stage] ?? [];
           const total = items.reduce((sum, l) => sum + (l.value ?? 0), 0);
           const isOver = dragOver === stage;
 
@@ -195,6 +204,7 @@ export function KanbanBoard({
                       key={lead.id}
                       lead={lead}
                       isDragging={dragging?.id === lead.id}
+                      isSaving={!!savingIds?.[lead.id]}
                       onOpen={onSelectLead}
                       onDragStart={setDragging}
                       onDragEnd={() => {
@@ -232,7 +242,7 @@ export function KanbanBoard({
             title="No leads in the pipeline"
             description="Leads will appear here once the leads API is live. In the meantime you can drag cards between stages and create leads from any column."
             action={
-              <Button size="sm" onClick={() => onAddLead("NEW_LEAD")}>
+              <Button size="sm" onClick={() => onAddLead(stages[0]?.key ?? "NEW_LEAD")}>
                 <Plus className="h-4 w-4" />
                 Add your first lead
               </Button>

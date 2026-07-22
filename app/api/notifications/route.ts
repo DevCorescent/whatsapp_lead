@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
-import { prisma } from "@/lib/prisma";
+import { isPrismaDatabaseUnavailable, prisma } from "@/lib/prisma";
 
 const ACTION_LABEL: Record<string, string> = {
   CONTACT_DELETED: "Contact deleted",
@@ -67,6 +67,9 @@ export async function GET() {
 
     return NextResponse.json({ success: true, data: notifications });
   } catch (error) {
+    if (isPrismaDatabaseUnavailable(error)) {
+      return NextResponse.json({ success: true, data: [] });
+    }
     console.error("[NOTIFICATIONS]", error);
     return NextResponse.json({ success: false, error: "Failed to fetch notifications" }, { status: 500 });
   }

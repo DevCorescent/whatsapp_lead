@@ -5,8 +5,9 @@ import { AlertTriangle, Loader2, Plus } from "lucide-react";
 import type { LeadStage } from "@prisma/client";
 import { createLeadSchema } from "@/lib/validators/lead";
 import { useContacts } from "@/hooks/useContacts";
+import { useLeadStages } from "@/hooks/useLeadStages";
 import { Button, Field, Modal, inputClass } from "@/components/ui";
-import { cn, LEAD_STAGES } from "@/lib/utils";
+import { cn } from "@/lib/utils";
 
 type ContactOption = { id: string; name: string; phone?: string | null };
 
@@ -87,6 +88,12 @@ function AddLeadForm({
     [contactsQuery.data],
   );
   const contactsUnavailable = contacts.length === 0;
+
+  // Stage options come from the backend via the shared hook. React Query caches
+  // the list, so opening the modal after the board loaded shows the stages
+  // instantly and stays in sync if they change (optimistic refresh).
+  const { stages, isLoading: stagesLoading } = useLeadStages();
+  const stagesUnavailable = stages.length === 0;
 
   function set<K extends keyof typeof form>(key: K, value: (typeof form)[K]) {
     setForm((f) => ({ ...f, [key]: value }));
@@ -213,15 +220,20 @@ function AddLeadForm({
           <Field label="Stage" htmlFor="lead-stage">
             <select
               id="lead-stage"
-              className={inputClass}
+              className={cn(inputClass, stagesUnavailable && "cursor-not-allowed bg-slate-50 text-slate-400")}
               value={form.stage}
+              disabled={stagesUnavailable}
               onChange={(e) => set("stage", e.target.value as LeadStage)}
             >
-              {LEAD_STAGES.map((s) => (
-                <option key={s.stage} value={s.stage}>
-                  {s.label}
-                </option>
-              ))}
+              {stagesUnavailable ? (
+                <option value="">{stagesLoading ? "Loading stages…" : "No stages available"}</option>
+              ) : (
+                stages.map((s) => (
+                  <option key={s.key} value={s.key}>
+                    {s.label}
+                  </option>
+                ))
+              )}
             </select>
           </Field>
 

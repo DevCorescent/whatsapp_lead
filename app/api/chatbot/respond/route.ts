@@ -3,10 +3,16 @@ import { z } from "zod";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { generateReply } from "@/lib/ai";
+import { toFlowDocument } from "@/lib/chatbot/types";
+import { runFlowStep, type FlowVariables } from "@/lib/chatbot/engine";
 
 const schema = z.object({
   conversationId: z.string().min(1),
   flowId: z.string().optional(),
+  /** Optional traversal state so multi-turn flows can resume without a schema change. */
+  fromNodeId: z.string().optional(),
+  input: z.string().optional(),
+  variables: z.record(z.string(), z.string()).optional(),
 });
 
 export async function POST(req: NextRequest) {
@@ -21,7 +27,7 @@ export async function POST(req: NextRequest) {
     const parsed = schema.safeParse(body);
     if (!parsed.success) return NextResponse.json({ success: false, error: parsed.error.issues[0].message }, { status: 400 });
 
-    const { conversationId, flowId } = parsed.data;
+    const { conversationId, flowId, fromNodeId, input, variables } = parsed.data;
 
     const [conversation, settings, knowledgeDocs] = await Promise.all([
       prisma.conversation.findFirst({
@@ -48,23 +54,89 @@ export async function POST(req: NextRequest) {
 
     if (!conversation) return NextResponse.json({ success: false, error: "Conversation not found" }, { status: 404 });
 
-    // Build flow instructions if a flow is attached
+    const knowledgeContext = knowledgeDocs.map((d) => d.content).filter(Boolean).join("\n\n") || undefined;
+    const personalityBase = settings?.aiPersonality ?? "You are a helpful WhatsApp business assistant.";
+
+    // ── Deterministic flow execution ──────────────────────────────────────────
+    // When a flow is attached and has a Start node, traverse it with the shared
+    // engine. API/AI nodes run through injected executors (real fetch + the existing
+    // generateReply), so this reuses the AI pipeline rather than duplicating it.
+    // Flows without a Start node fall back to the AI-only reply below — preserving
+    // the previous behaviour and the response shape.
     let flowInstructions = "";
     if (flowId) {
       const flow = await prisma.chatbotFlow.findFirst({ where: { id: flowId, tenantId } });
-      if (flow?.nodes) {
-        const textNodes = (flow.nodes as { data?: { text?: string } }[])
-          .filter((n) => n.data?.text)
-          .map((n) => n.data!.text)
+      if (flow) {
+        const doc = toFlowDocument(flow.nodes, flow.edges);
+        const hasStart = doc.nodes.some((n) => n.type === "start");
+
+        if (hasStart && doc.nodes.length > 0) {
+          const step = await runFlowStep(doc, {
+            fromNodeId,
+            input,
+            variables: (variables ?? {}) as FlowVariables,
+            executors: {
+              callApi: async (node, vars) => {
+                const url = node.url?.replace(/\{\{\s*([\w.]+)\s*\}\}/g, (_m, k: string) => vars[k] ?? "");
+                if (!url) return "";
+                const headers: Record<string, string> = {};
+                for (const h of node.headers ?? []) if (h.key) headers[h.key] = h.value;
+                const controller = new AbortController();
+                const timeout = setTimeout(() => controller.abort(), Math.max(1, node.timeout ?? 15) * 1000);
+                try {
+                  const res = await fetch(url, {
+                    method: node.method ?? "GET",
+                    headers,
+                    ...(node.method && node.method !== "GET" && node.body ? { body: node.body } : {}),
+                    signal: controller.signal,
+                  });
+                  return (await res.text()).slice(0, 2000);
+                } finally {
+                  clearTimeout(timeout);
+                }
+              },
+              callAi: async (node, vars) => {
+                const systemPrompt = `${personalityBase}\n\n${node.prompt ?? "Reply helpfully."}`;
+                const history = conversation.messages
+                  .filter((m) => m.content)
+                  .map((m) => ({
+                    role: (m.direction === "INBOUND" ? "user" : "assistant") as "user" | "assistant",
+                    content: m.content!,
+                  }));
+                if (input) history.push({ role: "user", content: input });
+                void vars;
+                return generateReply(history.length ? history : [{ role: "user", content: node.prompt ?? "" }], systemPrompt, knowledgeContext, {
+                  model: node.model,
+                  temperature: node.temperature,
+                });
+              },
+            },
+          });
+
+          const messages = step.actions.filter((a) => a.type === "message" || a.type === "ai").map((a) => a.text ?? "").filter(Boolean);
+          return NextResponse.json({
+            success: true,
+            data: {
+              reply: messages.join("\n\n"),
+              messages,
+              variables: step.variables,
+              status: step.status,
+              awaitingQuestionId: step.awaitingQuestionId,
+              handoff: step.handoff,
+            },
+          });
+        }
+
+        // Legacy fallback: fold any message/text node content into the AI system prompt.
+        const textNodes = doc.nodes
+          .map((n) => (n.data as { text?: string; question?: string }).text ?? (n.data as { question?: string }).question)
+          .filter(Boolean)
           .join("\n");
         if (textNodes) flowInstructions = `\n\nChatbot flow instructions:\n${textNodes}`;
       }
     }
 
-    const knowledgeContext = knowledgeDocs.map((d) => d.content).filter(Boolean).join("\n\n") || undefined;
-
-    const personality = settings?.aiPersonality ?? "You are a helpful WhatsApp business assistant.";
-    const systemPrompt = `${personality}${flowInstructions}\n\nRespond concisely and professionally in the same language as the customer.`;
+    const systemPrompt = `${personalityBase}${flowInstructions}\n\nRespond concisely and professionally in the same language as the customer.`;
 
     const messages = conversation.messages
       .filter((m) => m.content)

@@ -2,9 +2,9 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { Download, Search, UserPlus } from "lucide-react";
-import { useContacts } from "@/hooks/useContacts";
+import { useContactSources, useContacts } from "@/hooks/useContacts";
 import { Button, Card, PageHeader, inputClass } from "@/components/ui";
-import { AddContactModal, CONTACT_SOURCES } from "@/components/contacts/AddContactModal";
+import { AddContactModal } from "@/components/contacts/AddContactModal";
 import {
   ContactTable,
   contactTags,
@@ -43,6 +43,7 @@ export default function ContactsPage() {
     tagId: tagId || undefined,
     page,
   });
+  const { data: sourceOptions = [] } = useContactSources();
 
   // The API is a 501 stub, so treat every shape as optional.
   const rows: ContactRow[] = useMemo(() => {
@@ -146,7 +147,7 @@ export default function ContactsPage() {
             className={selectClass}
           >
             <option value="">All sources</option>
-            {CONTACT_SOURCES.map((s) => (
+            {sourceOptions.map((s) => (
               <option key={s} value={s}>
                 {s}
               </option>

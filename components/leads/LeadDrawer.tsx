@@ -12,14 +12,15 @@ import {
 } from "lucide-react";
 import type { LeadStage } from "@prisma/client";
 import { useLead } from "@/hooks/useLeads";
+import { useLeadStages } from "@/hooks/useLeadStages";
 import { Avatar, Badge, Button, EmptyState } from "@/components/ui";
 import {
   cn,
   daysBetween,
   formatCurrency,
   formatDate,
-  LEAD_STAGES,
   SCORE_STYLE,
+  STAGE_LABEL,
   timeAgo,
 } from "@/lib/utils";
 import type { LeadActivityItem, PipelineLead } from "./LeadCard";
@@ -131,6 +132,8 @@ function LeadDrawerPanel({
   const [banner, setBanner] = useState<string | null>(null);
 
   const detailQuery = useLead(lead.id);
+  // Same backend-driven stage source as the board and Add Lead modal.
+  const { stages } = useLeadStages();
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -238,8 +241,12 @@ function LeadDrawerPanel({
                 onChange={(e) => onStageChange(full!, e.target.value as LeadStage)}
                 className="w-full rounded-lg border border-slate-300 px-2.5 py-2 text-sm text-slate-900 focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-500/20"
               >
-                {LEAD_STAGES.map((s) => (
-                  <option key={s.stage} value={s.stage}>
+                {/* Keep the lead's current stage selectable even if it's been hidden. */}
+                {!stages.some((s) => s.key === full.stage) && (
+                  <option value={full.stage}>{STAGE_LABEL[full.stage] ?? full.stage}</option>
+                )}
+                {stages.map((s) => (
+                  <option key={s.key} value={s.key}>
                     {s.label}
                   </option>
                 ))}

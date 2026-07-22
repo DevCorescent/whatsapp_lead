@@ -163,6 +163,11 @@ model TenantSettings {
   smtpUser             String?
   smtpPass             String?
   smtpFrom             String?
+  // Per-tenant Lead pipeline stage config: [{ key, label, color, order, enabled }].
+  // `key` is always an existing `LeadStage` enum value — this only customises how the
+  // enum stages are labelled/coloured/ordered/shown. Null ⇒ fall back to enum defaults,
+  // so existing tenants and lead records keep working with no migration.
+  leadStages           Json?
   createdAt            DateTime @default(now())
   updatedAt            DateTime @updatedAt
 
