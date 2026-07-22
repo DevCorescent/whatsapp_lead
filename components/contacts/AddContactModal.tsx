@@ -3,13 +3,11 @@
 import { useState } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
-import { useQueryClient } from "@tanstack/react-query";
 import { AlertTriangle } from "lucide-react";
 import { Button, Field, Modal, inputClass } from "@/components/ui";
 import { createContactSchema, type CreateContactInput } from "@/lib/validators/contact";
 import { cn } from "@/lib/utils";
-
-export const CONTACT_SOURCES = ["WhatsApp", "Website", "Referral", "Campaign", "Manual"] as const;
+import { useContactSources, useCreateContact } from "@/hooks/useContacts";
 
 const EMPTY: CreateContactInput = {
   name: "",
@@ -18,7 +16,7 @@ const EMPTY: CreateContactInput = {
   company: "",
   designation: "",
   location: "",
-  source: "WhatsApp",
+  source: "",
   notes: "",
 };
 
@@ -33,7 +31,8 @@ export function AddContactModal({ open, onClose }: { open: boolean; onClose: () 
 }
 
 function AddContactForm({ onClose }: { onClose: () => void }) {
-  const queryClient = useQueryClient();
+  const createContact = useCreateContact();
+  const { data: sources = [] } = useContactSources();
   const [banner, setBanner] = useState<string | null>(null);
 
   const {
@@ -47,28 +46,11 @@ function AddContactForm({ onClose }: { onClose: () => void }) {
 
   const onSubmit = handleSubmit(async (values) => {
     setBanner(null);
-    // TODO [SHALMON]: implement POST /api/contacts
     try {
-      const res = await fetch("/api/contacts", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(values),
-      });
-
-      if (!res.ok) {
-        // 501 is the expected path until the route is built — surface it, don't throw.
-        setBanner(
-          res.status === 501
-            ? "Backend not wired yet — POST /api/contacts returns 501."
-            : `Could not save contact (HTTP ${res.status}). Please try again.`,
-        );
-        return;
-      }
-
-      await queryClient.invalidateQueries({ queryKey: ["contacts"] });
+      await createContact.mutateAsync(values);
       onClose();
-    } catch {
-      setBanner("Network error — could not reach POST /api/contacts.");
+    } catch (error) {
+      setBanner((error as Error).message || "Could not save contact. Please try again.");
     }
   });
 
@@ -146,13 +128,26 @@ function AddContactForm({ onClose }: { onClose: () => void }) {
 
           <div className="sm:col-span-2">
             <Field label="Source" htmlFor="source" error={errors.source?.message}>
-              <select id="source" className={inputClass} {...register("source")}>
-                {CONTACT_SOURCES.map((source) => (
-                  <option key={source} value={source}>
-                    {source}
-                  </option>
-                ))}
-              </select>
+              <input
+                id="source"
+                className={inputClass}
+                list="contact-source-options"
+                autoComplete="off"
+                placeholder="Website, Referral, Expo 2026, or your own label…"
+                {...register("source", {
+                  setValueAs: (value: string) => value?.trim() ?? "",
+                })}
+              />
+              {sources.length > 0 && (
+                <datalist id="contact-source-options">
+                  {sources.map((source) => (
+                    <option key={source} value={source} />
+                  ))}
+                </datalist>
+              )}
+              <p className="mt-1 text-xs text-slate-500">
+                Any custom source is allowed. Existing values from your contacts appear here automatically.
+              </p>
             </Field>
           </div>
 
@@ -173,8 +168,8 @@ function AddContactForm({ onClose }: { onClose: () => void }) {
           <Button type="button" variant="secondary" onClick={onClose} disabled={isSubmitting}>
             Cancel
           </Button>
-          <Button type="submit" disabled={isSubmitting}>
-            {isSubmitting ? "Saving…" : "Save Contact"}
+          <Button type="submit" disabled={isSubmitting || createContact.isPending}>
+            {isSubmitting || createContact.isPending ? "Saving…" : "Save Contact"}
           </Button>
         </div>
       </form>
