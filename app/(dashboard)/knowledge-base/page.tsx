@@ -192,12 +192,14 @@ function UploadModal({ open, onClose }: { open: boolean; onClose: () => void }) 
   };
 
   const upload = useMutation({
-    mutationFn: async ({ name, type, content, url: docUrl }: { name: string; type: string; content?: string; url?: string }) => {
-      const res = await fetch("/api/knowledge", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name, type, content, url: docUrl }),
-      });
+    // Files go up as multipart (real bytes, extracted server-side); a URL goes up as JSON.
+    mutationFn: async (payload: FormData | { name: string; type: string; url: string }) => {
+      const res = await fetch(
+        "/api/knowledge",
+        payload instanceof FormData
+          ? { method: "POST", body: payload }
+          : { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) },
+      );
       const json = await res.json();
       if (!res.ok) throw new Error(json.error ?? "Upload failed");
       return json;
@@ -223,14 +225,14 @@ function UploadModal({ open, onClose }: { open: boolean; onClose: () => void }) 
           e.preventDefault();
           setError(null);
           try {
+            if (files.length > 0) {
+              const fd = new FormData();
+              for (const file of files) fd.append("files", file);
+              await upload.mutateAsync(fd);
+            }
             if (url.trim()) {
               const name = url.split("/").filter(Boolean).pop() ?? "Web page";
               await upload.mutateAsync({ name, type: "URL", url: url.trim() });
-            }
-            for (const file of files) {
-              const text = await file.text();
-              const ext = (file.name.split(".").pop() ?? "TXT").toUpperCase();
-              await upload.mutateAsync({ name: file.name, type: ext, content: text });
             }
             queryClient.invalidateQueries({ queryKey: ["knowledge"] });
             close();

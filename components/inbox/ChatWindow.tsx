@@ -9,6 +9,7 @@ import {
   Clock,
   FileText,
   Image as ImageIcon,
+  Loader2,
   MapPin,
   MessageSquare,
   Paperclip,
@@ -20,13 +21,11 @@ import {
 } from "lucide-react";
 import type { MessageStatus } from "@prisma/client";
 import { Avatar, Badge, Button, EmptyState, Skeleton } from "@/components/ui";
+import { useAiReply } from "@/hooks/useMessages";
 import { CONVERSATION_STATUS_STYLE, cn, dayLabel, formatTime } from "@/lib/utils";
 import { contactName, type InboxConversation, type InboxMessage } from "./ConversationList";
 
 const EMOJIS = ["👍", "🙏", "😊", "🎉", "🔥", "✅", "❤️", "😂", "🤝", "📞", "📄", "⏰", "💰", "🚀", "👀", "🙌"];
-
-const AI_SUGGESTION =
-  "Thanks for reaching out! I'd be happy to help with that — could you share a few more details so I can point you to the right plan?";
 
 // ─── Component ────────────────────────────────────────────────────────────────
 
@@ -61,6 +60,8 @@ export function ChatWindow({
   const [isNote, setIsNote] = useState(false);
   const [showEmoji, setShowEmoji] = useState(false);
   const [attachment, setAttachment] = useState<string | null>(null);
+
+  const aiReply = useAiReply();
 
   const fileRef = useRef<HTMLInputElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
@@ -122,10 +123,17 @@ export function ChatWindow({
     inputRef.current?.focus();
   }
 
-  function handleAiSuggest() {
-    // TODO [GAURANSH]: wire POST /api/ai/reply — { conversationId } → { reply }.
-    setDraft(AI_SUGGESTION);
-    inputRef.current?.focus();
+  async function handleAiSuggest() {
+    if (!conversationId || aiReply.isPending) return;
+    try {
+      const res = await aiReply.mutateAsync(conversationId);
+      const reply = (res as { data?: { reply?: string } })?.data?.reply;
+      if (reply) setDraft(reply);
+      inputRef.current?.focus();
+    } catch (err) {
+      // No toast system yet — surface the failure directly in the composer.
+      setDraft(err instanceof Error ? `⚠️ ${err.message}` : "⚠️ AI reply failed");
+    }
   }
 
   return (
@@ -283,10 +291,11 @@ export function ChatWindow({
               onClick={() => setShowEmoji((v) => !v)}
             />
             <ComposerIcon
-              icon={Sparkles}
-              label="AI Suggest a reply"
+              icon={aiReply.isPending ? Loader2 : Sparkles}
+              label={aiReply.isPending ? "Generating AI reply…" : "AI Suggest a reply"}
               onClick={handleAiSuggest}
-              className="text-emerald-600 hover:bg-emerald-50"
+              disabled={aiReply.isPending}
+              className={cn("text-emerald-600 hover:bg-emerald-50", aiReply.isPending && "animate-spin")}
             />
 
             {showEmoji && (
@@ -591,23 +600,27 @@ function ComposerIcon({
   label,
   onClick,
   active,
+  disabled,
   className,
 }: {
   icon: React.ComponentType<{ className?: string }>;
   label: string;
   onClick: () => void;
   active?: boolean;
+  disabled?: boolean;
   className?: string;
 }) {
   return (
     <button
       type="button"
       onClick={onClick}
+      disabled={disabled}
       title={label}
       aria-label={label}
       className={cn(
         "rounded-full p-2 text-slate-500 transition hover:bg-slate-100 hover:text-slate-700",
         "focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-600",
+        "disabled:cursor-not-allowed disabled:opacity-60",
         active && "bg-slate-100 text-slate-700",
         className,
       )}
