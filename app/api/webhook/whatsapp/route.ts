@@ -172,7 +172,7 @@ const STATUS_RANK: Record<MessageStatus, number> = {
 };
 
 /**
- * TenantSettings with its parent Tenant eagerly loaded.
+ * TenantSettings with its parent Tenant eagerly loaded, plus the resolved businessId.
  *
  * Callers need both halves on every inbound event — the settings carry the WhatsApp
  * credentials and AI flags, while the tenant carries `isActive` and the `tenantId` that
@@ -180,7 +180,7 @@ const STATUS_RANK: Record<MessageStatus, number> = {
  */
 export type ResolvedTenant = Prisma.TenantSettingsGetPayload<{
   include: { tenant: true };
-}>;
+}> & { businessId: string };
 
 /**
  * Resolve the owning tenant for an inbound WhatsApp event.
@@ -220,7 +220,13 @@ async function resolveTenant(phoneNumberId: string): Promise<ResolvedTenant> {
     );
   }
 
-  return settings;
+  const business = await prisma.business.findFirst({
+    where: { whatsappPhoneNumberId: phoneNumberId, tenant: { isActive: true } },
+    select: { id: true },
+  });
+  const businessId = business?.id ?? `biz_${settings.tenantId}`;
+
+  return { ...settings, businessId };
 }
 
 /**
@@ -245,19 +251,20 @@ async function resolveTenant(phoneNumberId: string): Promise<ResolvedTenant> {
  */
 async function upsertContact(
   tenantId: string,
+  businessId: string,
   phone: string,
   name?: string
 ): Promise<Contact> {
   const profileName = name?.trim();
 
   return prisma.contact.upsert({
-    where: { phone_tenantId: { phone, tenantId } },
+    where: { phone_businessId: { phone, businessId } },
     // Omitting `name` entirely leaves the stored value untouched; Prisma maintains
     // `updatedAt` on its own via the schema's `@updatedAt` attribute.
     update: profileName ? { name: profileName } : {},
     // A contact with no profile name is still addressable by number, so the phone
     // doubles as the display name until an agent or a later payload supplies a better one.
-    create: { tenantId, phone, name: profileName || phone },
+    create: { tenantId, businessId, phone, name: profileName || phone },
   });
 }
 
@@ -286,6 +293,7 @@ async function upsertContact(
  */
 async function findOrCreateConversation(
   tenantId: string,
+  businessId: string,
   contactId: string
 ): Promise<Conversation> {
   const existing = await prisma.conversation.findFirst({
@@ -296,7 +304,7 @@ async function findOrCreateConversation(
   if (existing) return existing;
 
   return prisma.conversation.create({
-    data: { tenantId, contactId },
+    data: { tenantId, businessId, contactId },
   });
 }
 
@@ -839,12 +847,14 @@ async function processIncomingMessage(
 ): Promise<InboundMessageResult> {
   const contact = await upsertContact(
     tenant.tenantId,
+    tenant.businessId,
     message.from,
     contactName
   );
 
   const conversation = await findOrCreateConversation(
     tenant.tenantId,
+    tenant.businessId,
     contact.id
   );
 

@@ -109,6 +109,12 @@ enum BillingCycle {
   ANNUAL
 }
 
+enum BusinessStatus {
+  ACTIVE
+  INACTIVE
+  SUSPENDED
+}
+
 // ─── TENANT (Workspace) ──────────────────────────────────────────────────────
 
 model Tenant {
@@ -121,23 +127,70 @@ model Tenant {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  users         User[]
+  users          User[]
+  businesses     Business[]
+  contacts       Contact[]
+  conversations  Conversation[]
+  leads          Lead[]
+  pipelineStages PipelineStage[]
+  campaigns      Campaign[]
+  templates      MessageTemplate[]
+  chatbotFlows   ChatbotFlow[]
+  tickets        Ticket[]
+  knowledgeDocs  KnowledgeDoc[]
+  tags           Tag[]
+  subscription   Subscription?
+  settings       TenantSettings?
+  auditLogs      AuditLog[]
+  quickReplies   QuickReply[]
+
+  @@map("tenants")
+}
+
+// ─── BUSINESS (WhatsApp account workspace within a Tenant) ───────────────────
+
+model Business {
+  id                    String         @id @default(cuid())
+  tenantId              String
+  name                  String
+  slug                  String
+  whatsappPhoneNumber   String?
+  whatsappPhoneNumberId String?        @unique
+  whatsappBusinessId    String?
+  whatsappAccessToken   String?
+  whatsappVerifyToken   String?
+  status                BusinessStatus @default(ACTIVE)
+  logo                  String?
+  timezone              String         @default("Asia/Kolkata")
+  aiEnabled             Boolean        @default(false)
+  autoReply             Boolean        @default(false)
+  autoReplyDelay        Int            @default(3)
+  aiModel               String?
+  aiSystemPrompt        String?
+  aiPersonality         String?
+  aiResponseTone        String?
+  aiTemperature         Float          @default(0.7)
+  aiMaxTokens           Int            @default(500)
+  offHoursMessage       String?
+  createdAt             DateTime       @default(now())
+  updatedAt             DateTime       @updatedAt
+
+  tenant        Tenant            @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   contacts      Contact[]
   conversations Conversation[]
+  messages      Message[]
   leads         Lead[]
-  pipelineStages PipelineStage[]
   campaigns     Campaign[]
   templates     MessageTemplate[]
   chatbotFlows  ChatbotFlow[]
   tickets       Ticket[]
   knowledgeDocs KnowledgeDoc[]
   tags          Tag[]
-  subscription  Subscription?
-  settings      TenantSettings?
-  auditLogs     AuditLog[]
   quickReplies  QuickReply[]
 
-  @@map("tenants")
+  @@unique([slug, tenantId])
+  @@index([tenantId])
+  @@map("businesses")
 }
 
 // ─── TENANT SETTINGS ─────────────────────────────────────────────────────────
@@ -188,16 +241,33 @@ model User {
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt
 
-  tenant          Tenant         @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  assignedConvs   Conversation[] @relation("AssignedAgent")
+  tenant          Tenant               @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  assignedConvs   Conversation[]       @relation("AssignedAgent")
   messages        Message[]
-  assignedLeads   Lead[]         @relation("AssignedLeadAgent")
+  assignedLeads   Lead[]               @relation("AssignedLeadAgent")
   leadActivities  LeadActivity[]
-  assignedTickets Ticket[]       @relation("AssignedTicketAgent")
+  assignedTickets Ticket[]             @relation("AssignedTicketAgent")
   auditLogs       AuditLog[]
+  resetTokens     PasswordResetToken[]
 
   @@unique([email, tenantId])
   @@map("users")
+}
+
+// ─── PASSWORD RESET TOKEN ─────────────────────────────────────────────────────
+
+model PasswordResetToken {
+  id        String    @id @default(cuid())
+  userId    String
+  tokenHash String    @unique
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("password_reset_tokens")
 }
 
 // ─── CONTACT ──────────────────────────────────────────────────────────────────
@@ -220,30 +290,36 @@ model Contact {
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
 
+  businessId    String
+  business      Business          @relation(fields: [businessId], references: [id], onDelete: Cascade)
   tenant        Tenant            @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   conversations Conversation[]
   leads         Lead[]
   tags          ContactTag[]
   campaignsSent CampaignContact[]
 
-  @@unique([phone, tenantId])
+  @@unique([phone, businessId])
   @@index([tenantId])
+  @@index([businessId])
   @@map("contacts")
 }
 
 // ─── TAG ──────────────────────────────────────────────────────────────────────
 
 model Tag {
-  id        String   @id @default(cuid())
-  tenantId  String
-  name      String
-  color     String   @default("#6366f1")
-  createdAt DateTime @default(now())
+  id         String   @id @default(cuid())
+  tenantId   String
+  businessId String
+  name       String
+  color      String   @default("#6366f1")
+  createdAt  DateTime @default(now())
 
+  business Business     @relation(fields: [businessId], references: [id], onDelete: Cascade)
   tenant   Tenant       @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   contacts ContactTag[]
 
-  @@unique([name, tenantId])
+  @@unique([name, businessId])
+  @@index([businessId])
   @@map("tags")
 }
 
@@ -276,6 +352,8 @@ model Conversation {
   createdAt          DateTime           @default(now())
   updatedAt          DateTime           @updatedAt
 
+  businessId String
+  business   Business  @relation(fields: [businessId], references: [id], onDelete: Cascade)
   tenant     Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   contact    Contact   @relation(fields: [contactId], references: [id])
   assignedTo User?     @relation("AssignedAgent", fields: [assignedToId], references: [id])
@@ -283,7 +361,8 @@ model Conversation {
   ticket     Ticket?
 
   @@index([tenantId, status])
-  @@index([tenantId, lastMessageAt(sort: Desc)])
+  @@index([businessId, status])
+  @@index([businessId, lastMessageAt(sort: Desc)])
   @@map("conversations")
 }
 
@@ -310,26 +389,32 @@ model Message {
   createdAt      DateTime         @default(now())
   updatedAt      DateTime         @updatedAt
 
+  businessId   String?
+  business     Business?    @relation(fields: [businessId], references: [id])
   conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
   sentBy       User?        @relation(fields: [sentById], references: [id])
 
   @@index([conversationId, createdAt])
   @@index([tenantId])
+  @@index([businessId])
   @@map("messages")
 }
 
 // ─── QUICK REPLY ──────────────────────────────────────────────────────────────
 
 model QuickReply {
-  id        String   @id @default(cuid())
-  tenantId  String
-  shortcode String
-  content   String
-  createdAt DateTime @default(now())
+  id         String   @id @default(cuid())
+  tenantId   String
+  businessId String
+  shortcode  String
+  content    String
+  createdAt  DateTime @default(now())
 
-  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  business Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  tenant   Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
 
-  @@unique([shortcode, tenantId])
+  @@unique([shortcode, businessId])
+  @@index([businessId])
   @@map("quick_replies")
 }
 
@@ -358,6 +443,8 @@ model Lead {
   createdAt       DateTime       @default(now())
   updatedAt       DateTime       @updatedAt
 
+  businessId String
+  business   Business       @relation(fields: [businessId], references: [id], onDelete: Cascade)
   tenant     Tenant         @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   contact    Contact        @relation(fields: [contactId], references: [id])
   assignedTo User?          @relation("AssignedLeadAgent", fields: [assignedToId], references: [id])
@@ -365,6 +452,7 @@ model Lead {
   activities LeadActivity[]
 
   @@index([tenantId, stageId])
+  @@index([businessId, stageId])
   @@map("leads")
 }
 
@@ -432,10 +520,13 @@ model MessageTemplate {
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
 
-  tenant    Tenant     @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  campaigns Campaign[]
+  businessId String
+  business   Business   @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  tenant     Tenant     @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  campaigns  Campaign[]
 
-  @@unique([name, tenantId])
+  @@unique([name, businessId])
+  @@index([businessId])
   @@map("message_templates")
 }
 
@@ -462,11 +553,14 @@ model Campaign {
   createdAt      DateTime       @default(now())
   updatedAt      DateTime       @updatedAt
 
-  tenant   Tenant            @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  template MessageTemplate?  @relation(fields: [templateId], references: [id])
-  contacts CampaignContact[]
+  businessId String
+  business   Business          @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  tenant     Tenant            @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  template   MessageTemplate?  @relation(fields: [templateId], references: [id])
+  contacts   CampaignContact[]
 
   @@index([tenantId, status])
+  @@index([businessId, status])
   @@map("campaigns")
 }
 
@@ -505,8 +599,11 @@ model ChatbotFlow {
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
-  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  businessId String
+  business   Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  tenant     Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
 
+  @@index([businessId])
   @@map("chatbot_flows")
 }
 
@@ -527,11 +624,14 @@ model Ticket {
   createdAt      DateTime       @default(now())
   updatedAt      DateTime       @updatedAt
 
+  businessId   String
+  business     Business      @relation(fields: [businessId], references: [id], onDelete: Cascade)
   tenant       Tenant        @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   conversation Conversation? @relation(fields: [conversationId], references: [id])
   assignedTo   User?         @relation("AssignedTicketAgent", fields: [assignedToId], references: [id])
 
   @@index([tenantId, status])
+  @@index([businessId, status])
   @@map("tickets")
 }
 
@@ -540,6 +640,7 @@ model Ticket {
 model KnowledgeDoc {
   id         String   @id @default(cuid())
   tenantId   String
+  businessId String
   name       String
   type       String
   url        String?
@@ -551,8 +652,10 @@ model KnowledgeDoc {
   createdAt  DateTime @default(now())
   updatedAt  DateTime @updatedAt
 
-  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  business Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  tenant   Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
 
+  @@index([businessId])
   @@map("knowledge_docs")
 }
 
@@ -570,6 +673,9 @@ model Plan {
   maxAgents      Int
   maxCampaigns   Int
   maxFlows       Int      @default(5)
+  maxStorageMb   Int      @default(1024)
+  aiCredits      Int      @default(0)
+  stripePriceId  String?
   aiEnabled      Boolean  @default(false)
   ragEnabled     Boolean  @default(false)
   whiteLabel     Boolean  @default(false)
@@ -595,6 +701,8 @@ model Subscription {
   currentPeriodEnd   DateTime
   trialEndsAt        DateTime?
   cancelledAt        DateTime?
+  cancelAtPeriodEnd  Boolean            @default(false)
+  aiCreditsUsed      Int                @default(0)
   razorpaySubId      String?
   razorpayCustomerId String?
   stripeSubId        String?

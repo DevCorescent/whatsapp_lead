@@ -1,6 +1,6 @@
 ﻿import { NextRequest, NextResponse } from "next/server";
-import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
+import { getBusinessScope } from "@/lib/business";
 import { createContactSchema } from "@/lib/validators/contact";
 
 function normalizeSource(value: unknown) {
@@ -10,8 +10,8 @@ function normalizeSource(value: unknown) {
 }
 
 export async function GET(req: NextRequest) {
-  const session = await auth();
-  if (!session?.user) return NextResponse.json({ success: false, error: "Unauthorized" }, { status: 401 });
+  const scope = await getBusinessScope();
+  if (!scope) return NextResponse.json({ success: false, error: "Unauthorized" }, { status: 401 });
 
   const { searchParams } = new URL(req.url);
   const page = Math.max(1, parseInt(searchParams.get("page") ?? "1"));
@@ -20,7 +20,7 @@ export async function GET(req: NextRequest) {
   const tagId = searchParams.get("tagId") ?? "";
 
   const where = {
-    tenantId: session.user.tenantId,
+    tenantId: scope.tenantId,
     isBlocked: false,
     ...(search && {
       OR: [
@@ -55,8 +55,10 @@ export async function GET(req: NextRequest) {
 }
 
 export async function POST(req: NextRequest) {
-  const session = await auth();
-  if (!session?.user) return NextResponse.json({ success: false, error: "Unauthorized" }, { status: 401 });
+  const scope = await getBusinessScope();
+  if (!scope) return NextResponse.json({ success: false, error: "Unauthorized" }, { status: 401 });
+
+  const { tenantId, businessId, userId } = scope;
 
   let body: unknown;
   try {
@@ -75,7 +77,7 @@ export async function POST(req: NextRequest) {
     const source = normalizeSource(data.source);
 
     const existing = await prisma.contact.findUnique({
-      where: { phone_tenantId: { phone: data.phone, tenantId: session.user.tenantId } },
+      where: { phone_businessId: { phone: data.phone, businessId } },
     });
     if (existing) {
       return NextResponse.json(
@@ -88,7 +90,8 @@ export async function POST(req: NextRequest) {
       data: {
         ...data,
         source,
-        tenantId: session.user.tenantId,
+        tenantId,
+        businessId,
         ...(tags && tags.length > 0 && {
           tags: { create: tags.map((tagId) => ({ tagId })) },
         }),
@@ -101,8 +104,8 @@ export async function POST(req: NextRequest) {
 
     await prisma.auditLog.create({
       data: {
-        tenantId: session.user.tenantId,
-        userId: session.user.id,
+        tenantId,
+        userId,
         action: "CONTACT_CREATED",
         resource: "contact",
         resourceId: contact.id,

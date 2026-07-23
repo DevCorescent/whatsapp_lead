@@ -31,8 +31,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { CampaignStatus, Prisma } from "@prisma/client";
 import { z } from "zod";
-import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
+import { getBusinessScope } from "@/lib/business";
 import { sendTextMessage } from "@/lib/whatsapp";
 
 /**
@@ -194,6 +194,7 @@ async function resolveWhatsAppCredentials(
  */
 async function createCampaign(
   tenantId: string,
+  businessId: string,
   input: CreateCampaignInput,
   contacts: { id: string; phone: string }[]
 ) {
@@ -201,6 +202,7 @@ async function createCampaign(
     const campaign = await tx.campaign.create({
       data: {
         tenantId,
+        businessId,
         name: input.name,
         status: CampaignStatus.RUNNING,
         startedAt: new Date(),
@@ -349,15 +351,15 @@ async function completeCampaign(
  * Return the tenant's campaigns.
  */
 export async function GET() {
-  const session = await auth();
-  if (!session?.user) {
+  const scope = await getBusinessScope();
+  if (!scope) {
     return NextResponse.json(
       { success: false, error: "Unauthorized" },
       { status: 401 }
     );
   }
 
-  const { tenantId } = session.user;
+  const { tenantId } = scope;
 
   try {
     const campaigns = await listCampaigns(tenantId);
@@ -387,15 +389,15 @@ export async function GET() {
  * it does not survive a large audience.
  */
 export async function POST(req: NextRequest) {
-  const session = await auth();
-  if (!session?.user) {
+  const scope = await getBusinessScope();
+  if (!scope) {
     return NextResponse.json(
       { success: false, error: "Unauthorized" },
       { status: 401 }
     );
   }
 
-  const { tenantId } = session.user;
+  const { tenantId, businessId } = scope;
 
   try {
     const parsed = createCampaignSchema.safeParse(await req.json());
@@ -427,7 +429,7 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const campaign = await createCampaign(tenantId, input, contacts);
+    const campaign = await createCampaign(tenantId, businessId, input, contacts);
 
     const recipients = await loadCampaignRecipients(tenantId, campaign.id);
     const outcome = await sendCampaign(credentials, input.message, recipients);

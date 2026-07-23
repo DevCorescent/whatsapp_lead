@@ -1,8 +1,8 @@
 import { randomUUID } from "crypto";
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
+import { getBusinessScope } from "@/lib/business";
 import { ingestDocument, type DocType } from "@/lib/rag";
 
 const createDocSchema = z.object({
@@ -29,9 +29,9 @@ const MAX_FILE_MB = 10;
 const MAX_FILE_BYTES = MAX_FILE_MB * 1024 * 1024;
 
 export async function GET(req: NextRequest) {
-  const session = await auth();
-  if (!session?.user) return NextResponse.json({ success: false, error: "Unauthorized" }, { status: 401 });
-  const { tenantId } = session.user;
+  const scope = await getBusinessScope();
+  if (!scope) return NextResponse.json({ success: false, error: "Unauthorized" }, { status: 401 });
+  const { tenantId } = scope;
 
   try {
     const docs = await prisma.knowledgeDoc.findMany({
@@ -57,9 +57,9 @@ export async function GET(req: NextRequest) {
 }
 
 export async function POST(req: NextRequest) {
-  const session = await auth();
-  if (!session?.user) return NextResponse.json({ success: false, error: "Unauthorized" }, { status: 401 });
-  const { tenantId } = session.user;
+  const scope = await getBusinessScope();
+  if (!scope) return NextResponse.json({ success: false, error: "Unauthorized" }, { status: 401 });
+  const { tenantId, businessId } = scope;
 
   const contentType = req.headers.get("content-type") ?? "";
 
@@ -80,7 +80,7 @@ export async function POST(req: NextRequest) {
         if (!type) return NextResponse.json({ success: false, error: `Unsupported file type: .${ext}` }, { status: 400 });
 
         const buffer = Buffer.from(await file.arrayBuffer());
-        created.push(await ingestAndPersist({ tenantId, name: file.name, type, buffer, size: file.size }));
+        created.push(await ingestAndPersist({ tenantId, businessId, name: file.name, type, buffer, size: file.size }));
       }
       return NextResponse.json({ success: true, data: created }, { status: 201 });
     }
@@ -93,7 +93,7 @@ export async function POST(req: NextRequest) {
     if (!parsed.success) return NextResponse.json({ success: false, error: parsed.error.issues[0].message }, { status: 400 });
 
     const { name, type, content, url } = parsed.data;
-    const doc = await ingestAndPersist({ tenantId, name, type, text: content, url });
+    const doc = await ingestAndPersist({ tenantId, businessId, name, type, text: content, url });
     return NextResponse.json({ success: true, data: doc }, { status: 201 });
   } catch (error) {
     console.error("[KNOWLEDGE POST]", error);
@@ -109,6 +109,7 @@ export async function POST(req: NextRequest) {
  */
 async function ingestAndPersist(params: {
   tenantId: string;
+  businessId: string;
   name: string;
   type: DocType;
   buffer?: Buffer;
@@ -116,7 +117,7 @@ async function ingestAndPersist(params: {
   url?: string;
   size?: number;
 }) {
-  const { tenantId, name, type, buffer, text, url, size } = params;
+  const { tenantId, businessId, name, type, buffer, text, url, size } = params;
   const docId = randomUUID();
 
   const { chunkCount, vectorIds } = await ingestDocument({ tenantId, docId, type, buffer, text, url, filename: name });
@@ -125,6 +126,7 @@ async function ingestAndPersist(params: {
     data: {
       id: docId,
       tenantId,
+      businessId,
       name,
       type,
       ...(text && { content: text }),

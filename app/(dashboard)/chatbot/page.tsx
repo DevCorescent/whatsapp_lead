@@ -66,6 +66,7 @@ export default function ChatbotPage() {
     const flow = {
       id: `local-${Date.now()}`,
       tenantId: "local",
+      businessId: "local",
       name: input?.name?.trim() || "Local chatbot draft",
       description: input?.description?.trim() || "Unsaved local draft",
       trigger: "KEYWORD",

@@ -22,8 +22,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { Prisma } from "@prisma/client";
-import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
+import { getBusinessScope } from "@/lib/business";
 import { scoreLabelFor } from "@/lib/utils";
 import { ensurePipelineStages } from "@/lib/pipelineStages";
 import { IMPORT_MAX_ROWS, isValidEmail, isValidPhone, normalizePhone, type ImportResult } from "@/lib/import";
@@ -74,11 +74,11 @@ function chunk<T>(items: T[], size: number): T[][] {
 }
 
 export async function POST(req: NextRequest) {
-  const session = await auth();
-  if (!session?.user) {
+  const scope = await getBusinessScope();
+  if (!scope) {
     return NextResponse.json({ success: false, error: "Unauthorized" }, { status: 401 });
   }
-  const { tenantId, id: userId } = session.user;
+  const { tenantId, businessId, userId } = scope;
 
   let body: unknown;
   try {
@@ -208,13 +208,13 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ success: true, data: result });
     }
 
-    // Pre-resolve tag names to ids once (created on demand, tenant-scoped).
+    // Pre-resolve tag names to ids once (created on demand, business-scoped).
     const tagNames = [...new Set(clean.flatMap((c) => c.tags))];
     const tagIdByName = new Map<string, string>();
     for (const name of tagNames) {
       const tag = await prisma.tag.upsert({
-        where: { name_tenantId: { name, tenantId } },
-        create: { name, tenantId },
+        where: { name_businessId: { name, businessId } },
+        create: { name, tenantId, businessId },
         update: {},
         select: { id: true, name: true },
       });
@@ -231,9 +231,10 @@ export async function POST(req: NextRequest) {
           for (const c of batch) {
             // Find or create the linked contact (phone-keyed, like the contacts importer).
             const contact = await tx.contact.upsert({
-              where: { phone_tenantId: { phone: c.phone, tenantId } },
+              where: { phone_businessId: { phone: c.phone, businessId } },
               create: {
                 tenantId,
+                businessId,
                 phone: c.phone,
                 name: c.contactName,
                 email: c.email,
@@ -269,6 +270,7 @@ export async function POST(req: NextRequest) {
               await tx.lead.create({
                 data: {
                   tenantId,
+                  businessId,
                   contactId: contact.id,
                   title: c.title,
                   stageId: c.stageId,

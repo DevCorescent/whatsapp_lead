@@ -1,5 +1,24 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 
+export function useUploadKnowledgeDoc() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ file }: { file: File }) => {
+      const form = new FormData();
+      form.append("files", file);
+      const res = await fetch("/api/knowledge", { method: "POST", body: form });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error((err as { error?: string }).error ?? "Upload failed");
+      }
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["knowledge"] });
+    },
+  });
+}
+
 interface CreateDocInput {
   name: string;
   type: "TEXT" | "URL" | "PDF" | "DOCX";

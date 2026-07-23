@@ -15,11 +15,14 @@ async function main() {
   const tenant = await prisma.tenant.findUnique({ where: { slug: "demo-workspace" } });
   if (!tenant) throw new Error("Demo tenant not found — run `npm run db:seed` first.");
 
+  const businessId = `biz_${tenant.id}`;
+
   const contact = await prisma.contact.upsert({
-    where: { phone_tenantId: { phone: CONTACT_PHONE, tenantId: tenant.id } },
+    where: { phone_businessId: { phone: CONTACT_PHONE, businessId } },
     update: {},
     create: {
       tenantId: tenant.id,
+      businessId,
       name: "Riya Sharma",
       phone: CONTACT_PHONE,
       email: "riya@example.com",
@@ -32,7 +35,7 @@ async function main() {
   });
   if (!conversation) {
     conversation = await prisma.conversation.create({
-      data: { tenantId: tenant.id, contactId: contact.id, status: "OPEN", channel: "WHATSAPP" },
+      data: { tenantId: tenant.id, businessId, contactId: contact.id, status: "OPEN", channel: "WHATSAPP" },
     });
   }
 

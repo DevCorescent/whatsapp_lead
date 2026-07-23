@@ -1,8 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { LeadScoreLabel } from "@prisma/client";
-import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
+import { getBusinessScope } from "@/lib/business";
 import { scoreLabelFor } from "@/lib/utils";
 import { defaultStageId } from "@/lib/pipelineStages";
 
@@ -36,9 +36,9 @@ const createLeadSchema = z.object({
 });
 
 export async function GET(req: NextRequest) {
-  const session = await auth();
-  if (!session?.user) return NextResponse.json({ success: false, error: "Unauthorized" }, { status: 401 });
-  const { tenantId } = session.user;
+  const scope = await getBusinessScope();
+  if (!scope) return NextResponse.json({ success: false, error: "Unauthorized" }, { status: 401 });
+  const { tenantId } = scope;
 
   try {
     const { searchParams } = new URL(req.url);
@@ -102,9 +102,9 @@ export async function GET(req: NextRequest) {
 }
 
 export async function POST(req: NextRequest) {
-  const session = await auth();
-  if (!session?.user) return NextResponse.json({ success: false, error: "Unauthorized" }, { status: 401 });
-  const { tenantId, id: userId } = session.user;
+  const scope = await getBusinessScope();
+  if (!scope) return NextResponse.json({ success: false, error: "Unauthorized" }, { status: 401 });
+  const { tenantId, businessId, userId } = scope;
 
   try {
     let body: unknown;
@@ -138,6 +138,7 @@ export async function POST(req: NextRequest) {
       const created = await tx.lead.create({
         data: {
           tenantId,
+          businessId,
           contactId: data.contactId,
           title: data.title,
           stageId,

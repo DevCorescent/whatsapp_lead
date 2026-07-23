@@ -21,8 +21,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { Prisma } from "@prisma/client";
-import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
+import { getBusinessScope } from "@/lib/business";
 import {
   IMPORT_MAX_ROWS,
   isValidEmail,
@@ -74,11 +74,11 @@ function chunk<T>(items: T[], size: number): T[][] {
 }
 
 export async function POST(req: NextRequest) {
-  const session = await auth();
-  if (!session?.user) {
+  const scope = await getBusinessScope();
+  if (!scope) {
     return NextResponse.json({ success: false, error: "Unauthorized" }, { status: 401 });
   }
-  const { tenantId, id: userId } = session.user;
+  const { tenantId, businessId, userId } = scope;
 
   let body: unknown;
   try {
@@ -159,13 +159,13 @@ export async function POST(req: NextRequest) {
     }
 
     // Resolve every distinct tag name to an id once, up front — avoids re-upserting the
-    // same tag per row. Tags are created on demand, scoped to the tenant.
+    // same tag per row. Tags are created on demand, scoped to the business.
     const tagNames = [...new Set(clean.flatMap((c) => c.tags))];
     const tagIdByName = new Map<string, string>();
     for (const name of tagNames) {
       const tag = await prisma.tag.upsert({
-        where: { name_tenantId: { name, tenantId } },
-        create: { name, tenantId },
+        where: { name_businessId: { name, businessId } },
+        create: { name, tenantId, businessId },
         update: {},
         select: { id: true, name: true },
       });
@@ -189,9 +189,10 @@ export async function POST(req: NextRequest) {
             }
 
             const contact = await tx.contact.upsert({
-              where: { phone_tenantId: { phone: c.phone, tenantId } },
+              where: { phone_businessId: { phone: c.phone, businessId } },
               create: {
                 tenantId,
+                businessId,
                 phone: c.phone,
                 name: c.name,
                 email: c.email,

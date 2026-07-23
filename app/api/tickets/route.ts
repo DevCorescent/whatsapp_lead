@@ -27,8 +27,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { Prisma, TicketPriority, TicketStatus } from "@prisma/client";
 import { z } from "zod";
-import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
+import { getBusinessScope } from "@/lib/business";
 
 /**
  * Columns the ticket list actually renders.
@@ -240,6 +240,7 @@ async function autoAssignAgent(tenantId: string): Promise<string | null> {
  */
 async function createTicket(
   tenantId: string,
+  businessId: string,
   input: CreateTicketInput,
   assignedToId: string | null,
   priority: TicketPriority
@@ -247,6 +248,7 @@ async function createTicket(
   return prisma.ticket.create({
     data: {
       tenantId,
+      businessId,
       conversationId: input.conversationId,
       subject: input.subject,
       priority,
@@ -265,15 +267,15 @@ async function createTicket(
  * Return the tenant's tickets.
  */
 export async function GET(req: NextRequest) {
-  const session = await auth();
-  if (!session?.user) {
+  const scope = await getBusinessScope();
+  if (!scope) {
     return NextResponse.json(
       { success: false, error: "Unauthorized" },
       { status: 401 }
     );
   }
 
-  const { tenantId } = session.user;
+  const { tenantId } = scope;
 
   try {
     const { searchParams } = new URL(req.url);
@@ -318,15 +320,15 @@ export async function GET(req: NextRequest) {
  * auto-assigned so it does not open unclaimed.
  */
 export async function POST(req: NextRequest) {
-  const session = await auth();
-  if (!session?.user) {
+  const scope = await getBusinessScope();
+  if (!scope) {
     return NextResponse.json(
       { success: false, error: "Unauthorized" },
       { status: 401 }
     );
   }
 
-  const { tenantId } = session.user;
+  const { tenantId, businessId } = scope;
 
   try {
     const parsed = createTicketSchema.safeParse(await req.json());
@@ -366,7 +368,7 @@ export async function POST(req: NextRequest) {
     // A caller-named assignee (already verified) wins; otherwise balance the load across the team.
     const assignedToId = input.assignedToId ?? (await autoAssignAgent(tenantId));
 
-    const ticket = await createTicket(tenantId, input, assignedToId, priority);
+    const ticket = await createTicket(tenantId, businessId, input, assignedToId, priority);
 
     return NextResponse.json({ success: true, data: ticket }, { status: 201 });
   } catch (error) {
