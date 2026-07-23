@@ -238,7 +238,6 @@ export function LeadPipelineChart({
 }) {
   const counts = new Map((data ?? []).map((r) => [r.stage, r.count]));
 
-  // LEAD_STAGES drives both the order (funnel order, not data order) and labels.
   const rows = hasRows(data)
     ? LEAD_STAGES.map((s) => ({ name: s.label, count: counts.get(s.stage) ?? 0 }))
     : [];
@@ -437,7 +436,7 @@ export function AgentPerformanceTable({
         />
       ) : (
         <div className="overflow-x-auto">
-          <table className="w-full min-w-[640px] text-sm">
+          <table className="w-full min-w-160 text-sm">
             <thead>
               <tr className="border-b border-slate-100 text-left text-xs font-medium text-slate-500">
                 <th className="px-5 py-2.5 font-medium">Agent</th>

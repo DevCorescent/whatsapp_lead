@@ -1,19 +1,9 @@
 import { z } from "zod";
 
-const LeadStageEnum = z.enum([
-  "NEW_LEAD",
-  "CONTACTED",
-  "QUALIFIED",
-  "PROPOSAL_SENT",
-  "NEGOTIATION",
-  "WON",
-  "LOST",
-]);
-
 export const createLeadSchema = z.object({
   contactId: z.string().min(1, "Contact is required"),
   title: z.string().min(1, "Title is required"),
-  stage: LeadStageEnum.optional(),
+  stageId: z.string().optional(),
   value: z.number().positive().optional(),
   currency: z.string().default("INR"),
   budget: z.string().optional(),

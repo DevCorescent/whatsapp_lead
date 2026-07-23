@@ -1,159 +1,357 @@
+
+// ============================================================================
+// OWNER  : Gauransh
+// MODULE : Campaigns
+// ROUTE  : /api/campaigns/[id]
+//
+// METHODS
+// GET    - One campaign with its per-recipient delivery record
+// PATCH  - Rename a campaign, while it is still a draft
+// DELETE - Discard a draft campaign
+//
+// ACCESS
+// GET    - Authenticated. Scoped to session.user.tenantId; a campaign owned by another
+//          workspace answers 404, exactly as a non-existent one does.
+// PATCH  - Authenticated. Same scoping. Only `name` is writable, and only while DRAFT.
+// DELETE - Authenticated. Same scoping. DRAFT only.
+// ============================================================================
+//
+// The write methods here are both gated on DRAFT, which the CampaignStatus enum does define. The
+// reason is that a campaign is the one record in this system with a footprint outside the database:
+// once it leaves DRAFT it has begun putting messages in front of real customers. Renaming a campaign
+// that has already sent would relabel a delivery record after the fact, and deleting one would
+// cascade its CampaignContact rows — destroying the only evidence of who was messaged, when, and
+// whether it arrived. A sent campaign is history, and history is not editable.
+//
+// Note for whoever reads this next: POST /api/campaigns creates campaigns RUNNING and completes them
+// in the same request, so no DRAFT campaign is ever produced by the current API. Both write methods
+// below are therefore correct and currently unreachable — they will start mattering the moment
+// campaign scheduling lands, and the guard is deliberately written now rather than retrofitted then.
+
 import { NextRequest, NextResponse } from "next/server";
+import { CampaignStatus, Prisma } from "@prisma/client";
 import { z } from "zod";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
-import { sendTextMessage } from "@/lib/whatsapp";
 
-const updateSchema = z.object({
-  name: z.string().min(1).optional(),
-  status: z.enum(["RUNNING", "PAUSED", "COMPLETED"]).optional(),
-}).strict();
+/**
+ * The per-recipient delivery record.
+ *
+ * Every column named here exists on CampaignContact — the delivery timestamps and `failedReason` are
+ * real columns, not an approximation of them. What is *not* here is a WhatsApp message id: the schema
+ * has no column for one, so `deliveredAt`, `readAt` and `repliedAt` can never be filled by the
+ * webhook's receipts, which have no way to correlate a receipt back to a campaign row. They are
+ * returned regardless because they are the schema's own shape, and a client that draws a delivery
+ * table should see the columns exist rather than have this route quietly hide them.
+ *
+ * The contact is a nested `select`, not a second query: resolving the customer behind each recipient
+ * row by looping would be the canonical N+1 over an audience that can run to thousands. It is also
+ * nullable, because `CampaignContact.contactId` is — a recipient survives the deletion of the contact
+ * it was addressed to, which is precisely what makes the delivery record an audit trail.
+ */
+const CAMPAIGN_RECIPIENT_SELECT = {
+  id: true,
+  phone: true,
+  status: true,
+  sentAt: true,
+  deliveredAt: true,
+  readAt: true,
+  repliedAt: true,
+  failedReason: true,
+  contact: { select: { id: true, name: true, phone: true } },
+} satisfies Prisma.CampaignContactSelect;
 
-export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+/**
+ * The campaign as its detail view draws it.
+ *
+ * `filters` and `metadata` are Json columns — the audience definition and the message body — and are
+ * included here because the detail view is the one place they are actually read. The board's list
+ * select deliberately omits them.
+ */
+const CAMPAIGN_DETAIL_SELECT = {
+  id: true,
+  name: true,
+  status: true,
+  templateId: true,
+  scheduledAt: true,
+  startedAt: true,
+  completedAt: true,
+  totalCount: true,
+  sentCount: true,
+  deliveredCount: true,
+  readCount: true,
+  repliedCount: true,
+  clickedCount: true,
+  failedCount: true,
+  metadata: true,
+  createdAt: true,
+  updatedAt: true,
+} satisfies Prisma.CampaignSelect;
+
+/**
+ * The only field a campaign exposes for update.
+ *
+ * `strictObject` is the enforcement, not the documentation. A permissive object would let `status`,
+ * `sentCount`, `tenantId`, `templateId`, `metadata` or the timestamps ride along in the body —
+ * silently dropped today, silently applied the first time someone spreads the parsed result into a
+ * Prisma `data`. Rejecting unknown keys is what makes "only the name is writable" a property of the
+ * code rather than a promise in a comment.
+ *
+ * The counters in particular must never be writable: they are the campaign's record of what actually
+ * happened to real customers, and a client able to set `sentCount` could rewrite that record.
+ */
+const updateCampaignSchema = z.strictObject({
+  name: z.string().trim().min(1, "Campaign name is required"),
+});
+
+type UpdateCampaignInput = z.infer<typeof updateCampaignSchema>;
+
+/**
+ * Resolve a campaign while enforcing tenant isolation.
+ *
+ * `findFirst`, never `findUnique`. `id` is a cuid and unique on its own, so `findUnique({ id })`
+ * would happily return another workspace's campaign — uniqueness identifies a row, it does not
+ * authorise access to it. Folding `tenantId` into the predicate makes a foreign campaign
+ * indistinguishable from one that does not exist, which is the only answer that leaks nothing: a
+ * distinct 403 would confirm the row is real and tell the caller they had found something.
+ *
+ * Selects only what the write methods actually branch on. Both need the status to decide whether the
+ * campaign is still a draft, and neither needs anything else, so this deliberately does not load the
+ * full row — the guard runs on every request and should cost as little as the question it asks.
+ */
+async function resolveCampaign(tenantId: string, campaignId: string) {
+  return prisma.campaign.findFirst({
+    where: { id: campaignId, tenantId },
+    select: { id: true, status: true },
+  });
+}
+
+/**
+ * Load a campaign and its recipients in a single read.
+ *
+ * One query, not two. The recipients are a nested `select` on the relation, so Postgres resolves the
+ * campaign and its entire audience in one round trip — issuing a second `findMany` keyed on the
+ * campaign id would pay a second trip for a join the database was going to do anyway.
+ *
+ * Tenant isolation runs through the parent. `CampaignContact` carries no `tenantId` of its own, so
+ * reading the recipients *through* the tenant-scoped campaign is what keeps a caller-supplied id from
+ * reaching another workspace's delivery records — there is no path here that touches a recipient
+ * without first having proved the campaign.
+ */
+async function loadCampaign(tenantId: string, campaignId: string) {
+  return prisma.campaign.findFirst({
+    where: { id: campaignId, tenantId },
+    select: {
+      ...CAMPAIGN_DETAIL_SELECT,
+      contacts: { select: CAMPAIGN_RECIPIENT_SELECT },
+    },
+  });
+}
+
+/**
+ * Rename a campaign.
+ *
+ * Keyed by `id` alone because ownership and DRAFT status have already been established by
+ * `resolveCampaign` — re-deriving the tenant here would issue the same read twice. The two calls are
+ * not a check-then-act race in any meaningful sense: a campaign cannot change tenants, and the only
+ * writer that can move it out of DRAFT is a request that has not been made yet.
+ *
+ * A single update, so no transaction. Wrapping one statement would pin a connection to express a
+ * guarantee Postgres already gives for free.
+ */
+async function updateCampaign(campaignId: string, input: UpdateCampaignInput) {
+  return prisma.campaign.update({
+    where: { id: campaignId },
+    data: { name: input.name },
+    select: CAMPAIGN_DETAIL_SELECT,
+  });
+}
+
+/**
+ * Discard a draft campaign.
+ *
+ * A hard delete, and correctly so: a DRAFT campaign has messaged nobody, so there is no delivery
+ * history to preserve and nothing an audit could later want. This is exactly why the DRAFT guard
+ * upstream is load-bearing rather than ceremonial — the same statement against a sent campaign would
+ * be destructive.
+ *
+ * The CampaignContact rows go with it. `CampaignContact.campaign` declares `onDelete: Cascade`, so
+ * the database removes them; deleting them by hand first would duplicate a rule the schema already
+ * owns, and would drift from it the moment someone changes the cascade.
+ *
+ * A single delete, so no transaction — the cascade is part of the same statement, not a second write.
+ */
+async function deleteCampaign(campaignId: string): Promise<void> {
+  await prisma.campaign.delete({ where: { id: campaignId } });
+}
+
+/**
+ * Return a campaign with its per-recipient delivery record.
+ */
+export async function GET(
+  req: NextRequest,
+  { params }: { params: Promise<{ id: string }> }
+) {
   const session = await auth();
-  if (!session?.user) return NextResponse.json({ success: false, error: "Unauthorized" }, { status: 401 });
+  if (!session?.user) {
+    return NextResponse.json(
+      { success: false, error: "Unauthorized" },
+      { status: 401 }
+    );
+  }
+
+
   const { tenantId } = session.user;
 
   try {
     const { id } = await params;
-    const campaign = await prisma.campaign.findFirst({
-      where: { id, tenantId },
-      include: {
-        template: true,
-        contacts: {
-          include: { contact: { select: { id: true, name: true, phone: true } } },
-          orderBy: { sentAt: "desc" },
-          take: 100,
-        },
-      },
-    });
 
-    if (!campaign) return NextResponse.json({ success: false, error: "Campaign not found" }, { status: 404 });
-    return NextResponse.json({ success: true, data: campaign });
+
+    const campaign = await loadCampaign(tenantId, id);
+    if (!campaign) {
+      return NextResponse.json(
+        { success: false, error: "Campaign not found" },
+        { status: 404 }
+      );
+    }
+
+    // The relation is read in the same query but reported under its own key: `recipients` is what the
+    // delivery table renders, and nesting it inside `campaign` would conflate the campaign's own
+    // columns with the audience it was sent to.
+    const { contacts, ...details } = campaign;
+
+    return NextResponse.json({
+      success: true,
+      data: { campaign: details, recipients: contacts },
+    });
   } catch (error) {
-    console.error("[CAMPAIGN GET]", error);
-    return NextResponse.json({ success: false, error: "Failed to fetch campaign" }, { status: 500 });
+    // Prisma's errors name columns and query shapes; the caller learns only that the read failed.
+    console.error("[CAMPAIGNS]", error);
+
+    return NextResponse.json(
+      { success: false, error: "Failed to load campaign" },
+      { status: 500 }
+    );
   }
 }
 
-export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+/**
+ * Rename a campaign that has not yet been sent.
+ *
+ * Ownership is proved before the body is trusted, and the DRAFT guard runs before the write. A
+ * campaign that has left DRAFT is a delivery record, and renaming it would relabel messages that have
+ * already reached customers under a name they were never sent under.
+ */
+export async function PATCH(
+  req: NextRequest,
+  { params }: { params: Promise<{ id: string }> }
+) {
   const session = await auth();
-  if (!session?.user) return NextResponse.json({ success: false, error: "Unauthorized" }, { status: 401 });
+  if (!session?.user) {
+    return NextResponse.json(
+      { success: false, error: "Unauthorized" },
+      { status: 401 }
+    );
+  }
+
   const { tenantId } = session.user;
 
   try {
     const { id } = await params;
-    let body: unknown;
-    try { body = await req.json(); } catch { return NextResponse.json({ success: false, error: "Invalid JSON" }, { status: 400 }); }
 
-    const parsed = updateSchema.safeParse(body);
-    if (!parsed.success) return NextResponse.json({ success: false, error: parsed.error.issues[0].message }, { status: 400 });
-
-    const campaign = await prisma.campaign.findFirst({ where: { id, tenantId } });
-    if (!campaign) return NextResponse.json({ success: false, error: "Campaign not found" }, { status: 404 });
-
-    // Only allow name change on DRAFT campaigns
-    if (parsed.data.name && campaign.status !== "DRAFT") {
-      return NextResponse.json({ success: false, error: "Can only rename DRAFT campaigns" }, { status: 400 });
+    const parsed = updateCampaignSchema.safeParse(await req.json());
+    if (!parsed.success) {
+      return NextResponse.json(
+        { success: false, error: parsed.error.issues[0].message },
+        { status: 400 }
+      );
     }
 
-    // If campaign has a future scheduledAt, set SCHEDULED instead of sending now
-    if (parsed.data.status === "RUNNING" && campaign.status === "DRAFT" && campaign.scheduledAt && campaign.scheduledAt > new Date()) {
-      const updated = await prisma.campaign.update({
-        where: { id },
-        data: { status: "SCHEDULED" },
-      });
-      return NextResponse.json({ success: true, data: updated });
+    const campaign = await resolveCampaign(tenantId, id);
+    if (!campaign) {
+      return NextResponse.json(
+        { success: false, error: "Campaign not found" },
+        { status: 404 }
+      );
     }
 
-    // If launching (DRAFT → RUNNING), send messages inline
-    if (parsed.data.status === "RUNNING" && campaign.status === "DRAFT") {
-      // Get WhatsApp credentials
-      const settings = await prisma.tenantSettings.findUnique({
-        where: { tenantId },
-        select: { waPhoneNumberId: true, waApiKey: true },
-      });
-
-      // Get pending contacts
-      const pendingContacts = await prisma.campaignContact.findMany({
-        where: { campaignId: id, status: "PENDING" },
-        include: { contact: { select: { phone: true } } },
-      });
-
-      if (settings?.waPhoneNumberId && settings?.waApiKey && pendingContacts.length > 0) {
-        // Update campaign to RUNNING
-        await prisma.campaign.update({
-          where: { id },
-          data: { status: "RUNNING", startedAt: new Date() },
-        });
-
-        // Send messages inline (no queue)
-        let sent = 0;
-        let failed = 0;
-        for (const cc of pendingContacts) {
-          const phone = cc.contact?.phone ?? cc.phone;
-          try {
-            const message = campaign.metadata && typeof campaign.metadata === "object"
-              ? (campaign.metadata as Record<string, string>).message ?? "Hello from WhatsCRM"
-              : "Hello from WhatsCRM";
-            await sendTextMessage(settings.waPhoneNumberId, settings.waApiKey, phone, message);
-            await prisma.campaignContact.update({
-              where: { id: cc.id },
-              data: { status: "SENT", sentAt: new Date() },
-            });
-            sent++;
-          } catch {
-            await prisma.campaignContact.update({
-              where: { id: cc.id },
-              data: { status: "FAILED", failedReason: "Send failed" },
-            });
-            failed++;
-          }
-        }
-
-        const updated = await prisma.campaign.update({
-          where: { id },
-          data: {
-            status: "COMPLETED",
-            completedAt: new Date(),
-            sentCount: sent,
-            failedCount: failed,
-          },
-        });
-        return NextResponse.json({ success: true, data: updated });
-      }
+    // 409 rather than 403: the request is well-formed and the caller is entitled to this campaign —
+    // it is the campaign's own state that forbids the change, and that state is reportable.
+    if (campaign.status !== CampaignStatus.DRAFT) {
+      return NextResponse.json(
+        {
+          success: false,
+          error: "Only draft campaigns can be renamed",
+        },
+        { status: 409 }
+      );
     }
 
-    const updated = await prisma.campaign.update({
-      where: { id },
-      data: {
-        ...(parsed.data.name && { name: parsed.data.name }),
-        ...(parsed.data.status && { status: parsed.data.status }),
-      },
-    });
+    const updated = await updateCampaign(campaign.id, parsed.data);
 
     return NextResponse.json({ success: true, data: updated });
   } catch (error) {
-    console.error("[CAMPAIGN PATCH]", error);
-    return NextResponse.json({ success: false, error: "Failed to update campaign" }, { status: 500 });
+    console.error("[CAMPAIGNS]", error);
+
+    return NextResponse.json(
+      { success: false, error: "Failed to update campaign" },
+      { status: 500 }
+    );
   }
 }
 
-export async function DELETE(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+/**
+ * Discard a campaign that has not yet been sent.
+ *
+ * The DRAFT guard is the whole method. Deleting a sent campaign would cascade its CampaignContact
+ * rows and take with them the only record of which customers were messaged and what happened to each
+ * message — a record that exists precisely so it can be produced later, when someone asks.
+ */
+export async function DELETE(
+  req: NextRequest,
+  { params }: { params: Promise<{ id: string }> }
+) {
   const session = await auth();
-  if (!session?.user) return NextResponse.json({ success: false, error: "Unauthorized" }, { status: 401 });
+  if (!session?.user) {
+    return NextResponse.json(
+      { success: false, error: "Unauthorized" },
+      { status: 401 }
+    );
+  }
+
   const { tenantId } = session.user;
 
   try {
     const { id } = await params;
-    const campaign = await prisma.campaign.findFirst({ where: { id, tenantId } });
-    if (!campaign) return NextResponse.json({ success: false, error: "Campaign not found" }, { status: 404 });
-    if (campaign.status !== "DRAFT") return NextResponse.json({ success: false, error: "Only DRAFT campaigns can be deleted" }, { status: 400 });
 
-    await prisma.campaign.delete({ where: { id } });
+    const campaign = await resolveCampaign(tenantId, id);
+    if (!campaign) {
+      return NextResponse.json(
+        { success: false, error: "Campaign not found" },
+        { status: 404 }
+      );
+    }
+
+    if (campaign.status !== CampaignStatus.DRAFT) {
+      return NextResponse.json(
+        {
+          success: false,
+          error: "Only draft campaigns can be deleted",
+        },
+        { status: 409 }
+      );
+    }
+
+    await deleteCampaign(campaign.id);
+
     return NextResponse.json({ success: true });
   } catch (error) {
-    console.error("[CAMPAIGN DELETE]", error);
-    return NextResponse.json({ success: false, error: "Failed to delete campaign" }, { status: 500 });
+    console.error("[CAMPAIGNS]", error);
+
+    return NextResponse.json(
+      { success: false, error: "Failed to delete campaign" },
+      { status: 500 }
+    );
+
   }
 }
