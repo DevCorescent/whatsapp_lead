@@ -27,7 +27,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import {
   ConversationStatus,
-  LeadStage,
   MessageDirection,
 } from "@prisma/client";
 import { z } from "zod";
@@ -44,8 +43,6 @@ const PERIOD_DAYS = {
 const MILLISECONDS_PER_DAY = 24 * 60 * 60 * 1000;
 const MILLISECONDS_PER_MINUTE = 60 * 1000;
 
-/** Every stage of the pipeline, derived from the schema so a new stage cannot go missing. */
-const LEAD_STAGES = Object.values(LeadStage);
 
 /**
  * The accepted query.
@@ -346,31 +343,35 @@ function buildMessagesChart(
  */
 async function getLeadMetrics(tenantId: string, range: DateRange) {
   const groups = await prisma.lead.groupBy({
-    by: ["stage"],
+    by: ["stageId"],
     where: { tenantId, createdAt: { gte: range.from, lte: range.to } },
     _count: { _all: true },
   });
 
-  const counts = new Map<LeadStage, number>(
-    groups.map((group) => [group.stage, group._count._all])
-  );
+  const stageIds = groups.map((g) => g.stageId);
+  const stages = stageIds.length
+    ? await prisma.pipelineStage.findMany({ where: { id: { in: stageIds } } })
+    : [];
 
-  const totalLeads = groups.reduce(
-    (sum, group) => sum + group._count._all,
-    0
-  );
-  const wonDeals = counts.get(LeadStage.WON) ?? 0;
+  const stageMap = new Map(stages.map((s) => [s.id, s]));
 
-  // A workspace with no leads has not failed to convert anything — it has nothing to convert. Zero
-  // is the only defensible answer, and it is what keeps this expression away from a NaN.
+  const totalLeads = groups.reduce((sum, g) => sum + (g._count?._all ?? 0), 0);
+  const wonDeals = groups.reduce((sum, g) => {
+    const s = stageMap.get(g.stageId);
+    return sum + (s?.outcome === "WON" ? (g._count?._all ?? 0) : 0);
+  }, 0);
+
   const conversionRate =
     totalLeads === 0 ? 0 : roundToTwoDecimals((wonDeals / totalLeads) * 100);
 
-  // Every stage is emitted, empty or not: a pipeline chart with a missing column reads as a stage
-  // that does not exist rather than a stage nobody is in.
-  const leadsByStage: LeadStageCount[] = LEAD_STAGES.map((stage) => ({
-    stage,
-    count: counts.get(stage) ?? 0,
+  const allStages = await prisma.pipelineStage.findMany({
+    where: { tenantId, enabled: true },
+    orderBy: { order: "asc" },
+  });
+  const countMap = new Map(groups.map((g) => [g.stageId, g._count?._all ?? 0]));
+  const leadsByStage: LeadStageCount[] = allStages.map((s) => ({
+    stage: s.name,
+    count: countMap.get(s.id) ?? 0,
   }));
 
   return { totalLeads, wonDeals, conversionRate, leadsByStage };

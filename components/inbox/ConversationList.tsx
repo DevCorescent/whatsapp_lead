@@ -4,7 +4,6 @@ import { MessageSquare, Search, SearchX, WifiOff } from "lucide-react";
 import type {
   ConversationStatus,
   LeadScoreLabel,
-  LeadStage,
   MessageDirection,
   MessageStatus,
   MessageType,
@@ -32,7 +31,8 @@ export interface InboxAgent {
 export interface InboxLead {
   id: string;
   title?: string | null;
-  stage?: LeadStage | null;
+  /** Dynamic pipeline stage relation, as included by the lead APIs. */
+  stage?: { id?: string | null; name?: string | null; color?: string | null } | null;
   score?: number | null;
   scoreLabel?: LeadScoreLabel | null;
   value?: number | null;
@@ -309,7 +309,7 @@ function ConversationRow({
               {labels.slice(0, 3).map((label) => (
                 <span
                   key={label}
-                  className="inline-flex max-w-[8rem] items-center truncate rounded px-1.5 py-0.5 text-[10px] font-medium text-slate-600 ring-1 ring-inset ring-slate-200"
+                  className="inline-flex max-w-32 items-center truncate rounded px-1.5 py-0.5 text-[10px] font-medium text-slate-600 ring-1 ring-inset ring-slate-200"
                 >
                   {label}
                 </span>

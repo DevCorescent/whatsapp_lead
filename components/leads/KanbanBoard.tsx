@@ -2,27 +2,19 @@
 
 import { useState } from "react";
 import { Plus, Inbox } from "lucide-react";
-import type { LeadStage, LeadScoreLabel } from "@prisma/client";
+import type { LeadScoreLabel } from "@prisma/client";
 import { Button, EmptyState, Skeleton } from "@/components/ui";
-import { cn, formatCurrency, LEAD_STAGES, scoreLabelFor } from "@/lib/utils";
-import { LeadCard, type LeadsByStage, type PipelineLead } from "./LeadCard";
+import { cn, formatCurrency, scoreLabelFor } from "@/lib/utils";
+import { useLeadStages } from "@/hooks/useLeadStages";
+import { LeadCard, type LeadStageRef, type PipelineLead } from "./LeadCard";
 
 // ─── Normalisation ────────────────────────────────────────────────────────────
 //
-// GET /api/leads is *specified* to return leads grouped by stage:
-//   { NEW_LEAD: Lead[], CONTACTED: Lead[], ... }
-// …but the route is still a 501 stub, and the backend may just as easily ship a
-// flat array or a `{ data: [...] }` envelope. Everything below accepts any of
-// those shapes and never throws — a malformed payload degrades to an empty board.
+// GET /api/leads returns `{ data: Lead[] }` where each lead carries its `stageId` and
+// an included `stage` relation. Everything below accepts the array, the `{ data }` and
+// `{ leads }` envelopes, and never throws — a malformed payload degrades to an empty board.
 
-const STAGE_SET = new Set<string>(LEAD_STAGES.map((s) => s.stage));
 const SCORE_SET = new Set<string>(["COLD", "WARM", "HOT", "QUALIFIED"]);
-
-export function emptyBoard(): LeadsByStage {
-  const board = {} as LeadsByStage;
-  for (const { stage } of LEAD_STAGES) board[stage] = [];
-  return board;
-}
 
 function isRecord(v: unknown): v is Record<string, unknown> {
   return typeof v === "object" && v !== null && !Array.isArray(v);
@@ -32,10 +24,11 @@ function isRecord(v: unknown): v is Record<string, unknown> {
 function toLead(raw: unknown): PipelineLead | null {
   if (!isRecord(raw) || typeof raw.id !== "string") return null;
 
-  const stage =
-    typeof raw.stage === "string" && STAGE_SET.has(raw.stage)
-      ? (raw.stage as LeadStage)
-      : ("NEW_LEAD" as LeadStage);
+  // Leads reference a stage by id; accept the scalar `stageId` or fall back to the
+  // included `stage.id` relation.
+  const stageRef = isRecord(raw.stage) ? (raw.stage as LeadStageRef) : null;
+  const stageId =
+    typeof raw.stageId === "string" ? raw.stageId : stageRef?.id ?? "";
 
   const score = typeof raw.score === "number" && Number.isFinite(raw.score) ? raw.score : 0;
 
@@ -50,7 +43,8 @@ function toLead(raw: unknown): PipelineLead | null {
     ...(raw as unknown as PipelineLead),
     id: raw.id,
     title: typeof raw.title === "string" && raw.title ? raw.title : "Untitled lead",
-    stage,
+    stageId,
+    stage: stageRef,
     score,
     scoreLabel,
     value: typeof raw.value === "number" && Number.isFinite(raw.value) ? raw.value : null,
@@ -60,7 +54,7 @@ function toLead(raw: unknown): PipelineLead | null {
   };
 }
 
-/** Accepts `{ NEW_LEAD: [...] }` | `Lead[]` | `{ data: … }` | `{ leads: … }`. */
+/** Accepts `Lead[]` | `{ data: … }` | `{ leads: … }` — anything else is []. */
 export function normalizeLeads(raw: unknown): PipelineLead[] {
   if (!raw) return [];
 
@@ -69,31 +63,19 @@ export function normalizeLeads(raw: unknown): PipelineLead[] {
   }
 
   if (isRecord(raw)) {
-    // Envelope shapes — unwrap and retry.
     if ("data" in raw) return normalizeLeads(raw.data);
     if ("leads" in raw) return normalizeLeads(raw.leads);
-
-    // Grouped-by-stage shape.
-    const out: PipelineLead[] = [];
-    for (const { stage } of LEAD_STAGES) {
-      const bucket = raw[stage];
-      if (!Array.isArray(bucket)) continue;
-      for (const item of bucket) {
-        const lead = toLead(item);
-        // The bucket key wins over a missing/blank stage on the record itself.
-        if (lead) out.push({ ...lead, stage });
-      }
-    }
-    return out;
   }
 
   return [];
 }
 
-export function groupByStage(leads: PipelineLead[]): LeadsByStage {
-  const board = emptyBoard();
+/** Bucket leads by `stageId`, seeding a bucket for every provided stage id. */
+function groupByStage(leads: PipelineLead[], stageIds: string[]): Record<string, PipelineLead[]> {
+  const board: Record<string, PipelineLead[]> = {};
+  for (const id of stageIds) board[id] = [];
   for (const lead of leads) {
-    (board[lead.stage] ?? board.NEW_LEAD).push(lead);
+    if (board[lead.stageId]) board[lead.stageId].push(lead);
   }
   return board;
 }
@@ -103,55 +85,62 @@ export function groupByStage(leads: PipelineLead[]): LeadsByStage {
 export function KanbanBoard({
   leads,
   isLoading,
+  savingIds,
   onAddLead,
   onSelectLead,
   onMoveLead,
 }: {
   leads: PipelineLead[];
   isLoading?: boolean;
-  onAddLead: (stage: LeadStage) => void;
+  /** Ids of leads with an in-flight stage change; drives the per-card saving state. */
+  savingIds?: Record<string, true>;
+  onAddLead: (stageId: string) => void;
   onSelectLead: (lead: PipelineLead) => void;
-  onMoveLead: (lead: PipelineLead, stage: LeadStage) => void;
+  onMoveLead: (lead: PipelineLead, stageId: string) => void;
 }) {
   const [dragging, setDragging] = useState<PipelineLead | null>(null);
-  const [dragOver, setDragOver] = useState<LeadStage | null>(null);
+  const [dragOver, setDragOver] = useState<string | null>(null);
 
-  const board = groupByStage(leads);
+  // Columns, their order and visibility come entirely from the backend (GET /api/lead-stages)
+  // via the shared hook — no hardcoded stage array here. Leads are bucketed by their `stageId`.
+  const { stages } = useLeadStages();
 
-  function handleDrop(stage: LeadStage) {
+  const board = groupByStage(leads, stages.map((s) => s.id));
+
+  function handleDrop(stageId: string) {
     setDragOver(null);
     const lead = dragging;
     setDragging(null);
-    if (!lead || lead.stage === stage) return;
-    onMoveLead(lead, stage);
+    if (!lead || lead.stageId === stageId) return;
+    onMoveLead(lead, stageId);
   }
 
   return (
     <div className="flex flex-col gap-4">
       <div className="scrollbar-slim flex gap-4 overflow-x-auto pb-4">
-        {LEAD_STAGES.map(({ stage, label, accent, dot }) => {
-          const items = board[stage];
+        {stages.map(({ id: stageId, name, accent, dot }) => {
+          const items = board[stageId] ?? [];
           const total = items.reduce((sum, l) => sum + (l.value ?? 0), 0);
-          const isOver = dragOver === stage;
+          const isOver = dragOver === stageId;
 
           return (
             <section
-              key={stage}
-              aria-label={label}
+              key={stageId}
+              aria-label={name}
               onDragOver={(e) => {
                 if (!dragging) return;
                 e.preventDefault(); // required to make this a valid drop target
                 e.dataTransfer.dropEffect = "move";
-                if (dragOver !== stage) setDragOver(stage);
+                if (dragOver !== stageId) setDragOver(stageId);
               }}
               onDragLeave={(e) => {
                 // Ignore bubbling leaves from child cards.
                 if (e.currentTarget.contains(e.relatedTarget as Node | null)) return;
-                setDragOver((s) => (s === stage ? null : s));
+                setDragOver((s) => (s === stageId ? null : s));
               }}
               onDrop={(e) => {
                 e.preventDefault();
-                handleDrop(stage);
+                handleDrop(stageId);
               }}
               className={cn(
                 "flex w-72 shrink-0 flex-col rounded-xl border border-t-4 border-slate-200 bg-slate-100/70",
@@ -165,7 +154,7 @@ export function KanbanBoard({
                 <span className={cn("mt-1.5 h-2 w-2 shrink-0 rounded-full", dot)} aria-hidden />
                 <div className="min-w-0 flex-1">
                   <div className="flex items-center gap-2">
-                    <h2 className="truncate text-sm font-semibold text-slate-800">{label}</h2>
+                    <h2 className="truncate text-sm font-semibold text-slate-800">{name}</h2>
                     <span className="rounded-full bg-white px-2 py-0.5 text-[11px] font-medium text-slate-500 ring-1 ring-inset ring-slate-200">
                       {items.length}
                     </span>
@@ -195,6 +184,7 @@ export function KanbanBoard({
                       key={lead.id}
                       lead={lead}
                       isDragging={dragging?.id === lead.id}
+                      isSaving={!!savingIds?.[lead.id]}
                       onOpen={onSelectLead}
                       onDragStart={setDragging}
                       onDragEnd={() => {
@@ -209,7 +199,7 @@ export function KanbanBoard({
               {/* Ghost add button */}
               <button
                 type="button"
-                onClick={() => onAddLead(stage)}
+                onClick={() => onAddLead(stageId)}
                 className={cn(
                   "m-3 mt-0 inline-flex items-center justify-center gap-1.5 rounded-lg py-2",
                   "text-xs font-medium text-slate-500 transition",
@@ -230,9 +220,9 @@ export function KanbanBoard({
           <EmptyState
             icon={Inbox}
             title="No leads in the pipeline"
-            description="Leads will appear here once the leads API is live. In the meantime you can drag cards between stages and create leads from any column."
+            description="Leads will appear here as they come in. In the meantime you can drag cards between stages and create leads from any column."
             action={
-              <Button size="sm" onClick={() => onAddLead("NEW_LEAD")}>
+              <Button size="sm" disabled={stages.length === 0} onClick={() => onAddLead(stages[0]?.id ?? "")}>
                 <Plus className="h-4 w-4" />
                 Add your first lead
               </Button>

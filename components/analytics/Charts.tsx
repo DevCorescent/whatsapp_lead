@@ -17,7 +17,7 @@ import {
 } from "recharts";
 import { BarChart2 } from "lucide-react";
 import { Avatar, Card, EmptyState, Skeleton } from "@/components/ui";
-import { cn, LEAD_STAGES } from "@/lib/utils";
+import { cn } from "@/lib/utils";
 
 // ─── Palette ──────────────────────────────────────────────────────────────────
 // Validated for CVD separation, chroma and contrast against a white surface.
@@ -236,10 +236,8 @@ export function LeadPipelineChart({
   data?: StagePoint[] | null;
   loading?: boolean;
 }) {
-  const counts = new Map((data ?? []).map((r) => [r.stage, r.count]));
-
   const rows = hasRows(data)
-    ? LEAD_STAGES.map((s) => ({ name: s.label, count: counts.get(s.stage) ?? 0 }))
+    ? (data ?? []).map((r) => ({ name: r.stage, count: r.count }))
     : [];
 
   return (

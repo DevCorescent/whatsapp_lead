@@ -65,7 +65,7 @@ function NotificationBell() {
         aria-haspopup="true"
         aria-expanded={open}
       >
-        <Bell className="h-[18px] w-[18px]" />
+        <Bell className="h-4.5 w-4.5" />
         {unread > 0 && (
           <span className="absolute right-1 top-1 flex h-4 w-4 items-center justify-center rounded-full bg-rose-500 text-[9px] font-bold text-white ring-2 ring-white">
             {unread}
@@ -123,7 +123,7 @@ export function Topbar({ tenantName }: { tenantName?: string | null }) {
   const [status, setStatus] = useState<AgentStatus>("Online");
   const [statusOpen, setStatusOpen] = useState(false);
   const [search, setSearch] = useState("");
-  const [searchResults, setSearchResults] = useState<{ contacts: {id:string;name:string;phone:string}[]; leads: {id:string;title:string;stage:string}[] } | null>(null);
+  const [searchResults, setSearchResults] = useState<{ contacts: {id:string;name:string;phone:string}[]; leads: {id:string;title:string;stage:{name?:string|null}|null}[] } | null>(null);
   const [searching, setSearching] = useState(false);
   const statusRef = useRef<HTMLDivElement>(null);
   const searchRef = useRef<HTMLDivElement>(null);
@@ -149,7 +149,7 @@ export function Topbar({ tenantName }: { tenantName?: string | null }) {
 
   // Debounced search
   useEffect(() => {
-    if (search.trim().length < 2) { setSearchResults(null); return; }
+    if (search.trim().length < 2) return;
     const t = setTimeout(async () => {
       setSearching(true);
       try {
@@ -170,7 +170,11 @@ export function Topbar({ tenantName }: { tenantName?: string | null }) {
         <input
           type="search"
           value={search}
-          onChange={(e) => setSearch(e.target.value)}
+          onChange={(e) => {
+            const value = e.target.value;
+            setSearch(value);
+            if (value.trim().length < 2) setSearchResults(null);
+          }}
           placeholder="Search contacts, conversations, leads…"
           aria-label="Search"
           className="h-9 w-full rounded-lg bg-slate-50 pl-9 pr-3 text-sm text-slate-900 ring-1 ring-inset ring-transparent transition placeholder:text-slate-400 focus:bg-white focus:outline-none focus:ring-2 focus:ring-emerald-500"
@@ -206,7 +210,7 @@ export function Topbar({ tenantName }: { tenantName?: string | null }) {
                       <Link key={l.id} href="/leads" onClick={() => { setSearch(""); setSearchResults(null); }}
                         className="flex items-center gap-2.5 px-4 py-2 hover:bg-slate-50">
                         <span className="block truncate text-sm font-medium text-slate-900">{l.title}</span>
-                        <span className="ml-auto shrink-0 rounded px-1.5 py-0.5 text-[10px] font-medium bg-slate-100 text-slate-600">{l.stage.replace(/_/g, " ")}</span>
+                        <span className="ml-auto shrink-0 rounded px-1.5 py-0.5 text-[10px] font-medium bg-slate-100 text-slate-600">{l.stage?.name ?? ""}</span>
                       </Link>
                     ))}
                   </div>

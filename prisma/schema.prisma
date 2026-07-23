@@ -55,12 +55,12 @@ enum MessageStatus {
   FAILED
 }
 
-enum LeadStage {
-  NEW_LEAD
-  CONTACTED
-  QUALIFIED
-  PROPOSAL_SENT
-  NEGOTIATION
+// Semantic classification of a pipeline stage. Stage *identity* is now fully dynamic
+// (a PipelineStage row), but a handful of behaviours still need to know whether a stage
+// closes a deal: `closedAt` is stamped on WON/LOST, and analytics counts WON as revenue.
+// Kept as a small closed enum because it drives logic, not presentation.
+enum StageOutcome {
+  OPEN
   WON
   LOST
 }
@@ -125,6 +125,7 @@ model Tenant {
   contacts      Contact[]
   conversations Conversation[]
   leads         Lead[]
+  pipelineStages PipelineStage[]
   campaigns     Campaign[]
   templates     MessageTemplate[]
   chatbotFlows  ChatbotFlow[]
@@ -340,7 +341,7 @@ model Lead {
   contactId       String
   assignedToId    String?
   title           String
-  stage           LeadStage      @default(NEW_LEAD)
+  stageId         String
   score           Int            @default(0)
   scoreLabel      LeadScoreLabel @default(COLD)
   value           Float?
@@ -360,10 +361,40 @@ model Lead {
   tenant     Tenant         @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   contact    Contact        @relation(fields: [contactId], references: [id])
   assignedTo User?          @relation("AssignedLeadAgent", fields: [assignedToId], references: [id])
+  stage      PipelineStage  @relation(fields: [stageId], references: [id])
   activities LeadActivity[]
 
-  @@index([tenantId, stage])
+  @@index([tenantId, stageId])
   @@map("leads")
+}
+
+// ─── PIPELINE STAGE (dynamic lead pipeline) ──────────────────────────────────
+// A tenant-owned, fully configurable pipeline stage. Replaces the former `LeadStage`
+// enum + `TenantSettings.leadStages` JSON override: every Lead now references a stage
+// row, and administrators can create, rename, recolour, reorder, enable/disable, delete
+// and mark a default stage — with no cap on how many a tenant defines.
+model PipelineStage {
+  id        String       @id @default(cuid())
+  tenantId  String
+  name      String
+  // A `StageColor` key from lib/utils (e.g. "blue"). Stored as text so the palette can
+  // grow without a migration; validated against the closed set on write.
+  color     String       @default("slate")
+  order     Int          @default(0)
+  enabled   Boolean      @default(true)
+  isDefault Boolean      @default(false)
+  outcome   StageOutcome @default(OPEN)
+  createdAt DateTime     @default(now())
+  updatedAt DateTime     @updatedAt
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  // Restrict, not Cascade: a stage with leads must have them reassigned before it can be
+  // deleted, so removing a stage can never silently delete the leads sitting in it.
+  leads  Lead[]
+
+  @@unique([tenantId, name])
+  @@index([tenantId, order])
+  @@map("pipeline_stages")
 }
 
 model LeadActivity {

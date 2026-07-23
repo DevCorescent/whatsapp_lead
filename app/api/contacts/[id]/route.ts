@@ -5,6 +5,12 @@ import { updateContactSchema } from "@/lib/validators/contact";
 
 type Params = { params: Promise<{ id: string }> };
 
+function normalizeSource(value: unknown) {
+  if (typeof value !== "string") return null;
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : null;
+}
+
 export async function GET(req: NextRequest, { params }: Params) {
   const session = await auth();
   if (!session?.user) return NextResponse.json({ success: false, error: "Unauthorized" }, { status: 401 });
@@ -15,7 +21,11 @@ export async function GET(req: NextRequest, { params }: Params) {
     where: { id, tenantId: session.user.tenantId },
     include: {
       tags: { include: { tag: true } },
-      leads: { orderBy: { createdAt: "desc" }, take: 5 },
+      leads: {
+        orderBy: { createdAt: "desc" },
+        take: 5,
+        include: { stage: { select: { id: true, name: true, color: true } } },
+      },
       _count: { select: { conversations: true } },
     },
   });
@@ -49,6 +59,10 @@ export async function PATCH(req: NextRequest, { params }: Params) {
   }
 
   const { tags, ...data } = parsed.data;
+  const sanitizedData = {
+    ...data,
+    ...(data.source !== undefined ? { source: normalizeSource(data.source) } : {}),
+  };
 
   const updated = await prisma.$transaction(async (tx) => {
     if (tags !== undefined) {
@@ -62,7 +76,7 @@ export async function PATCH(req: NextRequest, { params }: Params) {
 
     return tx.contact.update({
       where: { id },
-      data,
+      data: sanitizedData,
       include: { tags: { include: { tag: true } } },
     });
   });

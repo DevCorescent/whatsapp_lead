@@ -13,7 +13,7 @@ import {
   Trash2,
   UserX,
 } from "lucide-react";
-import type { LeadScoreLabel, LeadStage } from "@prisma/client";
+import type { LeadScoreLabel } from "@prisma/client";
 import { useContact } from "@/hooks/useContacts";
 import { Avatar, Badge, Button, Card, EmptyState, Skeleton } from "@/components/ui";
 import {
@@ -21,6 +21,7 @@ import {
   TagPill,
   contactTags,
   type ContactRow,
+  type ContactStageRef,
   type TagChip,
 } from "@/components/contacts/ContactTable";
 import {
@@ -55,7 +56,7 @@ type ActivityLite = {
 type LeadLite = {
   id: string;
   title?: string | null;
-  stage?: LeadStage | null;
+  stage?: ContactStageRef | null;
   score?: number | null;
   scoreLabel?: LeadScoreLabel | null;
   value?: number | null;
@@ -394,7 +395,7 @@ function ActivityTab({ activities }: { activities: ActivityLite[] }) {
       <ol className="relative space-y-6 border-l border-slate-200 pl-6">
         {activities.map((activity) => (
           <li key={activity.id} className="relative">
-            <span className="absolute -left-[27px] top-1.5 h-2.5 w-2.5 rounded-full bg-emerald-500 ring-4 ring-white" />
+            <span className="absolute -left-6.75 top-1.5 h-2.5 w-2.5 rounded-full bg-emerald-500 ring-4 ring-white" />
             <p className="text-sm font-medium text-slate-900">
               {(activity.type ?? "ACTIVITY").replace(/_/g, " ")}
             </p>

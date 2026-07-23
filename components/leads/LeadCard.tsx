@@ -1,7 +1,7 @@
 "use client";
 
-import { Clock } from "lucide-react";
-import type { Lead, LeadStage, LeadScoreLabel } from "@prisma/client";
+import { Clock, Loader2 } from "lucide-react";
+import type { Lead, LeadScoreLabel } from "@prisma/client";
 import { Avatar, Badge } from "@/components/ui";
 import { cn, formatCurrency, SCORE_STYLE, daysBetween } from "@/lib/utils";
 
@@ -41,26 +41,41 @@ export type LeadActivityItem = {
   user?: { name: string | null } | null;
 };
 
+/** The pipeline stage a lead references, as included by the leads API. */
+export type LeadStageRef = {
+  id: string;
+  name: string;
+  color?: string | null;
+  order?: number | null;
+  enabled?: boolean | null;
+  outcome?: "OPEN" | "WON" | "LOST" | null;
+};
+
 /** A lead as the Kanban renders it: Prisma `Lead` + the relations the API includes. */
 export type PipelineLead = Serialized<Lead> & {
   contact?: LeadContact | null;
   assignedTo?: LeadAgent | null;
+  stage?: LeadStageRef | null;
   activities?: LeadActivityItem[] | null;
 };
 
-export type LeadsByStage = Record<LeadStage, PipelineLead[]>;
+/** Leads bucketed by their `stageId` (a dynamic PipelineStage id). */
+export type LeadsByStage = Record<string, PipelineLead[]>;
 
 // ─── Card ─────────────────────────────────────────────────────────────────────
 
 export function LeadCard({
   lead,
   isDragging,
+  isSaving,
   onOpen,
   onDragStart,
   onDragEnd,
 }: {
   lead: PipelineLead;
   isDragging?: boolean;
+  /** A stage change for this card is in flight — lock dragging and show a spinner. */
+  isSaving?: boolean;
   onOpen: (lead: PipelineLead) => void;
   onDragStart: (lead: PipelineLead) => void;
   onDragEnd: () => void;
@@ -71,8 +86,13 @@ export function LeadCard({
 
   return (
     <article
-      draggable
+      draggable={!isSaving}
       onDragStart={(e) => {
+        // A card mid-save must not be dragged again — its stage is still settling on the server.
+        if (isSaving) {
+          e.preventDefault();
+          return;
+        }
         // Firefox refuses to start a drag unless some data is set.
         e.dataTransfer.setData("text/plain", lead.id);
         e.dataTransfer.effectAllowed = "move";
@@ -89,14 +109,24 @@ export function LeadCard({
       role="button"
       tabIndex={0}
       aria-label={`${lead.title} — ${contactName}`}
+      aria-busy={isSaving}
       className={cn(
-        "group cursor-grab active:cursor-grabbing select-none",
+        "group relative cursor-grab active:cursor-grabbing select-none",
         "rounded-xl border border-slate-200 bg-white p-3 shadow-sm",
         "transition hover:border-slate-300 hover:shadow-md",
         "focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-600",
         isDragging && "opacity-50",
+        // While saving: dim slightly, block the grab cursor, and swallow pointer events so the
+        // card cannot be re-dragged or re-opened until the PATCH resolves.
+        isSaving && "pointer-events-none cursor-default opacity-60",
       )}
     >
+      {isSaving && (
+        <Loader2
+          className="absolute right-2 top-2 h-3.5 w-3.5 animate-spin text-emerald-600"
+          aria-hidden
+        />
+      )}
       {/* Contact */}
       <div className="flex items-center gap-2">
         <Avatar name={contactName} src={lead.contact?.avatarUrl} size="sm" />

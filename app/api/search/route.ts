@@ -40,7 +40,7 @@ export async function GET(req: NextRequest) {
         select: {
           id: true,
           title: true,
-          stage: true,
+          stage: { select: { id: true, name: true, color: true } },
           score: true,
           contact: { select: { id: true, name: true, phone: true } },
         },

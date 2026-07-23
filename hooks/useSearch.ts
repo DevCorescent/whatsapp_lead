@@ -1,7 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import type {
   ConversationStatus,
-  LeadStage,
   MessageDirection,
   CampaignStatus,
 } from "@prisma/client";
@@ -16,7 +15,7 @@ export interface SearchResults {
   leads: Array<{
     id: string;
     title: string;
-    stage: LeadStage;
+    stage: { id: string; name: string; color: string } | null;
     contact: { name: string; phone: string };
   }>;
   conversations: Array<{

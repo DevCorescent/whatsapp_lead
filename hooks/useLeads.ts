@@ -1,8 +1,10 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import type { LeadStage, LeadScoreLabel } from "@prisma/client";
+import type { LeadScoreLabel } from "@prisma/client";
+import type { ImportMode, ImportResult } from "@/lib/import";
+import type { ImportLeadPayload } from "@/lib/leadsImport";
 
 interface LeadFilters {
-  stage?: LeadStage;
+  stageId?: string;
   assigneeId?: string;
   scoreLabel?: LeadScoreLabel;
   search?: string;
@@ -13,7 +15,7 @@ interface LeadFilters {
 interface CreateLeadInput {
   contactId: string;
   title: string;
-  stage?: LeadStage;
+  stageId?: string;
   score?: number;
   value?: number;
   currency?: string;
@@ -27,7 +29,7 @@ interface CreateLeadInput {
 
 interface UpdateLeadInput {
   title?: string;
-  stage?: LeadStage;
+  stageId?: string;
   score?: number;
   value?: number;
   currency?: string;
@@ -45,7 +47,7 @@ export function useLeads(filters?: LeadFilters) {
     queryKey: ["leads", filters],
     queryFn: async () => {
       const params = new URLSearchParams();
-      if (filters?.stage) params.set("stage", filters.stage);
+      if (filters?.stageId) params.set("stageId", filters.stageId);
       if (filters?.assigneeId) params.set("assigneeId", filters.assigneeId);
       if (filters?.scoreLabel) params.set("scoreLabel", filters.scoreLabel);
       if (filters?.search) params.set("search", filters.search);
@@ -116,11 +118,11 @@ export function useUpdateLead() {
 export function useUpdateLeadStage() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: async ({ id, stage }: { id: string; stage: LeadStage }) => {
+    mutationFn: async ({ id, stageId }: { id: string; stageId: string }) => {
       const res = await fetch(`/api/leads/${id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ stage }),
+        body: JSON.stringify({ stageId }),
       });
       if (!res.ok) {
         const err = await res.json().catch(() => ({}));
@@ -128,7 +130,7 @@ export function useUpdateLeadStage() {
       }
       return res.json();
     },
-    onMutate: async ({ id, stage }) => {
+    onMutate: async ({ id, stageId }) => {
       await queryClient.cancelQueries({ queryKey: ["leads"] });
       const previous = queryClient.getQueryData(["leads"]);
       queryClient.setQueryData(["leads"], (old: unknown) => {
@@ -138,8 +140,8 @@ export function useUpdateLeadStage() {
         return {
           ...payload,
           data: payload.data.map((lead: unknown) => {
-            const l = lead as { id: string; stage: string };
-            return l.id === id ? { ...l, stage } : l;
+            const l = lead as { id: string; stageId: string };
+            return l.id === id ? { ...l, stageId } : l;
           }),
         };
       });
@@ -167,6 +169,38 @@ export function useDeleteLead() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["leads"] });
+    },
+  });
+}
+
+/**
+ * Bulk-import leads through POST /api/leads/import — the lead counterpart to
+ * `useImportContacts`. The same mutation powers the preview (`dryRun: true`, writes
+ * nothing) and the real import; only a real run invalidates the leads cache so the
+ * pipeline refreshes once, after the write.
+ */
+export function useImportLeads() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (payload: {
+      leads: ImportLeadPayload[];
+      mode: ImportMode;
+      dryRun?: boolean;
+    }): Promise<ImportResult> => {
+      const res = await fetch("/api/leads/import", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      const json = await res.json();
+      if (!res.ok || !json.success) throw new Error(json.error ?? "Import failed");
+      return json.data as ImportResult;
+    },
+    onSuccess: (_data, variables) => {
+      if (variables.dryRun) return;
+      queryClient.invalidateQueries({ queryKey: ["leads"] });
+      // Imported leads may create contacts too — keep that list fresh.
+      queryClient.invalidateQueries({ queryKey: ["contacts"] });
     },
   });
 }

@@ -1,6 +1,6 @@
 import { clsx, type ClassValue } from "clsx";
 import { twMerge } from "tailwind-merge";
-import type { LeadStage, LeadScoreLabel, TicketStatus, TicketPriority } from "@prisma/client";
+import type { StageOutcome, LeadScoreLabel, TicketStatus, TicketPriority } from "@prisma/client";
 
 export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
@@ -95,19 +95,56 @@ export function daysBetween(from?: Date | string | null) {
 
 // ─── Domain display maps ──────────────────────────────────────────────────────
 
-export const LEAD_STAGES: { stage: LeadStage; label: string; accent: string; dot: string }[] = [
-  { stage: "NEW_LEAD", label: "New Lead", accent: "border-t-blue-400", dot: "bg-blue-400" },
-  { stage: "CONTACTED", label: "Contacted", accent: "border-t-violet-400", dot: "bg-violet-400" },
-  { stage: "QUALIFIED", label: "Qualified", accent: "border-t-amber-400", dot: "bg-amber-400" },
-  { stage: "PROPOSAL_SENT", label: "Proposal Sent", accent: "border-t-orange-400", dot: "bg-orange-400" },
-  { stage: "NEGOTIATION", label: "Negotiation", accent: "border-t-pink-400", dot: "bg-pink-400" },
-  { stage: "WON", label: "Won", accent: "border-t-emerald-500", dot: "bg-emerald-500" },
-  { stage: "LOST", label: "Lost", accent: "border-t-rose-400", dot: "bg-rose-400" },
+/**
+ * Fixed stage-colour palette. Kept as a closed set of named colours (not free-form
+ * strings) so every Tailwind class is statically present and survives purge, and so
+ * tenant customisation stays inside the design system. Each colour maps to the exact
+ * classes the pipeline already uses.
+ */
+export const STAGE_COLORS = {
+  blue: { label: "Blue", accent: "border-t-blue-400", dot: "bg-blue-400" },
+  violet: { label: "Violet", accent: "border-t-violet-400", dot: "bg-violet-400" },
+  amber: { label: "Amber", accent: "border-t-amber-400", dot: "bg-amber-400" },
+  orange: { label: "Orange", accent: "border-t-orange-400", dot: "bg-orange-400" },
+  pink: { label: "Pink", accent: "border-t-pink-400", dot: "bg-pink-400" },
+  emerald: { label: "Emerald", accent: "border-t-emerald-500", dot: "bg-emerald-500" },
+  rose: { label: "Rose", accent: "border-t-rose-400", dot: "bg-rose-400" },
+  teal: { label: "Teal", accent: "border-t-teal-400", dot: "bg-teal-400" },
+  sky: { label: "Sky", accent: "border-t-sky-400", dot: "bg-sky-400" },
+  indigo: { label: "Indigo", accent: "border-t-indigo-400", dot: "bg-indigo-400" },
+  slate: { label: "Slate", accent: "border-t-slate-400", dot: "bg-slate-400" },
+} as const;
+
+export type StageColor = keyof typeof STAGE_COLORS;
+export const STAGE_COLOR_KEYS = Object.keys(STAGE_COLORS) as StageColor[];
+
+/**
+ * Canonical default pipeline stages — provisioned for a tenant that has none yet
+ * (first load, migration, and the manager's "Reset to defaults"). This is the seed
+ * for the dynamic `PipelineStage` rows, NOT a hardcoded runtime list: once a tenant
+ * exists its stages come from the database. `color` is a `StageColor` key that drives
+ * `accent`/`dot`, and `outcome` marks which default stages close a deal.
+ */
+export const DEFAULT_PIPELINE_STAGES: {
+  name: string;
+  color: StageColor;
+  outcome: StageOutcome;
+  isDefault: boolean;
+}[] = [
+  { name: "New Lead", color: "blue", outcome: "OPEN", isDefault: true },
+  { name: "Contacted", color: "violet", outcome: "OPEN", isDefault: false },
+  { name: "Qualified", color: "amber", outcome: "OPEN", isDefault: false },
+  { name: "Proposal Sent", color: "orange", outcome: "OPEN", isDefault: false },
+  { name: "Negotiation", color: "pink", outcome: "OPEN", isDefault: false },
+  { name: "Won", color: "emerald", outcome: "WON", isDefault: false },
+  { name: "Lost", color: "rose", outcome: "LOST", isDefault: false },
 ];
 
-export const STAGE_LABEL: Record<LeadStage, string> = Object.fromEntries(
-  LEAD_STAGES.map((s) => [s.stage, s.label]),
-) as Record<LeadStage, string>;
+/** Resolve the Tailwind `accent`/`dot` classes for a stored `StageColor` key. */
+export function stageColorClasses(color?: string | null): { accent: string; dot: string } {
+  const key = (color && color in STAGE_COLORS ? color : "slate") as StageColor;
+  return { accent: STAGE_COLORS[key].accent, dot: STAGE_COLORS[key].dot };
+}
 
 /** COLD 0-30 | WARM 31-60 | HOT 61-80 | QUALIFIED 81-100 */
 export const SCORE_STYLE: Record<LeadScoreLabel, string> = {
