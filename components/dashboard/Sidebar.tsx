@@ -22,6 +22,7 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Avatar } from "@/components/ui";
+import { BusinessSwitcher } from "@/components/dashboard/BusinessSwitcher";
 
 /** Grouped so eleven links don't read as one undifferentiated wall. */
 const NAV = [
@@ -53,12 +54,6 @@ const NAV = [
   },
 ];
 
-const PLAN_STYLE: Record<string, string> = {
-  STARTER: "bg-slate-100 text-slate-600",
-  GROWTH: "bg-emerald-100 text-emerald-700",
-  ENTERPRISE: "bg-violet-100 text-violet-700",
-};
-
 export interface SidebarUser {
   name?: string | null;
   role?: string | null;
@@ -79,7 +74,6 @@ function prettyRole(role?: string | null) {
 export function Sidebar({ user }: { user: SidebarUser }) {
   const pathname = usePathname();
   const [mobileOpen, setMobileOpen] = useState(false);
-  const plan = (user.plan ?? "Starter").toUpperCase();
 
   const nav = (
     <>
@@ -159,16 +153,8 @@ export function Sidebar({ user }: { user: SidebarUser }) {
           </button>
         </div>
 
-        <div className="mt-2.5 flex items-center justify-between rounded-lg bg-slate-50 px-2.5 py-1.5">
-          <span className="truncate text-xs text-slate-500">{user.tenantName ?? "Workspace"}</span>
-          <span
-            className={cn(
-              "ml-2 shrink-0 rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide",
-              PLAN_STYLE[plan] ?? PLAN_STYLE.STARTER,
-            )}
-          >
-            {plan}
-          </span>
+        <div className="mt-2.5">
+          <BusinessSwitcher />
         </div>
       </div>
     </>
