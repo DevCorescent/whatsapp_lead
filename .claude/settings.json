@@ -5,7 +5,13 @@
       "Bash(node -e ' *)",
       "Bash(cat prisma/prisma.config.ts)",
       "Bash(cat prisma.config.ts)",
-      "Bash(git commit -m ' *)"
+      "Bash(git commit -m ' *)",
+      "Read(//tmp/**)",
+      "Bash(node -e \"const { PrismaClient } = require\\('@prisma/client'\\); const p = new PrismaClient\\(\\); console.log\\(Object.keys\\(p.tenantSettings.fields\\)\\)\")",
+      "Bash(echo \"Exit code: $?\")"
+    ],
+    "additionalDirectories": [
+      "C:\\tmp"
     ]
   }
 }
