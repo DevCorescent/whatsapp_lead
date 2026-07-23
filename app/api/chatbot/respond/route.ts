@@ -3,6 +3,7 @@ import { z } from "zod";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { generateReply } from "@/lib/ai";
+import { retrieveContext } from "@/lib/rag";
 
 const schema = z.object({
   conversationId: z.string().min(1),
@@ -23,7 +24,7 @@ export async function POST(req: NextRequest) {
 
     const { conversationId, flowId } = parsed.data;
 
-    const [conversation, settings, knowledgeDocs] = await Promise.all([
+    const [conversation, settings] = await Promise.all([
       prisma.conversation.findFirst({
         where: { id: conversationId, tenantId },
         include: {
@@ -38,11 +39,6 @@ export async function POST(req: NextRequest) {
       prisma.tenantSettings.findUnique({
         where: { tenantId },
         select: { aiPersonality: true, aiModel: true },
-      }),
-      prisma.knowledgeDoc.findMany({
-        where: { tenantId, isIndexed: true },
-        select: { content: true },
-        take: 5,
       }),
     ]);
 
@@ -61,8 +57,6 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    const knowledgeContext = knowledgeDocs.map((d) => d.content).filter(Boolean).join("\n\n") || undefined;
-
     const personality = settings?.aiPersonality ?? "You are a helpful WhatsApp business assistant.";
     const systemPrompt = `${personality}${flowInstructions}\n\nRespond concisely and professionally in the same language as the customer.`;
 
@@ -77,7 +71,11 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ success: false, error: "No messages to respond to" }, { status: 400 });
     }
 
-    const reply = await generateReply(messages, systemPrompt, knowledgeContext);
+    // RAG: pull only the chunks relevant to the customer's latest message.
+    const lastCustomerMsg = [...messages].reverse().find((m) => m.role === "user")?.content ?? "";
+    const knowledgeContext = await retrieveContext(tenantId, lastCustomerMsg);
+
+    const reply = await generateReply(messages, systemPrompt, knowledgeContext, settings?.aiModel);
     return NextResponse.json({ success: true, data: { reply } });
   } catch (error) {
     console.error("[CHATBOT RESPOND]", error);

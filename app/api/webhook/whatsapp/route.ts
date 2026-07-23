@@ -40,6 +40,7 @@ import {
 import type { Contact, Conversation, Message } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { generateReply } from "@/lib/ai";
+import { retrieveContext } from "@/lib/rag";
 import { pusher, tenantChannel, PusherEvent } from "@/lib/pusher";
 import { markMessageAsRead, sendTextMessage } from "@/lib/whatsapp";
 import type {
@@ -680,12 +681,18 @@ async function handleAutoReply(
   // Nothing to reply to — a thread whose only messages are media or notes gives the model no turn.
   if (!history.length) return;
 
+  // RAG: ground the reply in the tenant's knowledge base, scoped to what the customer just asked.
+  const lastCustomerMsg = [...history].reverse().find((m) => m.role === "user")?.content ?? "";
+  const knowledgeContext = await retrieveContext(tenant.tenantId, lastCustomerMsg);
+
   let reply: string;
   try {
     reply = (
       await generateReply(
         history,
-        tenant.aiPersonality?.trim() || DEFAULT_AI_PERSONALITY
+        tenant.aiPersonality?.trim() || DEFAULT_AI_PERSONALITY,
+        knowledgeContext,
+        tenant.aiModel
       )
     ).trim();
   } catch (error) {

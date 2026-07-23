@@ -3,6 +3,7 @@ import { z } from "zod";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { generateReply } from "@/lib/ai";
+import { retrieveContext } from "@/lib/rag";
 
 const schema = z.object({
   conversationId: z.string().min(1),
@@ -22,27 +23,22 @@ export async function POST(req: NextRequest) {
 
     const { conversationId } = parsed.data;
 
-    const conversation = await prisma.conversation.findFirst({
-      where: { id: conversationId, tenantId },
-      include: {
-        messages: {
-          where: { isNote: false },
-          select: { direction: true, content: true },
-          orderBy: { createdAt: "asc" },
-          take: 30,
+    const [conversation, settings] = await Promise.all([
+      prisma.conversation.findFirst({
+        where: { id: conversationId, tenantId },
+        include: {
+          messages: {
+            where: { isNote: false },
+            select: { direction: true, content: true },
+            orderBy: { createdAt: "asc" },
+            take: 30,
+          },
         },
-      },
-    });
+      }),
+      prisma.tenantSettings.findUnique({ where: { tenantId }, select: { aiModel: true } }),
+    ]);
 
     if (!conversation) return NextResponse.json({ success: false, error: "Conversation not found" }, { status: 404 });
-
-    // Get knowledge base context
-    const knowledgeDocs = await prisma.knowledgeDoc.findMany({
-      where: { tenantId, isIndexed: true },
-      select: { content: true },
-      take: 5,
-    });
-    const knowledgeContext = knowledgeDocs.map((d) => d.content).filter(Boolean).join("\n\n") || undefined;
 
     const messages = conversation.messages
       .filter((m) => m.content)
@@ -53,8 +49,12 @@ export async function POST(req: NextRequest) {
 
     if (messages.length === 0) return NextResponse.json({ success: false, error: "No messages to reply to" }, { status: 400 });
 
+    // RAG: retrieve only the chunks relevant to the customer's latest question.
+    const lastCustomerMsg = [...messages].reverse().find((m) => m.role === "user")?.content ?? "";
+    const knowledgeContext = await retrieveContext(tenantId, lastCustomerMsg);
+
     const systemPrompt = "You are a helpful WhatsApp CRM assistant. Suggest a concise, professional reply to the customer's last message.";
-    const reply = await generateReply(messages, systemPrompt, knowledgeContext);
+    const reply = await generateReply(messages, systemPrompt, knowledgeContext, settings?.aiModel);
     return NextResponse.json({ success: true, data: { reply } });
   } catch (error) {
     console.error("[AI REPLY]", error);
