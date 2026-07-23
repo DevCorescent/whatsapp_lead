@@ -151,8 +151,8 @@ export default function TenantDetailPage({
   if (isError || !tenant) {
     return (
       <div className="flex flex-col items-center gap-4 py-20 text-center">
-        <Building2 className="h-12 w-12 text-slate-700" />
-        <p className="text-slate-400">Tenant not found or failed to load.</p>
+        <Building2 className="h-12 w-12 text-slate-300" />
+        <p className="text-slate-500">Tenant not found or failed to load.</p>
         <AdminButton variant="secondary" onClick={() => router.push("/tenants")}>
           <ArrowLeft className="h-4 w-4" /> Back to tenants
         </AdminButton>
@@ -176,7 +176,7 @@ export default function TenantDetailPage({
       {/* Back + header */}
       <button
         onClick={() => router.push("/tenants")}
-        className="mb-4 inline-flex items-center gap-1.5 text-sm text-slate-400 transition hover:text-slate-100"
+        className="mb-4 inline-flex items-center gap-1.5 text-sm text-slate-500 transition hover:text-slate-900"
       >
         <ArrowLeft className="h-4 w-4" /> All tenants
       </button>
@@ -207,7 +207,7 @@ export default function TenantDetailPage({
       />
 
       {update.isError && (
-        <p className="mb-4 rounded-lg border border-rose-500/30 bg-rose-500/10 px-3 py-2 text-xs text-rose-300">
+        <p className="mb-4 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-700">
           {(update.error as Error).message}
         </p>
       )}
@@ -252,7 +252,7 @@ export default function TenantDetailPage({
             <select
               value={selectedPlan}
               onChange={(e) => { setSelectedPlan(e.target.value); setPlanError(""); }}
-              className="w-full rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-sm text-slate-200 focus:outline-none focus:ring-2 focus:ring-violet-500"
+              className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-emerald-100 focus:border-[#0B6E4F]"
             >
               <option value="">Select new plan…</option>
               {plans.map((p) => (
@@ -261,7 +261,7 @@ export default function TenantDetailPage({
                 </option>
               ))}
             </select>
-            {planError && <p className="text-xs text-rose-400">{planError}</p>}
+            {planError && <p className="text-xs text-rose-600">{planError}</p>}
             <AdminButton
               onClick={changePlan}
               disabled={update.isPending || !selectedPlan}
@@ -279,7 +279,7 @@ export default function TenantDetailPage({
           {tenant.settings ? (
             <dl className="space-y-3 text-sm">
               <Row label="Phone Number ID">
-                <code className="rounded bg-slate-800 px-1.5 py-0.5 text-xs text-slate-300">
+                <code className="rounded bg-slate-100 px-1.5 py-0.5 text-xs text-slate-700">
                   {tenant.settings.waPhoneNumberId ?? "—"}
                 </code>
               </Row>
@@ -313,17 +313,17 @@ function StatTile({
   tone: "violet" | "emerald" | "sky" | "amber";
 }) {
   const colors: Record<string, string> = {
-    violet: "text-violet-400 bg-violet-500/10",
-    emerald: "text-emerald-400 bg-emerald-500/10",
-    sky: "text-sky-400 bg-sky-500/10",
-    amber: "text-amber-400 bg-amber-500/10",
+    violet: "text-violet-700 bg-violet-50",
+    emerald: "text-emerald-700 bg-emerald-50",
+    sky: "text-sky-700 bg-sky-50",
+    amber: "text-amber-700 bg-amber-50",
   };
   return (
     <AdminCard className="p-4">
       <div className={cn("mb-2 inline-flex rounded-lg p-2", colors[tone])}>
         <Icon className="h-4 w-4" />
       </div>
-      <p className="text-2xl font-bold text-slate-100">{value.toLocaleString()}</p>
+      <p className="text-2xl font-bold text-slate-900">{value.toLocaleString()}</p>
       <p className="mt-0.5 text-xs text-slate-500">{label}</p>
     </AdminCard>
   );
@@ -333,7 +333,7 @@ function Row({ label, children }: { label: string; children: React.ReactNode }) 
   return (
     <div className="flex items-center justify-between gap-3">
       <dt className="shrink-0 text-slate-500">{label}</dt>
-      <dd className="text-right text-slate-200">{children}</dd>
+      <dd className="text-right text-slate-800">{children}</dd>
     </div>
   );
 }

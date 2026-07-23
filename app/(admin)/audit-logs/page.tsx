@@ -42,11 +42,11 @@ function useAuditLogs(search: string, page: number) {
 }
 
 const ACTION_COLOR: Record<string, string> = {
-  CONTACT_DELETED: "text-rose-400",
-  LEAD_CREATED: "text-emerald-400",
-  TICKET_CREATED: "text-sky-400",
-  AI_QUALIFICATION: "text-violet-400",
-  USER_INVITED: "text-amber-400",
+  CONTACT_DELETED: "text-rose-700",
+  LEAD_CREATED: "text-emerald-700",
+  TICKET_CREATED: "text-sky-700",
+  AI_QUALIFICATION: "text-violet-700",
+  USER_INVITED: "text-amber-700",
 };
 
 export default function AuditLogsPage() {
@@ -67,13 +67,13 @@ export default function AuditLogsPage() {
 
       <div className="mb-4 flex items-center gap-3">
         <div className="relative max-w-sm flex-1">
-          <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-500" />
+          <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
           <input
             type="search"
             value={search}
             onChange={(e) => { setSearch(e.target.value); setPage(1); }}
             placeholder="Search by action or user…"
-            className={cn(inputClass, "border-slate-700 bg-slate-800 pl-9 text-slate-200 placeholder:text-slate-500 focus:ring-violet-500")}
+            className={cn(inputClass, "border-slate-200 bg-white pl-9 text-slate-900 placeholder:text-slate-400 focus:ring-[#0B6E4F]")}
           />
         </div>
         {total > 0 && (
@@ -92,7 +92,7 @@ export default function AuditLogsPage() {
           />
         ) : (
           <AdminTable>
-            <thead className="border-b border-slate-800 bg-slate-950/40">
+            <thead className="border-b border-slate-200 bg-[#FAFAFA]">
               <tr>
                 <th className={thClass}>Timestamp</th>
                 <th className={thClass}>Action</th>
@@ -101,26 +101,26 @@ export default function AuditLogsPage() {
                 <th className={thClass}>Workspace</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-slate-800">
+            <tbody className="divide-y divide-slate-200">
               {logs.map((log) => (
-                <tr key={log.id} className="transition hover:bg-slate-800/40">
+                <tr key={log.id} className="transition hover:bg-slate-50">
                   <td className={tdClass}>
-                    <span className="text-slate-400" title={log.createdAt}>
+                    <span className="text-slate-500" title={log.createdAt}>
                       {timeAgo(new Date(log.createdAt))}
                     </span>
-                    <span className="ml-2 hidden text-xs text-slate-600 lg:inline">
+                    <span className="ml-2 hidden text-xs text-slate-400 lg:inline">
                       {formatDate(log.createdAt)}
                     </span>
                   </td>
                   <td className={tdClass}>
-                    <code className={cn("text-xs font-mono", ACTION_COLOR[log.action] ?? "text-slate-300")}>
+                    <code className={cn("text-xs font-mono", ACTION_COLOR[log.action] ?? "text-slate-700")}>
                       {log.action}
                     </code>
                   </td>
                   <td className={tdClass}>
-                    <span className="text-slate-400">{log.resource}</span>
+                    <span className="text-slate-500">{log.resource}</span>
                     {log.resourceId && (
-                      <span className="ml-1.5 font-mono text-xs text-slate-600">
+                      <span className="ml-1.5 font-mono text-xs text-slate-400">
                         #{log.resourceId.slice(-6)}
                       </span>
                     )}
@@ -128,15 +128,15 @@ export default function AuditLogsPage() {
                   <td className={tdClass}>
                     {log.user ? (
                       <div>
-                        <p className="text-sm text-slate-200">{log.user.name}</p>
+                        <p className="text-sm text-slate-900">{log.user.name}</p>
                         <p className="text-xs text-slate-500">{log.user.email}</p>
                       </div>
-                    ) : <span className="text-slate-600">—</span>}
+                    ) : <span className="text-slate-400">—</span>}
                   </td>
                   <td className={tdClass}>
                     {log.tenant ? (
-                      <span className="text-slate-300">{log.tenant.name}</span>
-                    ) : <span className="text-slate-600">—</span>}
+                      <span className="text-slate-700">{log.tenant.name}</span>
+                    ) : <span className="text-slate-400">—</span>}
                   </td>
                 </tr>
               ))}
@@ -148,12 +148,12 @@ export default function AuditLogsPage() {
       {pages > 1 && (
         <div className="mt-4 flex items-center justify-center gap-2">
           <button onClick={() => setPage((p) => Math.max(1, p - 1))} disabled={page === 1}
-            className="rounded-lg px-3 py-1.5 text-sm text-slate-400 hover:bg-slate-800 disabled:opacity-40">
+            className="rounded-lg px-3 py-1.5 text-sm text-slate-500 hover:bg-slate-100 disabled:opacity-40">
             Previous
           </button>
           <span className="text-sm text-slate-500">Page {page} of {pages}</span>
           <button onClick={() => setPage((p) => Math.min(pages, p + 1))} disabled={page === pages}
-            className="rounded-lg px-3 py-1.5 text-sm text-slate-400 hover:bg-slate-800 disabled:opacity-40">
+            className="rounded-lg px-3 py-1.5 text-sm text-slate-500 hover:bg-slate-100 disabled:opacity-40">
             Next
           </button>
         </div>

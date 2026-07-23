@@ -208,7 +208,7 @@ export default function AdminRevenuePage() {
         title="MRR — last 12 months"
         subtitle="Monthly recurring revenue"
         className="mt-6"
-        action={<TrendingUp className="h-4 w-4 text-violet-400" />}
+        action={<TrendingUp className="h-4 w-4 text-[#0B6E4F]" />}
       >
         <div className="h-72">
           {isLoading ? (
@@ -254,7 +254,7 @@ export default function AdminRevenuePage() {
                   <Legend
                     iconType="circle"
                     formatter={(value) => (
-                      <span className="text-xs capitalize text-slate-400">{value}</span>
+                      <span className="text-xs capitalize text-slate-500">{value}</span>
                     )}
                   />
                   <Bar dataKey="starter" stackId="rev" fill={CHART.sky} radius={[0, 0, 0, 0]} />
@@ -288,16 +288,16 @@ export default function AdminRevenuePage() {
               {failed.map((f) => (
                 <li
                   key={f.id}
-                  className="rounded-lg border border-rose-500/20 bg-rose-500/5 px-3 py-2.5"
+                  className="rounded-lg border border-rose-100 bg-rose-50 px-3 py-2.5"
                 >
                   <div className="flex items-start justify-between gap-2">
                     <div className="min-w-0">
-                      <p className="truncate text-sm font-medium text-slate-100">{f.tenant}</p>
+                      <p className="truncate text-sm font-medium text-slate-900">{f.tenant}</p>
                       <p className="mt-0.5 truncate text-xs text-slate-500">
                         {f.plan} · {formatDate(f.date)}
                       </p>
                     </div>
-                    <span className="shrink-0 text-sm font-semibold text-rose-300">
+                    <span className="shrink-0 text-sm font-semibold text-rose-700">
                       {formatCurrency(f.amount)}
                     </span>
                   </div>
@@ -336,7 +336,7 @@ export default function AdminRevenuePage() {
           />
         ) : (
           <AdminTable>
-            <thead className="border-b border-slate-800 bg-slate-950/40">
+            <thead className="border-b border-slate-200 bg-[#FAFAFA]">
               <tr>
                 <th className={thClass}>Tenant</th>
                 <th className={thClass}>Plan</th>
@@ -346,12 +346,12 @@ export default function AdminRevenuePage() {
                 <th className={thClass}>Date</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-slate-800">
+            <tbody className="divide-y divide-slate-200">
               {transactions.map((t) => (
-                <tr key={t.id} className="transition hover:bg-slate-800/40">
-                  <td className={cn(tdClass, "font-medium text-slate-100")}>{t.tenant}</td>
+                <tr key={t.id} className="transition hover:bg-slate-50">
+                  <td className={cn(tdClass, "font-medium text-slate-900")}>{t.tenant}</td>
                   <td className={tdClass}>{t.plan}</td>
-                  <td className={cn(tdClass, "font-semibold text-slate-100")}>
+                  <td className={cn(tdClass, "font-semibold text-slate-900")}>
                     {formatCurrency(t.amount)}
                   </td>
                   <td className={tdClass}>
@@ -365,7 +365,7 @@ export default function AdminRevenuePage() {
                       {t.status.charAt(0) + t.status.slice(1).toLowerCase()}
                     </AdminBadge>
                   </td>
-                  <td className={cn(tdClass, "text-slate-400")}>{formatDate(t.date)}</td>
+                  <td className={cn(tdClass, "text-slate-500")}>{formatDate(t.date)}</td>
                 </tr>
               ))}
             </tbody>
