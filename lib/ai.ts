@@ -1,6 +1,16 @@
 import Groq from "groq-sdk";
 
-const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
+// The Groq client is created lazily, not at module load. `new Groq()` throws when
+// GROQ_API_KEY is unset, and constructing it at the top level made that throw fire
+// during `next build`'s page-data collection (which imports every route module),
+// failing the build on any deploy that supplies the key only at runtime. Deferring
+// construction to first use keeps import side-effect-free; the key is still required
+// before any AI call actually runs.
+let _groq: Groq | null = null;
+function getGroq(): Groq {
+  if (!_groq) _groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
+  return _groq;
+}
 const MODEL = process.env.GROQ_MODEL ?? "llama-3.3-70b-versatile";
 
 export interface GenerateReplyOptions {
@@ -22,7 +32,7 @@ export async function generateReply(
     ? `${systemPrompt}\n\nRelevant knowledge:\n${knowledgeContext}`
     : systemPrompt;
 
-  const completion = await groq.chat.completions.create({
+  const completion = await getGroq().chat.completions.create({
     model: options?.model ?? MODEL,
     messages: [
       { role: "system", content: systemContent },
@@ -42,7 +52,7 @@ export async function summarizeConversation(
     .map((m) => `${m.role === "user" ? "Customer" : "Agent"}: ${m.content}`)
     .join("\n");
 
-  const completion = await groq.chat.completions.create({
+  const completion = await getGroq().chat.completions.create({
     model: MODEL,
     messages: [
       {
@@ -73,7 +83,7 @@ export interface LeadQualification {
 }
 
 export async function qualifyLead(conversationText: string): Promise<LeadQualification> {
-  const completion = await groq.chat.completions.create({
+  const completion = await getGroq().chat.completions.create({
     model: MODEL,
     messages: [
       {
@@ -121,7 +131,7 @@ export async function qualifyLead(conversationText: string): Promise<LeadQualifi
 export async function detectSentiment(
   text: string
 ): Promise<"positive" | "neutral" | "negative"> {
-  const completion = await groq.chat.completions.create({
+  const completion = await getGroq().chat.completions.create({
     model: MODEL,
     messages: [
       {
