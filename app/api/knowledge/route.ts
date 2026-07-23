@@ -12,8 +12,21 @@ const createDocSchema = z.object({
   url: z.string().url().optional(),
 }).refine((d) => d.content || d.url, { message: "Either content or url is required" });
 
-const FILE_TYPES: Record<string, DocType> = { pdf: "PDF", docx: "DOCX", txt: "TXT", md: "TXT" };
-const MAX_FILE_BYTES = 5 * 1024 * 1024; // 5 MB — keeps ingestion under the serverless timeout
+const FILE_TYPES: Record<string, DocType> = {
+  pdf: "PDF",
+  docx: "DOCX",
+  txt: "TXT",
+  md: "TXT",
+  // Images are OCR'd + table-extracted by the doc-parsing service (LlamaParse).
+  png: "IMAGE",
+  jpg: "IMAGE",
+  jpeg: "IMAGE",
+  webp: "IMAGE",
+  tiff: "IMAGE",
+  bmp: "IMAGE",
+};
+const MAX_FILE_MB = 10;
+const MAX_FILE_BYTES = MAX_FILE_MB * 1024 * 1024;
 
 export async function GET(req: NextRequest) {
   const session = await auth();
@@ -60,7 +73,7 @@ export async function POST(req: NextRequest) {
       const created = [];
       for (const file of files) {
         if (file.size > MAX_FILE_BYTES) {
-          return NextResponse.json({ success: false, error: `${file.name} exceeds the 5 MB limit` }, { status: 400 });
+          return NextResponse.json({ success: false, error: `${file.name} exceeds the ${MAX_FILE_MB} MB limit` }, { status: 400 });
         }
         const ext = (file.name.split(".").pop() ?? "").toLowerCase();
         const type = FILE_TYPES[ext];
@@ -106,7 +119,7 @@ async function ingestAndPersist(params: {
   const { tenantId, name, type, buffer, text, url, size } = params;
   const docId = randomUUID();
 
-  const { chunkCount, vectorIds } = await ingestDocument({ tenantId, docId, type, buffer, text, url });
+  const { chunkCount, vectorIds } = await ingestDocument({ tenantId, docId, type, buffer, text, url, filename: name });
 
   return prisma.knowledgeDoc.create({
     data: {

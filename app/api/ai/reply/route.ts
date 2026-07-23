@@ -23,17 +23,20 @@ export async function POST(req: NextRequest) {
 
     const { conversationId } = parsed.data;
 
-    const conversation = await prisma.conversation.findFirst({
-      where: { id: conversationId, tenantId },
-      include: {
-        messages: {
-          where: { isNote: false },
-          select: { direction: true, content: true },
-          orderBy: { createdAt: "asc" },
-          take: 30,
+    const [conversation, settings] = await Promise.all([
+      prisma.conversation.findFirst({
+        where: { id: conversationId, tenantId },
+        include: {
+          messages: {
+            where: { isNote: false },
+            select: { direction: true, content: true },
+            orderBy: { createdAt: "asc" },
+            take: 30,
+          },
         },
-      },
-    });
+      }),
+      prisma.tenantSettings.findUnique({ where: { tenantId }, select: { aiModel: true } }),
+    ]);
 
     if (!conversation) return NextResponse.json({ success: false, error: "Conversation not found" }, { status: 404 });
 
@@ -51,7 +54,7 @@ export async function POST(req: NextRequest) {
     const knowledgeContext = await retrieveContext(tenantId, lastCustomerMsg);
 
     const systemPrompt = "You are a helpful WhatsApp CRM assistant. Suggest a concise, professional reply to the customer's last message.";
-    const reply = await generateReply(messages, systemPrompt, knowledgeContext);
+    const reply = await generateReply(messages, systemPrompt, knowledgeContext, settings?.aiModel);
     return NextResponse.json({ success: true, data: { reply } });
   } catch (error) {
     console.error("[AI REPLY]", error);

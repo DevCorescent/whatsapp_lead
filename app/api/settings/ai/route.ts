@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
+import { aiProviderInfo } from "@/lib/ai";
 
 const patchSchema = z.object({
   aiEnabled: z.boolean().optional(),
@@ -30,7 +31,7 @@ export async function GET() {
       },
     });
 
-    return NextResponse.json({ success: true, data: settings });
+    return NextResponse.json({ success: true, data: { ...settings, ...aiProviderInfo() } });
   } catch (error) {
     console.error("[SETTINGS AI GET]", error);
     return NextResponse.json({ success: false, error: "Failed to fetch AI settings" }, { status: 500 });

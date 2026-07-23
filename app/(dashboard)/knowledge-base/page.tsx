@@ -217,7 +217,7 @@ function UploadModal({ open, onClose }: { open: boolean; onClose: () => void }) 
       open={open}
       onClose={close}
       title="Upload Document"
-      description="PDF, DOCX or TXT up to 10 MB — or index a public web page."
+      description="PDF, DOCX, images or TXT up to 10 MB — tables and scanned files supported. Or index a public web page."
     >
       <form
         className="space-y-4"
@@ -266,12 +266,12 @@ function UploadModal({ open, onClose }: { open: boolean; onClose: () => void }) 
           <p className="mt-2 text-sm font-medium text-slate-800">
             Drag files here or click to browse
           </p>
-          <p className="mt-0.5 text-xs text-slate-500">Accepts PDF, DOCX, TXT or a URL</p>
+          <p className="mt-0.5 text-xs text-slate-500">Accepts PDF, DOCX, images (PNG/JPG), TXT or a URL</p>
           <input
             ref={inputRef}
             type="file"
             multiple
-            accept=".pdf,.docx,.txt"
+            accept=".pdf,.docx,.txt,.md,.png,.jpg,.jpeg,.webp,.tiff,.bmp"
             className="hidden"
             onChange={(e) => addFiles(e.target.files)}
           />

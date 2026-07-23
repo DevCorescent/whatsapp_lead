@@ -75,7 +75,7 @@ export async function POST(req: NextRequest) {
     const lastCustomerMsg = [...messages].reverse().find((m) => m.role === "user")?.content ?? "";
     const knowledgeContext = await retrieveContext(tenantId, lastCustomerMsg);
 
-    const reply = await generateReply(messages, systemPrompt, knowledgeContext);
+    const reply = await generateReply(messages, systemPrompt, knowledgeContext, settings?.aiModel);
     return NextResponse.json({ success: true, data: { reply } });
   } catch (error) {
     console.error("[CHATBOT RESPOND]", error);

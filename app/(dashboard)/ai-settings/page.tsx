@@ -25,9 +25,16 @@ import {
 import { Toggle } from "@/components/ui/Toggle";
 import { cn } from "@/lib/utils";
 
+// OpenRouter model ids (provider/model). "" = defer to the workspace default
+// (OPENROUTER_MODEL). Browse more at https://openrouter.ai/models and paste the id.
 const MODELS = [
-  { value: "llama-3.3-70b-versatile", label: "Llama 3.3 70B Versatile — best quality" },
-  { value: "llama-3.1-8b-instant", label: "Llama 3.1 8B Instant — fastest, cheapest" },
+  { value: "", label: "Workspace default" },
+  { value: "openai/gpt-4o-mini", label: "GPT-4o mini — fast & cheap" },
+  { value: "openai/gpt-4o", label: "GPT-4o — high quality" },
+  { value: "anthropic/claude-3.5-sonnet", label: "Claude 3.5 Sonnet — best reasoning" },
+  { value: "google/gemini-2.0-flash-001", label: "Gemini 2.0 Flash — fast, long context" },
+  { value: "meta-llama/llama-3.3-70b-instruct", label: "Llama 3.3 70B — balanced" },
+  { value: "meta-llama/llama-3.3-70b-instruct:free", label: "Llama 3.3 70B (free) — rate-limited" },
 ];
 
 const PERSONALITIES = ["Professional", "Friendly", "Concise", "Consultative"];
@@ -110,7 +117,7 @@ const sliderClass = "h-1.5 w-full cursor-pointer appearance-none rounded-full bg
 
 const INITIAL = {
   aiEnabled: true,
-  model: MODELS[0].value,
+  model: "", // "" = workspace default
   temperature: 0.7,
   maxTokens: 512,
   autoReply: true,
@@ -139,6 +146,7 @@ export default function AISettingsPage() {
       return j.data as {
         aiEnabled: boolean; aiModel: string; autoReply: boolean;
         autoReplyDelay: number; aiPersonality: string | null;
+        provider: "openrouter" | "groq"; defaultModel: string;
       };
     },
   });
@@ -148,7 +156,9 @@ export default function AISettingsPage() {
       setForm((f) => ({
         ...f,
         aiEnabled: aiData.aiEnabled,
-        model: aiData.aiModel ?? f.model,
+        // Only OpenRouter ids (with "/") are honoured; anything else means
+        // "use the workspace default", shown as the "" option.
+        model: aiData.aiModel?.includes("/") ? aiData.aiModel : "",
         autoReply: aiData.autoReply,
         replyDelay: aiData.autoReplyDelay,
         personality: aiData.aiPersonality ?? f.personality,
@@ -156,10 +166,37 @@ export default function AISettingsPage() {
     }
   }, [aiData]);
 
+  // Include a saved-but-unlisted model so the dropdown still shows it.
+  const modelOptions =
+    form.model && !MODELS.some((m) => m.value === form.model)
+      ? [{ value: form.model, label: `${form.model} (custom)` }, ...MODELS]
+      : MODELS;
+  const onGroq = aiData?.provider === "groq";
+
   const set = <K extends keyof typeof INITIAL>(key: K, value: (typeof INITIAL)[K]) =>
     setForm((f) => ({ ...f, [key]: value }));
 
-  const dirty = JSON.stringify(form) !== JSON.stringify(INITIAL);
+  // "Dirty" must compare against what's actually saved on the server, not the
+  // static INITIAL defaults — otherwise the form reads as unsaved on load and
+  // stays "unsaved" even right after a successful save. Only the fields the API
+  // persists are compared (the others aren't wired to the backend yet).
+  const savedSnapshot = aiData
+    ? {
+        aiEnabled: aiData.aiEnabled,
+        model: aiData.aiModel?.includes("/") ? aiData.aiModel : "",
+        autoReply: aiData.autoReply,
+        replyDelay: aiData.autoReplyDelay,
+        personality: aiData.aiPersonality ?? INITIAL.personality,
+      }
+    : null;
+
+  const dirty = savedSnapshot
+    ? form.aiEnabled !== savedSnapshot.aiEnabled ||
+      form.model !== savedSnapshot.model ||
+      form.autoReply !== savedSnapshot.autoReply ||
+      form.replyDelay !== savedSnapshot.replyDelay ||
+      form.personality !== savedSnapshot.personality
+    : false;
 
   const saveMutation = useMutation({
     mutationFn: async () => {
@@ -217,12 +254,24 @@ export default function AISettingsPage() {
               disabled={!form.aiEnabled}
               className={cn(inputClass, "disabled:bg-slate-50 disabled:text-slate-400")}
             >
-              {MODELS.map((m) => (
-                <option key={m.value} value={m.value}>
+              {modelOptions.map((m) => (
+                <option key={m.value || "default"} value={m.value}>
                   {m.label}
                 </option>
               ))}
             </select>
+            {onGroq ? (
+              <p className="mt-1 text-xs text-amber-600">
+                Model selection applies when OpenRouter is enabled. This workspace is
+                currently on Groq ({aiData?.defaultModel}), so all replies use that model.
+              </p>
+            ) : (
+              <p className="mt-1 text-xs text-slate-500">
+                {form.model
+                  ? "This workspace uses the selected model."
+                  : `Defaults to ${aiData?.defaultModel ?? "the workspace model"}. Pick a specific model to override.`}
+              </p>
+            )}
           </Field>
 
           <Field label="Temperature" htmlFor="ai-temp">
@@ -451,11 +500,25 @@ export default function AISettingsPage() {
       {/* ── Sticky save bar ────────────────────────────────────────────────── */}
       <div className="fixed inset-x-0 bottom-0 z-30 border-t border-slate-200 bg-white/95 px-4 py-3 backdrop-blur lg:left-64">
         <div className="flex items-center justify-between gap-3">
-          <p className="text-xs text-slate-500">
-            {dirty ? "You have unsaved changes." : "All changes saved."}
+          <p className="text-xs">
+            {saveMutation.isError ? (
+              <span className="text-rose-600">
+                {(saveMutation.error as Error)?.message ?? "Save failed."}
+              </span>
+            ) : saveMutation.isPending ? (
+              <span className="text-slate-500">Saving…</span>
+            ) : dirty ? (
+              <span className="text-amber-600">You have unsaved changes.</span>
+            ) : (
+              <span className="text-emerald-600">All changes saved.</span>
+            )}
           </p>
           <div className="flex gap-2">
-            <Button variant="secondary" disabled={!dirty} onClick={() => setForm(INITIAL)}>
+            <Button
+              variant="secondary"
+              disabled={!dirty}
+              onClick={() => savedSnapshot && setForm((f) => ({ ...f, ...savedSnapshot }))}
+            >
               <RotateCcw className="h-4 w-4" />
               Reset
             </Button>
@@ -474,7 +537,7 @@ export default function AISettingsPage() {
         open={testOpen}
         onClose={() => setTestOpen(false)}
         personality={form.personality}
-        model={form.model}
+        model={form.model || aiData?.defaultModel || "the workspace model"}
       />
     </div>
   );

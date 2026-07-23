@@ -691,7 +691,8 @@ async function handleAutoReply(
       await generateReply(
         history,
         tenant.aiPersonality?.trim() || DEFAULT_AI_PERSONALITY,
-        knowledgeContext
+        knowledgeContext,
+        tenant.aiModel
       )
     ).trim();
   } catch (error) {
