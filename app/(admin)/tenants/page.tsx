@@ -158,7 +158,7 @@ export default function AdminTenantsPage() {
       {/* Filters */}
       <div className="mb-4 flex flex-col gap-3 sm:flex-row">
         <div className="relative flex-1">
-          <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-500" />
+          <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
           <input
             value={search}
             onChange={(e) => setSearch(e.target.value)}
@@ -191,7 +191,7 @@ export default function AdminTenantsPage() {
       </div>
 
       {updateTenant.isError && (
-        <p className="mb-3 rounded-lg border border-rose-500/30 bg-rose-500/10 px-3 py-2 text-xs text-rose-300">
+        <p className="mb-3 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-700">
           {(updateTenant.error as Error).message}
         </p>
       )}
@@ -220,7 +220,7 @@ export default function AdminTenantsPage() {
           />
         ) : (
           <AdminTable>
-            <thead className="border-b border-slate-800 bg-slate-950/40">
+            <thead className="border-b border-slate-200 bg-slate-50">
               <tr>
                 <th className={thClass}>Workspace</th>
                 <th className={thClass}>Plan</th>
@@ -231,7 +231,7 @@ export default function AdminTenantsPage() {
                 <th className={cn(thClass, "text-right")}>Actions</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-slate-800">
+            <tbody className="divide-y divide-slate-100">
               {tenants.map((t) => {
                 const limit =
                   t.messageLimit ?? PLAN_MSG_LIMIT[(t.plan ?? "STARTER").toUpperCase()] ?? 5_000;
@@ -239,13 +239,13 @@ export default function AdminTenantsPage() {
                   <tr
                     key={t.id}
                     onClick={() => router.push(`/tenants/${t.id}`)}
-                    className="cursor-pointer transition hover:bg-slate-800/40"
+                    className="cursor-pointer transition hover:bg-slate-50"
                   >
                     <td className={tdClass}>
                       <div className="flex items-center gap-3">
                         <Avatar name={t.name} src={t.logo} size="sm" />
                         <div className="min-w-0">
-                          <p className="truncate font-medium text-slate-100">{t.name}</p>
+                          <p className="truncate font-medium text-slate-900">{t.name}</p>
                           <p className="truncate text-xs text-slate-500">/{t.slug}</p>
                         </div>
                       </div>
@@ -256,7 +256,7 @@ export default function AdminTenantsPage() {
                     <td className={tdClass}>{t.users ?? 0}</td>
                     <td className={tdClass}>
                       <UsageBar used={t.messagesThisMonth ?? 0} limit={limit} />
-                      <p className="mt-0.5 text-[11px] text-slate-600">
+                      <p className="mt-0.5 text-[11px] text-slate-400">
                         of {formatCompact(limit)}
                       </p>
                     </td>
@@ -266,7 +266,7 @@ export default function AdminTenantsPage() {
                         {t.isActive ? "Active" : "Suspended"}
                       </AdminBadge>
                     </td>
-                    <td className={cn(tdClass, "text-slate-400")}>{formatDate(t.createdAt)}</td>
+                    <td className={cn(tdClass, "text-slate-500")}>{formatDate(t.createdAt)}</td>
                     <td className={cn(tdClass, "relative text-right")}>
                       <button
                         onClick={(e) => {
@@ -275,7 +275,7 @@ export default function AdminTenantsPage() {
                         }}
                         aria-label={`Actions for ${t.name}`}
                         aria-expanded={menuFor === t.id}
-                        className="rounded-lg p-1.5 text-slate-400 transition hover:bg-slate-800 hover:text-slate-100"
+                        className="rounded-lg p-1.5 text-slate-400 transition hover:bg-slate-100 hover:text-slate-700"
                       >
                         <MoreHorizontal className="h-4 w-4" />
                       </button>
@@ -292,7 +292,7 @@ export default function AdminTenantsPage() {
                           />
                           <div
                             onClick={(e) => e.stopPropagation()}
-                            className="absolute right-4 top-11 z-20 w-48 overflow-hidden rounded-lg border border-slate-700 bg-slate-800 py-1 text-left shadow-xl"
+                            className="absolute right-4 top-11 z-20 w-48 overflow-hidden rounded-lg border border-slate-200 bg-white py-1 text-left shadow-lg"
                           >
                             <MenuItem
                               icon={Eye}
@@ -310,7 +310,7 @@ export default function AdminTenantsPage() {
                                 router.push(`/tenants/${t.id}?tab=plan`);
                               }}
                             />
-                            <div className="my-1 border-t border-slate-700" />
+                            <div className="my-1 border-t border-slate-100" />
                             {t.isActive ? (
                               <MenuItem
                                 icon={Pause}
@@ -367,8 +367,8 @@ function MenuItem({
       className={cn(
         "flex w-full items-center gap-2 px-3 py-2 text-sm transition",
         danger
-          ? "text-rose-300 hover:bg-rose-500/10"
-          : "text-slate-300 hover:bg-slate-700 hover:text-white",
+          ? "text-rose-600 hover:bg-rose-50"
+          : "text-slate-700 hover:bg-slate-50 hover:text-slate-900",
       )}
     >
       <Icon className="h-4 w-4" />
@@ -470,7 +470,7 @@ function ProvisionModal({ open, onClose }: { open: boolean; onClose: () => void 
             <button
               type="button"
               onClick={handleClose}
-              className="rounded-lg bg-violet-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-violet-700"
+              className="rounded-lg bg-[#0B6E4F] px-4 py-2 text-sm font-medium text-white transition hover:bg-[#095c42]"
             >
               Done
             </button>
@@ -559,7 +559,7 @@ function ProvisionModal({ open, onClose }: { open: boolean; onClose: () => void 
             <button
               type="submit"
               disabled={provision.isPending}
-              className="rounded-lg bg-violet-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-violet-700 disabled:opacity-50"
+              className="rounded-lg bg-[#0B6E4F] px-4 py-2 text-sm font-medium text-white transition hover:bg-[#095c42] disabled:opacity-50"
             >
               {provision.isPending ? "Provisioning…" : "Provision Tenant"}
             </button>

@@ -252,7 +252,7 @@ export default function AdminDashboardPage() {
           title="Signups — last 30 days"
           subtitle="New workspaces per day"
           className="lg:col-span-2"
-          action={<TrendingUp className="h-4 w-4 text-violet-400" />}
+          action={<TrendingUp className="h-4 w-4 text-[#0B6E4F]" />}
         >
           <div className="h-64">
             {isLoading ? (
@@ -299,8 +299,8 @@ export default function AdminDashboardPage() {
                     nameKey="planName"
                     innerRadius={52}
                     outerRadius={82}
-                    paddingAngle={3}
-                    stroke="#0f172a"
+                    paddingAngle={2}
+                    stroke="#ffffff"
                     strokeWidth={2}
                   >
                     {plans.map((p, i) => (
@@ -311,7 +311,7 @@ export default function AdminDashboardPage() {
                   <Legend
                     verticalAlign="bottom"
                     iconType="circle"
-                    formatter={(value) => <span className="text-xs text-slate-400">{value}</span>}
+                    formatter={(value) => <span className="text-xs text-slate-500">{value}</span>}
                   />
                 </PieChart>
               </ResponsiveContainer>
@@ -328,7 +328,7 @@ export default function AdminDashboardPage() {
           className="lg:col-span-2"
           bodyClassName="p-0"
           action={
-            <Link href="/tenants" className="text-xs font-medium text-violet-400 hover:text-violet-300">
+            <Link href="/tenants" className="text-xs font-medium text-[#0B6E4F] hover:text-[#095c42]">
               View all
             </Link>
           }
@@ -345,7 +345,7 @@ export default function AdminDashboardPage() {
             />
           ) : (
             <AdminTable>
-              <thead className="border-b border-slate-800 bg-slate-950/40">
+              <thead className="border-b border-slate-200 bg-[#FAFAFA]">
                 <tr>
                   <th className={thClass}>Workspace</th>
                   <th className={thClass}>Plan</th>
@@ -353,14 +353,14 @@ export default function AdminDashboardPage() {
                   <th className={thClass}>Joined</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-slate-800">
+              <tbody className="divide-y divide-slate-200">
                 {recent.map((t) => (
-                  <tr key={t.id} className="transition hover:bg-slate-800/40">
+                  <tr key={t.id} className="transition hover:bg-slate-50">
                     <td className={tdClass}>
                       <div className="flex items-center gap-3">
                         <Avatar name={t.name} size="sm" />
                         <div className="min-w-0">
-                          <p className="truncate font-medium text-slate-100">{t.name}</p>
+                          <p className="truncate font-medium text-slate-900">{t.name}</p>
                           <p className="truncate text-xs text-slate-500">/{t.slug}</p>
                         </div>
                       </div>
@@ -370,7 +370,7 @@ export default function AdminDashboardPage() {
                     </td>
                     <td className={tdClass}>{t.users ?? 0}</td>
                     <td className={tdClass}>
-                      <span className="text-slate-400">{formatDate(t.createdAt)}</span>
+                      <span className="text-slate-500">{formatDate(t.createdAt)}</span>
                     </td>
                   </tr>
                 ))}
@@ -387,7 +387,7 @@ export default function AdminDashboardPage() {
             <HealthRow icon={Webhook} label="Webhook queue" value="42 pending" tone="amber" chip="Degraded" />
             <HealthRow icon={MessageSquare} label="WhatsApp Cloud API" value="Operational" tone="emerald" chip="Healthy" />
           </ul>
-          <p className="mt-4 border-t border-slate-800 pt-3 text-xs text-slate-600">
+          <p className="mt-4 border-t border-slate-200 pt-3 text-xs text-slate-400">
             Last checked just now · auto-refresh every 60s
           </p>
         </AdminPanel>
@@ -411,11 +411,11 @@ function HealthRow({
 }) {
   return (
     <li className="flex items-center gap-3">
-      <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-slate-800 text-slate-400">
+      <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-slate-100 text-slate-500">
         <Icon className="h-4 w-4" />
       </span>
       <div className="min-w-0 flex-1">
-        <p className="truncate text-sm text-slate-200">{label}</p>
+        <p className="truncate text-sm text-slate-900">{label}</p>
         <p className="truncate text-xs text-slate-500">{value}</p>
       </div>
       <AdminBadge tone={tone}>{chip}</AdminBadge>

@@ -8,7 +8,7 @@
 
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Check, Minus, Pencil, Sparkles, Users, X } from "lucide-react";
+import { Building2, Check, Minus, Pencil, Rocket, Sparkles, Users, X, Zap } from "lucide-react";
 import { Field, Modal, inputClass } from "@/components/ui";
 import {
   AdminBadge,
@@ -61,6 +61,13 @@ const LIMITS: { key: keyof Plan; label: string }[] = [
   { key: "maxCampaigns", label: "Campaigns" },
   { key: "maxFlows", label: "Chatbot flows" },
 ];
+
+/** Tier icon, keyed off the plan name — gives each card visual hierarchy. */
+const TIER_ICON: Record<string, React.ComponentType<{ className?: string }>> = {
+  STARTER: Zap,
+  GROWTH: Rocket,
+  ENTERPRISE: Building2,
+};
 
 /** TODO [SHALMON]: only used when the plans table is empty (pre-seed). */
 const FALLBACK_PLANS: Plan[] = [
@@ -182,24 +189,30 @@ export default function AdminPlansPage() {
         <div className="grid grid-cols-1 gap-6 md:grid-cols-3">
           {plans.map((plan) => {
             const popular = plan.name.toUpperCase() === "GROWTH";
+            const TierIcon = TIER_ICON[plan.name.toUpperCase()] ?? Sparkles;
             return (
               <AdminCard
                 key={plan.id}
                 className={cn(
                   "relative flex flex-col p-6",
-                  popular && "ring-2 ring-violet-500",
+                  popular && "border-2 border-violet-600",
                 )}
               >
                 {popular && (
-                  <span className="absolute -top-3 left-1/2 -translate-x-1/2 rounded-full bg-violet-600 px-3 py-1 text-[11px] font-semibold uppercase tracking-wide text-white shadow-lg shadow-violet-950/50">
+                  <span className="absolute -top-3 left-1/2 -translate-x-1/2 rounded-full bg-violet-600 px-3 py-1 text-[11px] font-semibold uppercase tracking-wide text-white shadow-md">
                     Most Popular
                   </span>
                 )}
 
                 <div className="flex items-start justify-between gap-2">
-                  <div>
-                    <h3 className="text-lg font-semibold text-slate-100">{plan.displayName}</h3>
-                    <p className="mt-1 text-xs text-slate-500">{plan.description ?? "—"}</p>
+                  <div className="flex items-start gap-3">
+                    <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-emerald-50 text-[#0B6E4F]">
+                      <TierIcon className="h-4.5 w-4.5" />
+                    </span>
+                    <div>
+                      <h3 className="text-lg font-semibold text-slate-900">{plan.displayName}</h3>
+                      <p className="mt-1 text-xs text-slate-500">{plan.description ?? "—"}</p>
+                    </div>
                   </div>
                   <AdminBadge tone={plan.isActive ? "emerald" : "slate"}>
                     {plan.isActive ? "Active" : "Hidden"}
@@ -207,7 +220,7 @@ export default function AdminPlansPage() {
                 </div>
 
                 <p className="mt-5 flex items-baseline gap-1">
-                  <span className="text-3xl font-bold tracking-tight text-slate-100">
+                  <span className="text-3xl font-bold tracking-tight text-slate-900">
                     {formatCurrency(plan.priceMonthly)}
                   </span>
                   <span className="text-sm text-slate-500">/mo</span>
@@ -216,36 +229,36 @@ export default function AdminPlansPage() {
                   {formatCurrency(plan.priceAnnual)} billed annually
                 </p>
 
-                <div className="mt-4 flex items-center gap-2 rounded-lg border border-slate-800 bg-slate-950/50 px-3 py-2">
-                  <Users className="h-4 w-4 text-violet-400" />
-                  <span className="text-sm text-slate-200">
+                <div className="mt-4 flex items-center gap-2 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2">
+                  <Users className="h-4 w-4 text-[#0B6E4F]" />
+                  <span className="text-sm text-slate-900">
                     {subscribersOf(plan).toLocaleString("en-IN")}
                   </span>
                   <span className="text-xs text-slate-500">subscribers</span>
                 </div>
 
-                <ul className="mt-5 space-y-2 border-t border-slate-800 pt-5 text-sm">
+                <ul className="mt-5 space-y-2 border-t border-slate-200 pt-5 text-sm">
                   {LIMITS.map((l) => (
                     <li key={String(l.key)} className="flex items-center justify-between gap-2">
-                      <span className="text-slate-400">{l.label}</span>
-                      <span className="font-medium text-slate-200">
+                      <span className="text-slate-500">{l.label}</span>
+                      <span className="font-medium text-slate-900">
                         {limitLabel(Number(plan[l.key] ?? 0))}
                       </span>
                     </li>
                   ))}
                 </ul>
 
-                <ul className="mt-5 space-y-2 border-t border-slate-800 pt-5 text-sm">
+                <ul className="mt-5 space-y-2 border-t border-slate-200 pt-5 text-sm">
                   {FEATURES.map((f) => {
                     const on = Boolean(plan[f.key]);
                     return (
                       <li key={String(f.key)} className="flex items-center gap-2">
                         {on ? (
-                          <Check className="h-4 w-4 shrink-0 text-emerald-400" />
+                          <Check className="h-4 w-4 shrink-0 text-emerald-600" />
                         ) : (
-                          <X className="h-4 w-4 shrink-0 text-slate-600" />
+                          <X className="h-4 w-4 shrink-0 text-slate-300" />
                         )}
-                        <span className={on ? "text-slate-200" : "text-slate-600 line-through"}>
+                        <span className={on ? "text-slate-900" : "text-slate-400 line-through"}>
                           {f.label}
                         </span>
                       </li>
@@ -268,15 +281,15 @@ export default function AdminPlansPage() {
       )}
 
       {/* Comparison table */}
-      <AdminPanel
+      {/* <AdminPanel
         title="Plan comparison"
         subtitle="All plans × limits × features"
         className="mt-6"
         bodyClassName="p-0"
-        action={<Sparkles className="h-4 w-4 text-violet-400" />}
+        action={<Sparkles className="h-4 w-4 text-[#0B6E4F]" />}
       >
         <AdminTable>
-          <thead className="border-b border-slate-800 bg-slate-950/40">
+          <thead className="border-b border-slate-200 bg-[#FAFAFA]">
             <tr>
               <th className={thClass}>Capability</th>
               {plans.map((p) => (
@@ -286,18 +299,18 @@ export default function AdminPlansPage() {
               ))}
             </tr>
           </thead>
-          <tbody className="divide-y divide-slate-800">
+          <tbody className="divide-y divide-slate-200">
             <tr>
-              <td className={cn(tdClass, "font-medium text-slate-200")}>Price / month</td>
+              <td className={cn(tdClass, "font-medium text-slate-900")}>Price / month</td>
               {plans.map((p) => (
-                <td key={p.id} className={cn(tdClass, "text-center text-slate-100")}>
+                <td key={p.id} className={cn(tdClass, "text-center text-slate-900")}>
                   {formatCurrency(p.priceMonthly)}
                 </td>
               ))}
             </tr>
             {LIMITS.map((l) => (
               <tr key={String(l.key)}>
-                <td className={cn(tdClass, "font-medium text-slate-200")}>{l.label}</td>
+                <td className={cn(tdClass, "font-medium text-slate-900")}>{l.label}</td>
                 {plans.map((p) => (
                   <td key={p.id} className={cn(tdClass, "text-center")}>
                     {limitLabel(Number(p[l.key] ?? 0))}
@@ -307,14 +320,14 @@ export default function AdminPlansPage() {
             ))}
             {FEATURES.map((f) => (
               <tr key={String(f.key)}>
-                <td className={cn(tdClass, "font-medium text-slate-200")}>{f.label}</td>
+                <td className={cn(tdClass, "font-medium text-slate-900")}>{f.label}</td>
                 {plans.map((p) => (
                   <td key={p.id} className={tdClass}>
                     <div className="flex justify-center">
                       {p[f.key] ? (
-                        <Check className="h-4 w-4 text-emerald-400" />
+                        <Check className="h-4 w-4 text-emerald-600" />
                       ) : (
-                        <Minus className="h-4 w-4 text-slate-600" />
+                        <Minus className="h-4 w-4 text-slate-300" />
                       )}
                     </div>
                   </td>
@@ -322,16 +335,16 @@ export default function AdminPlansPage() {
               </tr>
             ))}
             <tr>
-              <td className={cn(tdClass, "font-medium text-slate-200")}>Subscribers</td>
+              <td className={cn(tdClass, "font-medium text-slate-900")}>Subscribers</td>
               {plans.map((p) => (
-                <td key={p.id} className={cn(tdClass, "text-center text-slate-100")}>
+                <td key={p.id} className={cn(tdClass, "text-center text-slate-900")}>
                   {subscribersOf(p).toLocaleString("en-IN")}
                 </td>
               ))}
             </tr>
           </tbody>
         </AdminTable>
-      </AdminPanel>
+      </AdminPanel> */}
 
       <EditPlanModal plan={editing} onClose={() => setEditing(null)} />
     </>
@@ -459,7 +472,7 @@ function EditPlanModal({ plan, onClose }: { plan: Plan | null; onClose: () => vo
                 onClick={toggle(t.key)}
                 className={cn(
                   "relative h-5 w-9 shrink-0 rounded-full transition",
-                  form[t.key] ? "bg-violet-600" : "bg-slate-300",
+                  form[t.key] ? "bg-[#0B6E4F]" : "bg-slate-300",
                 )}
               >
                 <span
@@ -490,7 +503,7 @@ function EditPlanModal({ plan, onClose }: { plan: Plan | null; onClose: () => vo
           <button
             type="submit"
             disabled={update.isPending}
-            className="rounded-lg bg-violet-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-violet-700 disabled:opacity-50"
+            className="rounded-lg bg-[#0B6E4F] px-4 py-2 text-sm font-medium text-white transition hover:bg-[#095c42] disabled:opacity-50"
           >
             {update.isPending ? "Saving…" : "Save changes"}
           </button>
