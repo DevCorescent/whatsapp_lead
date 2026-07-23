@@ -4,7 +4,10 @@
       "Bash(git log *)",
       "Bash(git stash *)",
       "Bash(node -e \"const p = require\\('./package.json'\\); console.log\\('@xyflow/react:', p.dependencies['@xyflow/react'], 'xlsx:', p.dependencies['xlsx'], 'recharts:', p.dependencies['recharts']\\)\")",
-      "Bash(node -e \"const p = require\\('./package.json'\\); console.log\\('@xyflow/react:', p.dependencies['@xyflow/react'], 'xlsx:', p.dependencies['xlsx']\\)\")"
+      "Bash(node -e \"const p = require\\('./package.json'\\); console.log\\('@xyflow/react:', p.dependencies['@xyflow/react'], 'xlsx:', p.dependencies['xlsx']\\)\")",
+      "Bash(node -e \"const p = require\\('./package.json'\\); console.log\\('stripe:', p.dependencies['stripe']\\)\")",
+      "Bash(ls app/api/billing/)",
+      "Bash(ls lib/billing/)"
     ]
   }
 }
