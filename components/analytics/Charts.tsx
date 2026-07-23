@@ -72,6 +72,7 @@ export interface MessagePoint {
 }
 
 export interface StagePoint {
+  stageId: string;
   stage: string;
   count: number;
   value?: number;
@@ -237,13 +238,13 @@ export function LeadPipelineChart({
   data?: StagePoint[] | null;
   loading?: boolean;
 }) {
-  const counts = new Map((data ?? []).map((r) => [r.stage, r.count]));
+  const counts = new Map((data ?? []).map((r) => [r.stageId, r.count]));
 
   // The tenant's stage config drives both the order (funnel order, not data order)
   // and the labels — same source as the pipeline.
   const { stages } = useLeadStages();
   const rows = hasRows(data)
-    ? stages.map((s) => ({ name: s.label, count: counts.get(s.key) ?? 0 }))
+    ? stages.map((s) => ({ name: s.name, count: counts.get(s.id) ?? 0 }))
     : [];
 
   return (

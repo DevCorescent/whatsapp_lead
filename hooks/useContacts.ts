@@ -1,5 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import type { CreateContactInput, UpdateContactInput } from "@/lib/validators/contact";
+import type { ImportRequest, ImportResult } from "@/lib/contactsImport";
 
 interface ContactFilters {
   search?: string;
@@ -84,6 +85,34 @@ export function useUpdateContact() {
     onSuccess: (_data, { id }) => {
       queryClient.invalidateQueries({ queryKey: ["contacts"] });
       queryClient.invalidateQueries({ queryKey: ["contacts", id] });
+    },
+  });
+}
+
+/**
+ * Bulk-import contacts through the existing POST /api/contacts/import endpoint.
+ *
+ * The same mutation powers both the preview (`dryRun: true`, which writes nothing) and
+ * the real import — only a real run invalidates the contacts cache, so the list and the
+ * source filter refresh once, after the write actually happens.
+ */
+export function useImportContacts() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (payload: ImportRequest): Promise<ImportResult> => {
+      const res = await fetch("/api/contacts/import", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      const json = await res.json();
+      if (!res.ok || !json.success) throw new Error(json.error ?? "Import failed");
+      return json.data as ImportResult;
+    },
+    onSuccess: (_data, variables) => {
+      if (variables.dryRun) return;
+      queryClient.invalidateQueries({ queryKey: ["contacts"] });
+      queryClient.invalidateQueries({ queryKey: ["contacts", "sources"] });
     },
   });
 }

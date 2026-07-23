@@ -1,12 +1,18 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { LeadStage, LeadScoreLabel } from "@prisma/client";
+import { LeadScoreLabel } from "@prisma/client";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { scoreLabelFor } from "@/lib/utils";
+import { defaultStageId } from "@/lib/pipelineStages";
+
+/** The stage relation shape every lead read returns, so the UI never needs a second lookup. */
+const STAGE_SELECT = {
+  select: { id: true, name: true, color: true, order: true, enabled: true, outcome: true },
+} as const;
 
 const querySchema = z.object({
-  stage: z.nativeEnum(LeadStage).optional(),
+  stageId: z.string().optional(),
   assigneeId: z.string().optional(),
   scoreLabel: z.nativeEnum(LeadScoreLabel).optional(),
   search: z.string().optional(),
@@ -17,7 +23,7 @@ const querySchema = z.object({
 const createLeadSchema = z.object({
   contactId: z.string().min(1, "Contact is required"),
   title: z.string().min(1, "Title is required"),
-  stage: z.nativeEnum(LeadStage).default("NEW_LEAD"),
+  stageId: z.string().optional(),
   score: z.number().min(0).max(100).default(0),
   value: z.number().positive().optional(),
   currency: z.string().default("INR"),
@@ -37,7 +43,7 @@ export async function GET(req: NextRequest) {
   try {
     const { searchParams } = new URL(req.url);
     const parsed = querySchema.safeParse({
-      stage: searchParams.get("stage") ?? undefined,
+      stageId: searchParams.get("stageId") ?? undefined,
       assigneeId: searchParams.get("assigneeId") ?? undefined,
       scoreLabel: searchParams.get("scoreLabel") ?? undefined,
       search: searchParams.get("search") ?? undefined,
@@ -49,11 +55,11 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ success: false, error: parsed.error.issues[0].message }, { status: 400 });
     }
 
-    const { stage, assigneeId, scoreLabel, search, page, limit } = parsed.data;
+    const { stageId, assigneeId, scoreLabel, search, page, limit } = parsed.data;
 
     const where = {
       tenantId,
-      ...(stage !== undefined && { stage }),
+      ...(stageId !== undefined && { stageId }),
       ...(assigneeId !== undefined && { assignedToId: assigneeId }),
       ...(scoreLabel !== undefined && { scoreLabel }),
       ...(search && {
@@ -71,6 +77,7 @@ export async function GET(req: NextRequest) {
         include: {
           contact: { select: { id: true, name: true, phone: true, avatarUrl: true, company: true } },
           assignedTo: { select: { id: true, name: true, avatar: true } },
+          stage: STAGE_SELECT,
           activities: {
             orderBy: { createdAt: "desc" },
             take: 5,
@@ -112,6 +119,20 @@ export async function POST(req: NextRequest) {
     const contact = await prisma.contact.findFirst({ where: { id: data.contactId, tenantId } });
     if (!contact) return NextResponse.json({ success: false, error: "Contact not found" }, { status: 404 });
 
+    // Resolve the target stage. A caller-supplied stage must belong to this tenant and be
+    // enabled — a disabled or foreign stage is refused rather than silently accepted. With no
+    // stage given, the lead lands in the tenant's configured default (provisioned if needed).
+    let stageId = data.stageId;
+    if (stageId) {
+      const stage = await prisma.pipelineStage.findFirst({ where: { id: stageId, tenantId } });
+      if (!stage) return NextResponse.json({ success: false, error: "Stage not found" }, { status: 404 });
+      if (!stage.enabled) {
+        return NextResponse.json({ success: false, error: "Cannot assign a lead to a disabled stage" }, { status: 400 });
+      }
+    } else {
+      stageId = await defaultStageId(tenantId);
+    }
+
     const scoreLabel = scoreLabelFor(data.score ?? 0);
     const lead = await prisma.$transaction(async (tx) => {
       const created = await tx.lead.create({
@@ -119,7 +140,7 @@ export async function POST(req: NextRequest) {
           tenantId,
           contactId: data.contactId,
           title: data.title,
-          stage: data.stage,
+          stageId,
           score: data.score ?? 0,
           scoreLabel,
           ...(data.value !== undefined && { value: data.value }),
@@ -134,6 +155,7 @@ export async function POST(req: NextRequest) {
         include: {
           contact: { select: { id: true, name: true, phone: true, company: true } },
           assignedTo: { select: { id: true, name: true } },
+          stage: STAGE_SELECT,
         },
       });
       await tx.leadActivity.create({

@@ -21,7 +21,11 @@ export async function GET(req: NextRequest, { params }: Params) {
     where: { id, tenantId: session.user.tenantId },
     include: {
       tags: { include: { tag: true } },
-      leads: { orderBy: { createdAt: "desc" }, take: 5 },
+      leads: {
+        orderBy: { createdAt: "desc" },
+        take: 5,
+        include: { stage: { select: { id: true, name: true, color: true } } },
+      },
       _count: { select: { conversations: true } },
     },
   });

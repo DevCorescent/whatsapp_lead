@@ -1,38 +1,52 @@
 import { z } from "zod";
-import { LeadStage } from "@prisma/client";
 import { STAGE_COLOR_KEYS, type StageColor } from "@/lib/utils";
 
 /**
- * Validation for the per-tenant Lead pipeline stage config stored on
- * `TenantSettings.leadStages`. Mirrors the existing validator style (zod, one
- * schema per resource) and enforces the invariants the UI relies on.
+ * Validation for the dynamic pipeline-stage manager (PATCH /api/lead-stages).
  *
- * `key` is constrained to the existing `LeadStage` enum — the config only
- * customises how those enum stages appear; it never introduces assignable values
- * outside the enum, so the Lead flow and Lead.stage stay exactly as they are.
+ * The request carries the tenant's *entire desired* stage list; the route diffs it
+ * against what exists to create, update, reorder and delete in one atomic save. A stage
+ * with an `id` targets an existing row; one without is a create. `order` is implied by
+ * array position, so it is not part of the item shape.
  */
 const stageColorEnum = z.enum(STAGE_COLOR_KEYS as [StageColor, ...StageColor[]]);
+const stageOutcomeEnum = z.enum(["OPEN", "WON", "LOST"]);
 
-export const leadStageConfigSchema = z.object({
-  key: z.nativeEnum(LeadStage),
-  label: z.string().trim().min(1, "Label is required").max(40, "Label is too long"),
+export const pipelineStageInputSchema = z.object({
+  id: z.string().min(1).optional(),
+  name: z.string().trim().min(1, "Stage name is required").max(40, "Stage name is too long"),
   color: stageColorEnum,
-  order: z.number().int().min(0),
   enabled: z.boolean(),
+  isDefault: z.boolean(),
+  outcome: stageOutcomeEnum.default("OPEN"),
 });
 
-export const updateLeadStagesSchema = z
+export const updatePipelineStagesSchema = z
   .object({
-    stages: z.array(leadStageConfigSchema).min(1, "At least one stage is required"),
+    stages: z.array(pipelineStageInputSchema).min(1, "At least one stage is required"),
   })
-  .refine(
-    (v) => new Set(v.stages.map((s) => s.key)).size === v.stages.length,
-    { message: "Duplicate stage keys are not allowed", path: ["stages"] },
-  )
   .refine((v) => v.stages.some((s) => s.enabled), {
     message: "At least one stage must stay enabled",
     path: ["stages"],
-  });
+  })
+  .refine(
+    (v) => {
+      const names = v.stages.map((s) => s.name.trim().toLowerCase());
+      return new Set(names).size === names.length;
+    },
+    { message: "Stage names must be unique", path: ["stages"] },
+  )
+  .refine((v) => v.stages.filter((s) => s.isDefault).length <= 1, {
+    message: "Only one stage can be the default",
+    path: ["stages"],
+  })
+  .refine(
+    (v) => {
+      const def = v.stages.find((s) => s.isDefault);
+      return !def || def.enabled;
+    },
+    { message: "The default stage must be enabled", path: ["stages"] },
+  );
 
-export type LeadStageConfig = z.infer<typeof leadStageConfigSchema>;
-export type UpdateLeadStagesInput = z.infer<typeof updateLeadStagesSchema>;
+export type PipelineStageInput = z.infer<typeof pipelineStageInputSchema>;
+export type UpdatePipelineStagesInput = z.infer<typeof updatePipelineStagesSchema>;

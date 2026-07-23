@@ -1,10 +1,11 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { Download, Search, UserPlus } from "lucide-react";
+import { Download, Search, Upload, UserPlus } from "lucide-react";
 import { useContactSources, useContacts } from "@/hooks/useContacts";
 import { Button, Card, PageHeader, inputClass } from "@/components/ui";
 import { AddContactModal } from "@/components/contacts/AddContactModal";
+import { ImportContactsModal } from "@/components/contacts/ImportContactsModal";
 import {
   ContactTable,
   contactTags,
@@ -23,6 +24,7 @@ export default function ContactsPage() {
   const [page, setPage] = useState(1);
   const [selected, setSelected] = useState<string[]>([]);
   const [modalOpen, setModalOpen] = useState(false);
+  const [importOpen, setImportOpen] = useState(false);
 
   // Debounce the search box so we don't fire a request per keystroke.
   useEffect(() => {
@@ -90,6 +92,10 @@ export default function ContactsPage() {
         description="Everyone who has ever messaged your WhatsApp business number."
         action={
           <div className="flex gap-2">
+            <Button variant="secondary" onClick={() => setImportOpen(true)}>
+              <Upload className="h-4 w-4" />
+              Import
+            </Button>
             <Button variant="secondary" onClick={() => window.location.assign("/api/contacts/export")}>
               <Download className="h-4 w-4" />
               Export CSV
@@ -173,6 +179,7 @@ export default function ContactsPage() {
       />
 
       <AddContactModal open={modalOpen} onClose={() => setModalOpen(false)} />
+      <ImportContactsModal open={importOpen} onClose={() => setImportOpen(false)} />
     </div>
   );
 }

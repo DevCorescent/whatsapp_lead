@@ -17,7 +17,6 @@ import { Avatar, Badge, Button, Skeleton, inputClass } from "@/components/ui";
 import {
   CONVERSATION_STATUS_STYLE,
   SCORE_STYLE,
-  STAGE_LABEL,
   cn,
   formatCurrency,
   formatDate,
@@ -122,9 +121,9 @@ export function ContactPanel({
         {lead ? (
           <div className="space-y-2">
             <div className="flex flex-wrap gap-1.5">
-              {lead.stage && (
+              {lead.stage?.name && (
                 <Badge className="bg-slate-100 text-slate-700 ring-slate-500/20">
-                  {STAGE_LABEL[lead.stage] ?? lead.stage}
+                  {lead.stage.name}
                 </Badge>
               )}
               <Badge className={SCORE_STYLE[scoreLabelOf(lead)]}>

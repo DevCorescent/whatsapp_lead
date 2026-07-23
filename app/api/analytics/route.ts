@@ -66,8 +66,8 @@ export async function GET(req: NextRequest) {
       prisma.message.count({ where: { tenantId, createdAt: { gte: since } } }),
       // Total leads in period
       prisma.lead.count({ where: { tenantId, createdAt: { gte: since } } }),
-      // Won leads
-      prisma.lead.count({ where: { tenantId, stage: "WON" } }),
+      // Won leads — any stage the tenant has marked as a winning outcome
+      prisma.lead.count({ where: { tenantId, stage: { outcome: "WON" } } }),
       // All leads for conversion rate
       prisma.lead.count({ where: { tenantId } }),
       // Messages over time (for chart)
@@ -78,9 +78,9 @@ export async function GET(req: NextRequest) {
       }),
       // Pipeline distribution by stage
       prisma.lead.groupBy({
-        by: ["stage"],
+        by: ["stageId"],
         where: { tenantId },
-        _count: { stage: true },
+        _count: { stageId: true },
         _sum: { value: true },
       }),
       // Score distribution
@@ -122,11 +122,22 @@ export async function GET(req: NextRequest) {
     }
     const messagesChart = Array.from(msgsMap.entries()).map(([date, counts]) => ({ date, ...counts }));
 
-    // Pipeline distribution (leadsByStage field name, stage/count/value)
-    const leadsByStage = leadsByStageRaw.map((row) => ({
-      stage: row.stage,
-      count: row._count.stage,
-      value: row._sum.value ?? 0,
+    // Pipeline distribution (leadsByStage field name, stageId/count/value). Joined with the
+    // tenant's stages so the chart can order the funnel and label each bar dynamically; stages
+    // with no leads are included as zero so the funnel shape stays complete.
+    const stages = await prisma.pipelineStage.findMany({
+      where: { tenantId },
+      orderBy: { order: "asc" },
+      select: { id: true, name: true },
+    });
+    const stageCounts = new Map(
+      leadsByStageRaw.map((row) => [row.stageId, { count: row._count.stageId, value: row._sum.value ?? 0 }]),
+    );
+    const leadsByStage = stages.map((s) => ({
+      stageId: s.id,
+      stage: s.name,
+      count: stageCounts.get(s.id)?.count ?? 0,
+      value: stageCounts.get(s.id)?.value ?? 0,
     }));
 
     // Score distribution (label/count)

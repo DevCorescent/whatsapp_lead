@@ -1,7 +1,7 @@
 "use client";
 
 import { Clock, Loader2 } from "lucide-react";
-import type { Lead, LeadStage, LeadScoreLabel } from "@prisma/client";
+import type { Lead, LeadScoreLabel } from "@prisma/client";
 import { Avatar, Badge } from "@/components/ui";
 import { cn, formatCurrency, SCORE_STYLE, daysBetween } from "@/lib/utils";
 
@@ -41,14 +41,26 @@ export type LeadActivityItem = {
   user?: { name: string | null } | null;
 };
 
+/** The pipeline stage a lead references, as included by the leads API. */
+export type LeadStageRef = {
+  id: string;
+  name: string;
+  color?: string | null;
+  order?: number | null;
+  enabled?: boolean | null;
+  outcome?: "OPEN" | "WON" | "LOST" | null;
+};
+
 /** A lead as the Kanban renders it: Prisma `Lead` + the relations the API includes. */
 export type PipelineLead = Serialized<Lead> & {
   contact?: LeadContact | null;
   assignedTo?: LeadAgent | null;
+  stage?: LeadStageRef | null;
   activities?: LeadActivityItem[] | null;
 };
 
-export type LeadsByStage = Record<LeadStage, PipelineLead[]>;
+/** Leads bucketed by their `stageId` (a dynamic PipelineStage id). */
+export type LeadsByStage = Record<string, PipelineLead[]>;
 
 // ─── Card ─────────────────────────────────────────────────────────────────────
 

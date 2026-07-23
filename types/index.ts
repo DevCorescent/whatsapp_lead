@@ -10,6 +10,7 @@ export type {
   Message,
   Lead,
   LeadActivity,
+  PipelineStage,
   MessageTemplate,
   Campaign,
   CampaignContact,
@@ -25,7 +26,7 @@ export type {
   MessageType,
   MessageDirection,
   MessageStatus,
-  LeadStage,
+  StageOutcome,
   LeadScoreLabel,
   CampaignStatus,
   TicketStatus,
@@ -120,7 +121,8 @@ export interface WAStatus {
 export interface KanbanColumn {
   id: string;
   title: string;
-  stage: import("@prisma/client").LeadStage;
+  /** PipelineStage id this column represents. */
+  stageId: string;
   color: string;
   leads: import("@prisma/client").Lead[];
 }

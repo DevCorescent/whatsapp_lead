@@ -10,7 +10,6 @@ import {
   Sparkles,
   X,
 } from "lucide-react";
-import type { LeadStage } from "@prisma/client";
 import { useLead } from "@/hooks/useLeads";
 import { useLeadStages } from "@/hooks/useLeadStages";
 import { Avatar, Badge, Button, EmptyState } from "@/components/ui";
@@ -20,7 +19,6 @@ import {
   formatCurrency,
   formatDate,
   SCORE_STYLE,
-  STAGE_LABEL,
   timeAgo,
 } from "@/lib/utils";
 import type { LeadActivityItem, PipelineLead } from "./LeadCard";
@@ -113,7 +111,7 @@ export function LeadDrawer({
 }: {
   lead: PipelineLead | null;
   onClose: () => void;
-  onStageChange: (lead: PipelineLead, stage: LeadStage) => void;
+  onStageChange: (lead: PipelineLead, stageId: string) => void;
 }) {
   if (!lead) return null;
   return <LeadDrawerPanel lead={lead} onClose={onClose} onStageChange={onStageChange} />;
@@ -126,7 +124,7 @@ function LeadDrawerPanel({
 }: {
   lead: PipelineLead;
   onClose: () => void;
-  onStageChange: (lead: PipelineLead, stage: LeadStage) => void;
+  onStageChange: (lead: PipelineLead, stageId: string) => void;
 }) {
   const [qualifying, setQualifying] = useState(false);
   const [banner, setBanner] = useState<string | null>(null);
@@ -237,17 +235,17 @@ function LeadDrawerPanel({
               </label>
               <select
                 id="drawer-stage"
-                value={full.stage}
-                onChange={(e) => onStageChange(full!, e.target.value as LeadStage)}
+                value={full.stage?.id ?? ""}
+                onChange={(e) => onStageChange(full, e.target.value)}
                 className="w-full rounded-lg border border-slate-300 px-2.5 py-2 text-sm text-slate-900 focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-500/20"
               >
                 {/* Keep the lead's current stage selectable even if it's been hidden. */}
-                {!stages.some((s) => s.key === full.stage) && (
-                  <option value={full.stage}>{STAGE_LABEL[full.stage] ?? full.stage}</option>
+                {full.stage?.id && !stages.some((s) => s.id === full.stage.id) && (
+                  <option value={full.stage.id}>{full.stage?.name ?? full.stage.id}</option>
                 )}
                 {stages.map((s) => (
-                  <option key={s.key} value={s.key}>
-                    {s.label}
+                  <option key={s.id} value={s.id}>
+                    {s.name}
                   </option>
                 ))}
               </select>
@@ -348,7 +346,7 @@ function LeadDrawerPanel({
                   <li key={a.id} className="relative">
                     <span
                       aria-hidden
-                      className="absolute -left-[21px] top-1.5 h-2 w-2 rounded-full bg-emerald-500 ring-4 ring-white"
+                      className="absolute -left-5.25 top-1.5 h-2 w-2 rounded-full bg-emerald-500 ring-4 ring-white"
                     />
                     <p className="text-xs font-medium text-slate-800">
                       {ACTIVITY_LABEL[a.type] ?? a.type}

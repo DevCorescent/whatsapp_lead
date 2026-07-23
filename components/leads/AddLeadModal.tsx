@@ -2,7 +2,6 @@
 
 import { useMemo, useState } from "react";
 import { AlertTriangle, Loader2, Plus } from "lucide-react";
-import type { LeadStage } from "@prisma/client";
 import { createLeadSchema } from "@/lib/validators/lead";
 import { useContacts } from "@/hooks/useContacts";
 import { useLeadStages } from "@/hooks/useLeadStages";
@@ -38,7 +37,7 @@ const CURRENCIES = ["INR", "USD", "EUR", "GBP", "AED"];
 const EMPTY_FORM = {
   title: "",
   contactId: "",
-  stage: "NEW_LEAD" as LeadStage,
+  stageId: "",
   value: "",
   currency: "INR",
   budget: "",
@@ -56,28 +55,28 @@ const EMPTY_FORM = {
 export function AddLeadModal({
   open,
   onClose,
-  initialStage = "NEW_LEAD",
+  initialStageId,
   onCreated,
 }: {
   open: boolean;
   onClose: () => void;
-  initialStage?: LeadStage;
+  initialStageId?: string;
   onCreated?: () => void;
 }) {
   if (!open) return null;
-  return <AddLeadForm onClose={onClose} initialStage={initialStage} onCreated={onCreated} />;
+  return <AddLeadForm onClose={onClose} initialStageId={initialStageId} onCreated={onCreated} />;
 }
 
 function AddLeadForm({
   onClose,
-  initialStage,
+  initialStageId,
   onCreated,
 }: {
   onClose: () => void;
-  initialStage: LeadStage;
+  initialStageId?: string;
   onCreated?: () => void;
 }) {
-  const [form, setForm] = useState({ ...EMPTY_FORM, stage: initialStage });
+  const [form, setForm] = useState({ ...EMPTY_FORM, stageId: initialStageId ?? "" });
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [banner, setBanner] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
@@ -92,8 +91,9 @@ function AddLeadForm({
   // Stage options come from the backend via the shared hook. React Query caches
   // the list, so opening the modal after the board loaded shows the stages
   // instantly and stays in sync if they change (optimistic refresh).
-  const { stages, isLoading: stagesLoading } = useLeadStages();
+  const { stages, defaultStage, isLoading: stagesLoading } = useLeadStages();
   const stagesUnavailable = stages.length === 0;
+  const selectedStageId = form.stageId || defaultStage?.id || "";
 
   function set<K extends keyof typeof form>(key: K, value: (typeof form)[K]) {
     setForm((f) => ({ ...f, [key]: value }));
@@ -106,7 +106,8 @@ function AddLeadForm({
     const payload = {
       title: form.title.trim(),
       contactId: form.contactId,
-      stage: form.stage,
+      // Empty ⇒ let the server drop the lead into the tenant's default stage.
+      stageId: selectedStageId || undefined,
       value: form.value ? Number(form.value) : undefined,
       currency: form.currency,
       budget: form.budget.trim() || undefined,
@@ -221,16 +222,16 @@ function AddLeadForm({
             <select
               id="lead-stage"
               className={cn(inputClass, stagesUnavailable && "cursor-not-allowed bg-slate-50 text-slate-400")}
-              value={form.stage}
+              value={selectedStageId}
               disabled={stagesUnavailable}
-              onChange={(e) => set("stage", e.target.value as LeadStage)}
+              onChange={(e) => set("stageId", e.target.value)}
             >
               {stagesUnavailable ? (
                 <option value="">{stagesLoading ? "Loading stages…" : "No stages available"}</option>
               ) : (
                 stages.map((s) => (
-                  <option key={s.key} value={s.key}>
-                    {s.label}
+                  <option key={s.id} value={s.id}>
+                    {s.name}
                   </option>
                 ))
               )}

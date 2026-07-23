@@ -13,10 +13,8 @@ import {
   UserPlus,
   Users,
 } from "lucide-react";
-import type { LeadStage } from "@prisma/client";
 import { Avatar, Badge, Button, Card, EmptyState, SkeletonRows } from "@/components/ui";
-import { STAGE_LABEL, cn, timeAgo } from "@/lib/utils";
-import { useLeadStages } from "@/hooks/useLeadStages";
+import { cn, stageColorClasses, timeAgo } from "@/lib/utils";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 // The backend is still a 501 stub, so nothing about the payload shape is
@@ -41,9 +39,12 @@ export type ContactRow = {
   updatedAt?: string | null;
   lastActivityAt?: string | null;
   tags?: unknown;
-  leads?: { stage?: LeadStage | null }[] | null;
-  lead?: { stage?: LeadStage | null } | null;
+  leads?: { stage?: ContactStageRef | null }[] | null;
+  lead?: { stage?: ContactStageRef | null } | null;
 };
+
+/** The pipeline stage a contact's lead sits in, as included by the contact APIs. */
+export type ContactStageRef = { id?: string | null; name?: string | null; color?: string | null };
 
 /** Tags may arrive as `Tag[]` or as the join rows `ContactTag[] { tag: Tag }`. */
 export function contactTags(input: unknown): TagChip[] {
@@ -66,9 +67,8 @@ export function contactTags(input: unknown): TagChip[] {
   return chips;
 }
 
-export function contactStage(contact: ContactRow): LeadStage | null {
-  const stage = contact.leads?.[0]?.stage ?? contact.lead?.stage ?? null;
-  return stage ?? null;
+export function contactStage(contact: ContactRow): ContactStageRef | null {
+  return contact.leads?.[0]?.stage ?? contact.lead?.stage ?? null;
 }
 
 export function contactLastActivity(contact: ContactRow) {
@@ -88,17 +88,15 @@ export function TagPill({ tag }: { tag: TagChip }) {
   );
 }
 
-export function StageBadge({ stage }: { stage: LeadStage | null }) {
-  // Label + colour follow the tenant's stage config (shared cached query), falling
-  // back to the enum defaults. Hooks must run unconditionally, so call before the
-  // early return.
-  const { allStages } = useLeadStages();
-  if (!stage) return <span className="text-xs text-slate-400">—</span>;
-  const meta = allStages.find((s) => s.key === stage);
+export function StageBadge({ stage }: { stage: ContactStageRef | null }) {
+  // Name + colour come straight from the stage relation the API includes on the lead —
+  // fully dynamic, no lookup or hardcoded labels.
+  if (!stage?.name) return <span className="text-xs text-slate-400">—</span>;
+  const { dot } = stageColorClasses(stage.color);
   return (
     <Badge className="gap-1.5">
-      <span className={cn("h-1.5 w-1.5 rounded-full", meta?.dot ?? "bg-slate-400")} />
-      {meta?.label ?? STAGE_LABEL[stage] ?? stage}
+      <span className={cn("h-1.5 w-1.5 rounded-full", dot)} />
+      {stage.name}
     </Badge>
   );
 }
@@ -233,7 +231,7 @@ export function ContactTable({
         />
       ) : (
         <div className="overflow-x-auto">
-          <table className="w-full min-w-[900px] text-sm">
+          <table className="w-full min-w-225 text-sm">
             <thead className="bg-slate-50 text-left">
               <tr className="border-b border-slate-200">
                 <th className="w-10 px-4 py-3">
@@ -304,10 +302,10 @@ export function ContactTable({
                       {contact.phone ?? "—"}
                     </td>
                     <td className="px-4 py-3 text-slate-600">
-                      <span className="block max-w-[180px] truncate">{contact.email || "—"}</span>
+                      <span className="block max-w-45 truncate">{contact.email || "—"}</span>
                     </td>
                     <td className="px-4 py-3 text-slate-600">
-                      <span className="block max-w-[160px] truncate">{contact.company || "—"}</span>
+                      <span className="block max-w-40 truncate">{contact.company || "—"}</span>
                     </td>
                     <td className="px-4 py-3">
                       {tags.length === 0 ? (

@@ -21,7 +21,11 @@ import {
 import type { MessageStatus } from "@prisma/client";
 import { Avatar, Badge, Button, EmptyState, Skeleton } from "@/components/ui";
 import { CONVERSATION_STATUS_STYLE, cn, dayLabel, formatTime } from "@/lib/utils";
+import { ATTACHMENT_ACCEPT, formatBytes } from "@/lib/attachments";
 import { contactName, type InboxConversation, type InboxMessage } from "./ConversationList";
+import { AttachmentDropOverlay } from "./AttachmentDropOverlay";
+import { AttachmentPreviewModal } from "./AttachmentPreviewModal";
+import { useAttachmentComposer } from "./useAttachmentComposer";
 
 const EMOJIS = ["👍", "🙏", "😊", "🎉", "🔥", "✅", "❤️", "😂", "🤝", "📞", "📄", "⏰", "💰", "🚀", "👀", "🙌"];
 
@@ -60,11 +64,14 @@ export function ChatWindow({
   const [draft, setDraft] = useState("");
   const [isNote, setIsNote] = useState(false);
   const [showEmoji, setShowEmoji] = useState(false);
-  const [attachment, setAttachment] = useState<string | null>(null);
 
   const fileRef = useRef<HTMLInputElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+
+  // All attachment behaviour (drag-and-drop, file picker, clipboard paste, preview and the
+  // shared upload → send pipeline) lives in this hook so the composer stays a thin shell.
+  const attach = useAttachmentComposer({ conversationId, onSend });
 
   const timeline = useMemo(() => {
     const all = [...messages, ...localMessages];
@@ -112,7 +119,6 @@ export function ChatWindow({
 
     onSend(conversationId, optimistic);
     setDraft("");
-    setAttachment(null);
     setShowEmoji(false);
   }
 
@@ -219,8 +225,16 @@ export function ChatWindow({
         <div ref={bottomRef} />
       </div>
 
-      {/* Composer */}
-      <div className="shrink-0 border-t border-slate-200 bg-white px-3 py-3 lg:px-4">
+      {/* Composer — `relative` so the drop overlay highlights only this region. */}
+      <div
+        className="relative shrink-0 border-t border-slate-200 bg-white px-3 py-3 lg:px-4"
+        onDragEnter={attach.dragHandlers.onDragEnter}
+        onDragOver={attach.dragHandlers.onDragOver}
+        onDragLeave={attach.dragHandlers.onDragLeave}
+        onDrop={attach.dragHandlers.onDrop}
+      >
+        <AttachmentDropOverlay visible={attach.isDragging} />
+
         <div className="mb-2 flex flex-wrap items-center gap-2">
           <button
             type="button"
@@ -242,21 +256,6 @@ export function ChatWindow({
               Only your team can see this — it is not sent to WhatsApp.
             </span>
           )}
-
-          {attachment && (
-            <span className="ml-auto inline-flex max-w-[14rem] items-center gap-1.5 rounded-full bg-slate-100 py-1 pl-2.5 pr-1.5 text-xs text-slate-600">
-              <Paperclip className="h-3.5 w-3.5 shrink-0" />
-              <span className="truncate">{attachment}</span>
-              <button
-                type="button"
-                onClick={() => setAttachment(null)}
-                aria-label="Remove attachment"
-                className="rounded-full p-0.5 hover:bg-slate-200"
-              >
-                <X className="h-3 w-3" />
-              </button>
-            </span>
-          )}
         </div>
 
         <form onSubmit={handleSend} className="flex items-end gap-2">
@@ -264,10 +263,11 @@ export function ChatWindow({
             <input
               ref={fileRef}
               type="file"
+              multiple
+              accept={ATTACHMENT_ACCEPT}
               className="hidden"
               onChange={(e) => {
-                // TODO [GAURANSH]: wire media upload + POST /api/messages with mediaUrl.
-                setAttachment(e.target.files?.[0]?.name ?? null);
+                attach.addFiles(e.target.files);
                 e.target.value = "";
               }}
             />
@@ -309,6 +309,7 @@ export function ChatWindow({
             ref={inputRef}
             value={draft}
             onChange={(e) => setDraft(e.target.value)}
+            onPaste={attach.onPaste}
             placeholder={isNote ? "Write an internal note…" : "Type a message"}
             aria-label={isNote ? "Internal note" : "Message"}
             className={cn(
@@ -332,6 +333,23 @@ export function ChatWindow({
           </Button>
         </form>
       </div>
+
+      {/* Review step for dropped / picked / pasted files. Renders only when files are staged. */}
+      <AttachmentPreviewModal
+        items={attach.items}
+        caption={attach.caption}
+        onCaptionChange={attach.setCaption}
+        isNote={isNote}
+        isUploading={attach.isUploading}
+        progress={attach.progress}
+        uploadError={attach.uploadError}
+        errors={attach.errors}
+        onRemove={attach.removeItem}
+        onMove={attach.moveItem}
+        onCancelUpload={attach.cancelUpload}
+        onDiscard={attach.clear}
+        onSend={() => attach.send({ isNote })}
+      />
     </div>
   );
 }
@@ -418,16 +436,11 @@ function MessageBody({
       return (
         <div className="space-y-1.5">
           {message.mediaUrl ? (
-            // eslint-disable-next-line @next/next/no-img-element
-            <img
-              src={message.mediaUrl}
-              alt={caption || "Attached image"}
-              className="max-h-64 w-full max-w-xs rounded-lg object-cover"
-            />
+            <ImageBubble src={message.mediaUrl} alt={caption || "Attached image"} />
           ) : (
             <MediaChip icon={ImageIcon} label="Image unavailable" outbound={outbound} />
           )}
-          {caption && <p className="whitespace-pre-wrap break-words text-sm">{caption}</p>}
+          {caption && <p className="whitespace-pre-wrap wrap-break-word text-sm">{caption}</p>}
         </div>
       );
 
@@ -443,7 +456,7 @@ function MessageBody({
           ) : (
             <MediaChip icon={ImageIcon} label="Video unavailable" outbound={outbound} />
           )}
-          {caption && <p className="whitespace-pre-wrap break-words text-sm">{caption}</p>}
+          {caption && <p className="whitespace-pre-wrap wrap-break-word text-sm">{caption}</p>}
         </div>
       );
 
@@ -456,7 +469,7 @@ function MessageBody({
 
     case "DOCUMENT": {
       const filename = str(meta.filename) ?? caption ?? "Document";
-      const size = formatBytes(message.mediaSize);
+      const size = message.mediaSize ? formatBytes(message.mediaSize) : null;
       const chip = (
         <span
           className={cn(
@@ -506,7 +519,7 @@ function MessageBody({
 
     default:
       return (
-        <p className="whitespace-pre-wrap break-words text-sm">
+        <p className="whitespace-pre-wrap wrap-break-word text-sm">
           {caption || <span className="italic opacity-70">Empty message</span>}
         </p>
       );
@@ -532,6 +545,70 @@ function MediaChip({
       <Icon className="h-4 w-4 shrink-0" />
       <span className="truncate">{label}</span>
     </span>
+  );
+}
+
+/** An image bubble that opens a full-screen lightbox on click (Enter/Space) and ESC to close. */
+function ImageBubble({ src, alt }: { src: string; alt: string }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <>
+      <button
+        type="button"
+        onClick={() => setOpen(true)}
+        aria-label={`Open image: ${alt}`}
+        className="block rounded-lg focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-500"
+      >
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img
+          src={src}
+          alt={alt}
+          loading="lazy"
+          className="max-h-64 w-full max-w-xs cursor-zoom-in rounded-lg object-cover"
+        />
+      </button>
+      {open && <Lightbox src={src} alt={alt} onClose={() => setOpen(false)} />}
+    </>
+  );
+}
+
+function Lightbox({ src, alt, onClose }: { src: string; alt: string; onClose: () => void }) {
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+    };
+    document.addEventListener("keydown", onKey);
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.removeEventListener("keydown", onKey);
+      document.body.style.overflow = "";
+    };
+  }, [onClose]);
+
+  return (
+    <div
+      role="dialog"
+      aria-modal="true"
+      aria-label={alt}
+      className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/80 p-4"
+      onClick={onClose}
+    >
+      <button
+        type="button"
+        onClick={onClose}
+        aria-label="Close image"
+        className="absolute right-4 top-4 rounded-lg p-2 text-white/80 transition hover:bg-white/10 hover:text-white"
+      >
+        <X className="h-5 w-5" />
+      </button>
+      {/* eslint-disable-next-line @next/next/no-img-element */}
+      <img
+        src={src}
+        alt={alt}
+        onClick={(e) => e.stopPropagation()}
+        className="max-h-[90vh] max-w-full rounded-lg object-contain shadow-2xl"
+      />
+    </div>
   );
 }
 
@@ -579,7 +656,7 @@ function Switch({
       <span
         className={cn(
           "inline-block h-4 w-4 rounded-full bg-white shadow transition",
-          checked ? "translate-x-[18px]" : "translate-x-[2px]",
+          checked ? "translate-x-4.5" : "translate-x-0.5",
         )}
       />
     </button>
@@ -644,11 +721,4 @@ function str(value: unknown) {
 
 function num(value: unknown) {
   return typeof value === "number" && Number.isFinite(value) ? value : null;
-}
-
-function formatBytes(bytes?: number | null) {
-  if (!bytes || bytes <= 0) return null;
-  const units = ["B", "KB", "MB", "GB"];
-  const i = Math.min(Math.floor(Math.log(bytes) / Math.log(1024)), units.length - 1);
-  return `${(bytes / 1024 ** i).toFixed(i === 0 ? 0 : 1)} ${units[i]}`;
 }

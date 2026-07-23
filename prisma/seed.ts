@@ -8,6 +8,7 @@ import bcrypt from "bcryptjs";
 // Prisma 7 needs a driver adapter, which lib/prisma.ts already configures.
 // Constructing a bare PrismaClient() here throws at startup.
 import { prisma } from "../lib/prisma";
+import { DEFAULT_PIPELINE_STAGES } from "../lib/utils";
 
 async function main() {
   console.log("🌱 Seeding database...");
@@ -123,7 +124,23 @@ async function main() {
     },
   });
 
-  console.log("✅ Demo tenant + user created");
+  // ─── Default pipeline stages for the demo tenant ────────────────────────────
+  // Every tenant needs at least the default set so leads always have a stage to
+  // reference. `createMany({ skipDuplicates })` keeps the seed idempotent.
+  await prisma.pipelineStage.createMany({
+    data: DEFAULT_PIPELINE_STAGES.map((s, index) => ({
+      tenantId: demoTenant.id,
+      name: s.name,
+      color: s.color,
+      order: index,
+      enabled: true,
+      isDefault: s.isDefault,
+      outcome: s.outcome,
+    })),
+    skipDuplicates: true,
+  });
+
+  console.log("✅ Demo tenant + user + pipeline stages created");
   console.log("   Email: admin@demo.com");
   console.log("   Password: Demo@1234");
   console.log("\n✅ Super Admin created");

@@ -10,9 +10,10 @@ export async function GET() {
   const leads = await prisma.lead.findMany({
     where: { tenantId },
     select: {
-      title: true, stage: true, score: true, scoreLabel: true,
+      title: true, score: true, scoreLabel: true,
       value: true, currency: true, notes: true,
       createdAt: true, closedAt: true,
+      stage: { select: { name: true } },
       contact: { select: { name: true, phone: true, email: true, company: true } },
       assignedTo: { select: { name: true } },
     },
@@ -21,7 +22,7 @@ export async function GET() {
 
   const rows = leads.map((l) => ({
     title: l.title,
-    stage: l.stage,
+    stage: l.stage.name,
     score: l.score,
     score_label: l.scoreLabel,
     value: l.value ?? "",

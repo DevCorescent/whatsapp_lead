@@ -1,8 +1,8 @@
 "use client";
 
 import { useMemo, useRef, useState } from "react";
-import { AlertTriangle, Download, LayoutGrid, List, Plus, Search, X } from "lucide-react";
-import type { LeadStage, LeadScoreLabel } from "@prisma/client";
+import { AlertTriangle, Download, LayoutGrid, List, Plus, Search, Upload, X } from "lucide-react";
+import type { LeadScoreLabel } from "@prisma/client";
 import { useLeads } from "@/hooks/useLeads";
 import { useLeadStages } from "@/hooks/useLeadStages";
 import {
@@ -15,18 +15,20 @@ import {
   Skeleton,
   inputClass,
 } from "@/components/ui";
-import { cn, daysBetween, formatCurrency, STAGE_LABEL, SCORE_STYLE } from "@/lib/utils";
+import { cn, daysBetween, formatCurrency, SCORE_STYLE } from "@/lib/utils";
 import { KanbanBoard, normalizeLeads } from "@/components/leads/KanbanBoard";
 import type { PipelineLead } from "@/components/leads/LeadCard";
 import { AddLeadModal } from "@/components/leads/AddLeadModal";
+import { ImportLeadsModal } from "@/components/leads/ImportLeadsModal";
 import { LeadDrawer } from "@/components/leads/LeadDrawer";
 
 const SCORE_OPTIONS: LeadScoreLabel[] = ["COLD", "WARM", "HOT", "QUALIFIED"];
 
 export default function LeadsPage() {
   const { data, isLoading, refetch } = useLeads();
-  const { stages } = useLeadStages();
-  const defaultStage: LeadStage = stages[0]?.key ?? "NEW_LEAD";
+  const { stages, defaultStage } = useLeadStages();
+  const defaultStageId = defaultStage?.id;
+  const stageName = (id: string) => stages.find((s) => s.id === id)?.name ?? "that stage";
 
   const [view, setView] = useState<"kanban" | "list">("kanban");
   const [search, setSearch] = useState("");
@@ -34,7 +36,8 @@ export default function LeadsPage() {
   const [score, setScore] = useState("");
 
   const [modalOpen, setModalOpen] = useState(false);
-  const [modalStage, setModalStage] = useState<LeadStage>("NEW_LEAD");
+  const [modalStageId, setModalStageId] = useState<string | undefined>(undefined);
+  const [importOpen, setImportOpen] = useState(false);
   const [selectedId, setSelectedId] = useState<string | null>(null);
 
   /**
@@ -42,7 +45,7 @@ export default function LeadsPage() {
    * a refetch and any change to the filters. PATCH /api/leads/:id is live, so a
    * successful move is reconciled with a refetch; a failed one is rolled back with a toast.
    */
-  const [overrides, setOverrides] = useState<Record<string, LeadStage>>({});
+  const [overrides, setOverrides] = useState<Record<string, string>>({});
   const [toast, setToast] = useState<string | null>(null);
 
   /**
@@ -56,7 +59,7 @@ export default function LeadsPage() {
 
   const allLeads = useMemo(() => {
     const leads = normalizeLeads(data);
-    return leads.map((l) => (overrides[l.id] ? { ...l, stage: overrides[l.id] } : l));
+    return leads.map((l) => (overrides[l.id] ? { ...l, stageId: overrides[l.id] } : l));
   }, [data, overrides]);
 
   const agents = useMemo(() => {
@@ -89,29 +92,29 @@ export default function LeadsPage() {
   const filtersActive = Boolean(search || assignee || score);
   const pipelineValue = leads.reduce((sum, l) => sum + (l.value ?? 0), 0);
 
-  function openAddModal(stage: LeadStage) {
-    setModalStage(stage);
+  function openAddModal(stageId?: string) {
+    setModalStageId(stageId);
     setModalOpen(true);
   }
 
-  async function moveLead(lead: PipelineLead, stage: LeadStage) {
-    if (lead.stage === stage) return;
+  async function moveLead(lead: PipelineLead, stageId: string) {
+    if (lead.stage?.id === stageId) return;
     // A move already saving for this lead must complete before another is accepted — otherwise a
     // fast second drag races the first PATCH and the two responses can land out of order.
     if (inFlight.current.has(lead.id)) return;
 
-    const previous = lead.stage;
+    const previous = lead.stage?.id;
     inFlight.current.add(lead.id);
 
     setToast(null);
-    setOverrides((o) => ({ ...o, [lead.id]: stage })); // optimistic move
+    setOverrides((o) => ({ ...o, [lead.id]: stageId })); // optimistic move
     setSavingIds((s) => ({ ...s, [lead.id]: true }));
 
     try {
       const res = await fetch(`/api/leads/${lead.id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ stage }),
+        body: JSON.stringify({ stageId }),
       });
       if (!res.ok) throw new Error(String(res.status));
 
@@ -120,8 +123,8 @@ export default function LeadsPage() {
       // card never flickers between the two.
       refetch();
     } catch {
-      setOverrides((o) => ({ ...o, [lead.id]: previous })); // revert
-      setToast(`Couldn't move "${lead.title}" to ${STAGE_LABEL[stage]}. Change reverted.`);
+      if (previous) setOverrides((o) => ({ ...o, [lead.id]: previous })); // revert
+      setToast(`Couldn't move "${lead.title}" to ${stageName(stageId)}. Change reverted.`);
     } finally {
       inFlight.current.delete(lead.id);
       setSavingIds((s) => {
@@ -143,11 +146,15 @@ export default function LeadsPage() {
         }
         action={
           <div className="flex gap-2">
+            <Button variant="secondary" onClick={() => setImportOpen(true)}>
+              <Upload className="h-4 w-4" />
+              Import
+            </Button>
             <Button variant="secondary" onClick={() => window.location.assign("/api/leads/export")}>
               <Download className="h-4 w-4" />
               Export CSV
             </Button>
-            <Button onClick={() => openAddModal(defaultStage)}>
+            <Button onClick={() => openAddModal(defaultStageId)}>
               <Plus className="h-4 w-4" />
               Add Lead
             </Button>
@@ -254,7 +261,7 @@ export default function LeadsPage() {
           leads={leads}
           isLoading={isLoading}
           onSelectLead={(lead) => setSelectedId(lead.id)}
-          onAddLead={() => openAddModal(defaultStage)}
+          onAddLead={() => openAddModal(defaultStageId)}
         />
       )}
 
@@ -279,9 +286,11 @@ export default function LeadsPage() {
       <AddLeadModal
         open={modalOpen}
         onClose={() => setModalOpen(false)}
-        initialStage={modalStage}
+        initialStageId={modalStageId}
         onCreated={() => refetch()}
       />
+
+      <ImportLeadsModal open={importOpen} onClose={() => setImportOpen(false)} />
 
       <LeadDrawer lead={selected} onClose={() => setSelectedId(null)} onStageChange={moveLead} />
     </div>
@@ -365,7 +374,7 @@ function LeadTable({
                   </div>
                 </td>
                 <td className="px-4 py-3">
-                  <Badge>{STAGE_LABEL[lead.stage]}</Badge>
+                  <Badge>{lead.stage?.name ?? "—"}</Badge>
                 </td>
                 <td className="px-4 py-3">
                   <Badge className={SCORE_STYLE[lead.scoreLabel]}>{lead.scoreLabel}</Badge>

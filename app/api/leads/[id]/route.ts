@@ -1,13 +1,16 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { LeadStage } from "@prisma/client";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { scoreLabelFor } from "@/lib/utils";
 
+const STAGE_SELECT = {
+  select: { id: true, name: true, color: true, order: true, enabled: true, outcome: true },
+} as const;
+
 const updateLeadSchema = z.object({
   title: z.string().min(1).optional(),
-  stage: z.nativeEnum(LeadStage).optional(),
+  stageId: z.string().optional(),
   score: z.number().min(0).max(100).optional(),
   value: z.number().positive().optional(),
   currency: z.string().optional(),
@@ -32,6 +35,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
       include: {
         contact: { select: { id: true, name: true, phone: true, email: true, company: true, avatarUrl: true } },
         assignedTo: { select: { id: true, name: true, avatar: true } },
+        stage: STAGE_SELECT,
         activities: {
           orderBy: { createdAt: "desc" },
           include: { user: { select: { id: true, name: true } } },
@@ -60,35 +64,60 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
     const parsed = updateLeadSchema.safeParse(body);
     if (!parsed.success) return NextResponse.json({ success: false, error: parsed.error.issues[0].message }, { status: 400 });
 
-    const existing = await prisma.lead.findFirst({ where: { id, tenantId } });
+    const existing = await prisma.lead.findFirst({
+      where: { id, tenantId },
+      include: { stage: STAGE_SELECT },
+    });
     if (!existing) return NextResponse.json({ success: false, error: "Lead not found" }, { status: 404 });
 
-    const { stage, score, ...rest } = parsed.data;
+    const { stageId, score, ...rest } = parsed.data;
+
+    // A stage change must target one of this tenant's enabled stages. A foreign stage is a
+    // 404 (indistinguishable from non-existent), a disabled one a 400 — neither is a valid
+    // destination for a lead.
+    let nextStage = existing.stage;
+    if (stageId !== undefined && stageId !== existing.stageId) {
+      const target = await prisma.pipelineStage.findFirst({
+        where: { id: stageId, tenantId },
+        select: STAGE_SELECT.select,
+      });
+      if (!target) return NextResponse.json({ success: false, error: "Stage not found" }, { status: 404 });
+      if (!target.enabled) {
+        return NextResponse.json({ success: false, error: "Cannot move a lead to a disabled stage" }, { status: 400 });
+      }
+      nextStage = target;
+    }
+
+    const stageChanged = nextStage.id !== existing.stageId;
+    // `closedAt` follows the destination stage's outcome: stamped when it closes the deal
+    // (WON/LOST), cleared when a lead is reopened back into an OPEN stage.
+    const closesDeal = nextStage.outcome !== "OPEN";
 
     const lead = await prisma.$transaction(async (tx) => {
       const updated = await tx.lead.update({
         where: { id },
         data: {
           ...rest,
-          ...(stage !== undefined && { stage }),
+          ...(stageChanged && { stageId: nextStage.id }),
           ...(score !== undefined && { score, scoreLabel: scoreLabelFor(score) }),
-          ...((stage === "WON" || stage === "LOST") && { closedAt: new Date() }),
-          ...(stage !== "WON" && stage !== "LOST" && existing.closedAt && stage !== undefined && { closedAt: null }),
+          ...(stageChanged && closesDeal && { closedAt: new Date() }),
+          ...(stageChanged && !closesDeal && existing.closedAt && { closedAt: null }),
         },
         include: {
           contact: { select: { id: true, name: true, phone: true } },
           assignedTo: { select: { id: true, name: true } },
+          stage: STAGE_SELECT,
         },
       });
 
-      if (stage && stage !== existing.stage) {
+      if (stageChanged) {
         await tx.leadActivity.create({
           data: {
             leadId: id,
             userId,
             type: "STAGE_CHANGED",
-            content: `Stage changed from ${existing.stage.replace(/_/g, " ")} to ${stage.replace(/_/g, " ")}`,
-            metadata: { oldStage: existing.stage, newStage: stage },
+            content: `Stage changed from ${existing.stage.name} to ${nextStage.name}`,
+            metadata: { oldStageId: existing.stageId, newStageId: nextStage.id },
           },
         });
       }

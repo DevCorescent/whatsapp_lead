@@ -1,40 +1,54 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { AlertTriangle, GripVertical, Pencil, RotateCcw, Save } from "lucide-react";
-import { Button, Card, Field, Modal, inputClass } from "@/components/ui";
+import { AlertTriangle, GripVertical, Pencil, Plus, RotateCcw, Save, Star, Trash2 } from "lucide-react";
+import { Button, Card, Field, Modal, inputClass, selectClass } from "@/components/ui";
 import { Toggle } from "@/components/ui/Toggle";
 import {
   useLeadStages,
   useUpdateLeadStages,
-  DEFAULT_LEAD_STAGES,
-  type LeadStageMeta,
+  DEFAULT_STAGE_DRAFTS,
+  type StageDraft,
+  type StageOutcome,
 } from "@/hooks/useLeadStages";
 import { cn, STAGE_COLORS, STAGE_COLOR_KEYS, type StageColor } from "@/lib/utils";
 
-const signatureOf = (stages: LeadStageMeta[]) =>
-  stages.map((s) => `${s.key}:${s.label}:${s.color}:${s.enabled}`).join("|");
+const OUTCOME_LABEL: Record<StageOutcome, string> = {
+  OPEN: "Open",
+  WON: "Won",
+  LOST: "Lost",
+};
 
-const sameList = (a: LeadStageMeta[], b: LeadStageMeta[]) => signatureOf(a) === signatureOf(b);
+const signatureOf = (stages: StageDraft[]) =>
+  stages
+    .map((s) => `${s.id ?? "new"}:${s.name}:${s.color}:${s.enabled}:${s.isDefault}:${s.outcome}`)
+    .join("|");
+
+const sameList = (a: StageDraft[], b: StageDraft[]) => signatureOf(a) === signatureOf(b);
 
 /**
- * Lead Pipeline Stages manager.
+ * Lead Pipeline Stages manager — full CRUD over the dynamic `PipelineStage` entity.
  *
- * Reorder (drag & drop), enable/disable, and edit label + colour for the existing
- * `LeadStage` enum stages. Persisted to TenantSettings.leadStages via the shared
- * hook. Stages are enum-backed, so there is no create/hard-delete — hiding a stage
- * (disable) is the safe equivalent and never orphans lead records.
- *
- * The outer component owns the mutation (so its lifecycle survives the optimistic
- * cache update) and re-keys the editor on the server signature, so the working copy
- * is re-seeded from the server without a setState-in-effect.
+ * Administrators can add, rename, recolour, reorder (drag & drop), enable/disable, set the
+ * default and delete stages, all against a working copy that is saved in one atomic PATCH.
+ * The outer component owns the mutation (so its lifecycle survives the optimistic cache
+ * update) and re-keys the editor on the server signature, so the working copy is re-seeded
+ * from the server without a setState-in-effect.
  */
 export function LeadStagesTab() {
   const { allStages, isLoading } = useLeadStages();
   const update = useUpdateLeadStages();
   const [saved, setSaved] = useState(false);
 
-  const signature = useMemo(() => signatureOf(allStages), [allStages]);
+  const initial: StageDraft[] = allStages.map((s) => ({
+    id: s.id,
+    name: s.name,
+    color: s.color,
+    enabled: s.enabled,
+    isDefault: s.isDefault,
+    outcome: s.outcome,
+  }));
+  const signature = useMemo(() => signatureOf(initial), [initial]);
 
   if (isLoading) {
     return (
@@ -47,7 +61,7 @@ export function LeadStagesTab() {
   return (
     <StageManager
       key={signature}
-      initial={allStages}
+      initial={initial}
       saving={update.isPending}
       error={update.error as Error | null}
       saved={saved}
@@ -70,13 +84,13 @@ function StageManager({
   saved,
   onSave,
 }: {
-  initial: LeadStageMeta[];
+  initial: StageDraft[];
   saving: boolean;
   error: Error | null;
   saved: boolean;
-  onSave: (list: LeadStageMeta[]) => void;
+  onSave: (list: StageDraft[]) => void;
 }) {
-  const [list, setList] = useState<LeadStageMeta[]>(() => initial.map((s) => ({ ...s })));
+  const [list, setList] = useState<StageDraft[]>(() => initial.map((s) => ({ ...s })));
   const [dragIndex, setDragIndex] = useState<number | null>(null);
   const [editIndex, setEditIndex] = useState<number | null>(null);
   const [confirmDisable, setConfirmDisable] = useState<number | null>(null);
@@ -94,19 +108,44 @@ function StageManager({
     });
   }
 
-  function patch(index: number, changes: Partial<LeadStageMeta>) {
+  function patch(index: number, changes: Partial<StageDraft>) {
     setList((prev) => prev.map((s, i) => (i === index ? { ...s, ...changes } : s)));
   }
 
   function toggle(index: number, next: boolean) {
-    // Disabling a stage hides its pipeline column — confirm first. The API also
-    // guards against disabling the last enabled stage.
+    // Disabling hides a column and can strand the default — confirm first. The API also
+    // guards against zero enabled stages and against disabling the default.
     if (!next) {
-      if (enabledCount <= 1) return;
+      if (enabledCount <= 1 || list[index].isDefault) return;
       setConfirmDisable(index);
       return;
     }
     patch(index, { enabled: true });
+  }
+
+  function setDefault(index: number) {
+    // Exactly one default, and it must be enabled — mirror both invariants client-side.
+    setList((prev) => prev.map((s, i) => ({ ...s, isDefault: i === index, enabled: i === index ? true : s.enabled })));
+  }
+
+  function addStage() {
+    setList((prev) => [
+      ...prev,
+      { name: `Stage ${prev.length + 1}`, color: "slate", enabled: true, isDefault: false, outcome: "OPEN" },
+    ]);
+    setEditIndex(list.length);
+  }
+
+  function removeStage(index: number) {
+    setList((prev) => {
+      const next = prev.filter((_, i) => i !== index);
+      // If the removed stage was the default, promote the first remaining enabled one.
+      if (prev[index].isDefault && next.length > 0) {
+        const promote = next.findIndex((s) => s.enabled);
+        if (promote >= 0) next[promote] = { ...next[promote], isDefault: true };
+      }
+      return next;
+    });
   }
 
   const editing = editIndex !== null ? list[editIndex] : null;
@@ -118,20 +157,26 @@ function StageManager({
           <div>
             <h2 className="font-semibold text-slate-900">Lead Pipeline Stages</h2>
             <p className="mt-0.5 text-sm text-slate-500">
-              Reorder, rename, recolour and show/hide the stages in your pipeline. The order
+              Add, reorder, rename, recolour and show/hide the stages in your pipeline. The order
               here drives the pipeline columns and the Add / Edit Lead dropdowns.
             </p>
           </div>
-          <Button variant="ghost" size="sm" onClick={() => setList(DEFAULT_LEAD_STAGES.map((s) => ({ ...s })))}>
-            <RotateCcw className="h-3.5 w-3.5" />
-            Reset to defaults
-          </Button>
+          <div className="flex gap-2">
+            <Button variant="ghost" size="sm" onClick={() => setList(DEFAULT_STAGE_DRAFTS.map((s) => ({ ...s })))}>
+              <RotateCcw className="h-3.5 w-3.5" />
+              Reset to defaults
+            </Button>
+            <Button variant="secondary" size="sm" onClick={addStage}>
+              <Plus className="h-3.5 w-3.5" />
+              Add stage
+            </Button>
+          </div>
         </div>
 
         <ul className="mt-5 space-y-2">
           {list.map((stage, index) => (
             <li
-              key={stage.key}
+              key={stage.id ?? `new-${index}`}
               draggable
               onDragStart={() => setDragIndex(index)}
               onDragOver={(e) => {
@@ -151,7 +196,7 @@ function StageManager({
             >
               <button
                 type="button"
-                aria-label={`Reorder ${stage.label}`}
+                aria-label={`Reorder ${stage.name}`}
                 className="cursor-grab text-slate-400 hover:text-slate-600 active:cursor-grabbing"
               >
                 <GripVertical className="h-4 w-4" />
@@ -163,11 +208,31 @@ function StageManager({
               />
 
               <div className="min-w-0 flex-1">
-                <p className={cn("truncate text-sm font-medium", stage.enabled ? "text-slate-900" : "text-slate-500")}>
-                  {stage.label}
-                </p>
-                <p className="text-[11px] uppercase tracking-wide text-slate-400">{stage.key}</p>
+                <div className="flex items-center gap-1.5">
+                  <p className={cn("truncate text-sm font-medium", stage.enabled ? "text-slate-900" : "text-slate-500")}>
+                    {stage.name || "Untitled stage"}
+                  </p>
+                  {stage.outcome !== "OPEN" && (
+                    <span className="rounded bg-slate-100 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-slate-500">
+                      {OUTCOME_LABEL[stage.outcome]}
+                    </span>
+                  )}
+                </div>
               </div>
+
+              <button
+                type="button"
+                onClick={() => setDefault(index)}
+                aria-pressed={stage.isDefault}
+                aria-label={stage.isDefault ? `${stage.name} is the default stage` : `Make ${stage.name} the default`}
+                title={stage.isDefault ? "Default stage for new leads" : "Set as default stage"}
+                className={cn(
+                  "rounded-lg p-1.5 transition",
+                  stage.isDefault ? "text-amber-500" : "text-slate-300 hover:bg-slate-100 hover:text-slate-500",
+                )}
+              >
+                <Star className={cn("h-4 w-4", stage.isDefault && "fill-amber-400")} />
+              </button>
 
               <Button variant="ghost" size="sm" onClick={() => setEditIndex(index)}>
                 <Pencil className="h-3.5 w-3.5" />
@@ -177,9 +242,19 @@ function StageManager({
               <Toggle
                 checked={stage.enabled}
                 onChange={(next) => toggle(index, next)}
-                disabled={stage.enabled && enabledCount <= 1}
-                label={`Enable ${stage.label}`}
+                disabled={stage.enabled && (enabledCount <= 1 || stage.isDefault)}
+                label={`Enable ${stage.name}`}
               />
+
+              <button
+                type="button"
+                onClick={() => removeStage(index)}
+                disabled={list.length <= 1}
+                aria-label={`Delete ${stage.name}`}
+                className="rounded-lg p-1.5 text-slate-400 transition hover:bg-rose-50 hover:text-rose-600 disabled:opacity-30"
+              >
+                <Trash2 className="h-4 w-4" />
+              </button>
             </li>
           ))}
         </ul>
@@ -197,22 +272,22 @@ function StageManager({
         </div>
       </Card>
 
-      {/* Edit stage (label + colour) */}
+      {/* Edit stage (name + colour + outcome) */}
       {editing && editIndex !== null && (
         <Modal
           open
           onClose={() => setEditIndex(null)}
           title="Edit stage"
-          description={`Customise how "${editing.key}" appears in your pipeline.`}
+          description="Customise how this stage appears and behaves in your pipeline."
         >
           <div className="space-y-4">
-            <Field label="Label" htmlFor="stage-label" required>
+            <Field label="Name" htmlFor="stage-name" required>
               <input
-                id="stage-label"
+                id="stage-name"
                 className={inputClass}
                 maxLength={40}
-                value={editing.label}
-                onChange={(e) => patch(editIndex, { label: e.target.value })}
+                value={editing.name}
+                onChange={(e) => patch(editIndex, { name: e.target.value })}
                 autoFocus
               />
             </Field>
@@ -237,6 +312,19 @@ function StageManager({
               </div>
             </Field>
 
+            <Field label="Outcome" htmlFor="stage-outcome">
+              <select
+                id="stage-outcome"
+                className={selectClass}
+                value={editing.outcome}
+                onChange={(e) => patch(editIndex, { outcome: e.target.value as StageOutcome })}
+              >
+                <option value="OPEN">Open — an active stage in the pipeline</option>
+                <option value="WON">Won — closes the deal as won (counts as revenue)</option>
+                <option value="LOST">Lost — closes the deal as lost</option>
+              </select>
+            </Field>
+
             <div className="flex justify-end gap-2 border-t border-slate-200 pt-4">
               <Button variant="secondary" onClick={() => setEditIndex(null)}>
                 Done
@@ -252,7 +340,7 @@ function StageManager({
           open
           onClose={() => setConfirmDisable(null)}
           title="Hide this stage?"
-          description={`"${list[confirmDisable].label}" will be removed from the pipeline and the Add / Edit Lead dropdowns.`}
+          description={`"${list[confirmDisable].name}" will be removed from the pipeline and the Add / Edit Lead dropdowns.`}
         >
           <div className="space-y-4">
             <div className="flex items-start gap-2 rounded-lg bg-amber-50 p-3 text-sm text-amber-800 ring-1 ring-inset ring-amber-600/20">
