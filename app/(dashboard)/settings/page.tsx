@@ -2,13 +2,14 @@
 
 import { useState } from "react";
 import { useSession } from "next-auth/react";
-import { Building2, MessageSquare, CreditCard, Bell, KanbanSquare } from "lucide-react";
+import { Building2, MessageSquare, CreditCard, Bell, KanbanSquare, Zap } from "lucide-react";
 import { PageHeader } from "@/components/ui";
 import { GeneralTab } from "@/components/settings/GeneralTab";
 import { WhatsAppTab } from "@/components/settings/WhatsAppTab";
 import { BillingTab } from "@/components/settings/BillingTab";
 import { NotificationsTab } from "@/components/settings/NotificationsTab";
 import { LeadStagesTab } from "@/components/settings/LeadStagesTab";
+import { QuickRepliesTab } from "@/components/settings/QuickRepliesTab";
 import { cn } from "@/lib/utils";
 
 /** Managing pipeline stages is an admin action — same allowlist as the backend guard. */
@@ -18,6 +19,7 @@ const TABS = [
   { key: "general", label: "General", icon: Building2, adminOnly: false },
   { key: "pipeline", label: "Lead Pipeline Stages", icon: KanbanSquare, adminOnly: true },
   { key: "whatsapp", label: "WhatsApp", icon: MessageSquare, adminOnly: false },
+  { key: "quick-replies", label: "Quick Replies", icon: Zap, adminOnly: false },
   { key: "billing", label: "Billing", icon: CreditCard, adminOnly: false },
   { key: "notifications", label: "Notifications", icon: Bell, adminOnly: false },
 ] as const;
@@ -67,6 +69,7 @@ export default function SettingsPage() {
         {activeTab === "general" && <GeneralTab />}
         {activeTab === "pipeline" && isStageAdmin && <LeadStagesTab />}
         {activeTab === "whatsapp" && <WhatsAppTab />}
+        {activeTab === "quick-replies" && <QuickRepliesTab />}
         {activeTab === "billing" && <BillingTab />}
         {activeTab === "notifications" && <NotificationsTab />}
       </div>

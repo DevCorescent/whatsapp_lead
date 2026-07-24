@@ -576,6 +576,10 @@ model CampaignContact {
   phone        String
   variables    Json?
   status       String    @default("PENDING")
+  // Meta's id for the message sent to this recipient. Delivery receipts arrive keyed by it, so it
+  // is the only thing that can correlate a `statuses[]` callback back to the campaign recipient it
+  // belongs to. Nullable: historical rows predate it, and a send that never reached Meta has none.
+  waMessageId  String?   @unique
   sentAt       DateTime?
   deliveredAt  DateTime?
   readAt       DateTime?

@@ -6,6 +6,7 @@ import {
   CheckCircle,
   Clock3,
   FileText,
+  Gauge,
   Mail,
   Phone,
   Sparkles,
@@ -14,6 +15,13 @@ import {
   UserRound,
 } from "lucide-react";
 import { Avatar, Badge, Button, Skeleton, inputClass } from "@/components/ui";
+import {
+  useAiQualify,
+  useAiSentiment,
+  useAiSummarize,
+  useResolveConversation,
+  useUpdateConversation,
+} from "@/hooks/useMessages";
 import {
   CONVERSATION_STATUS_STYLE,
   SCORE_STYLE,
@@ -54,6 +62,14 @@ export function ContactPanel({
   const [assignee, setAssignee] = useState<string>(
     conversation?.assignedTo?.id ?? conversation?.assignedToId ?? "",
   );
+  const [summary, setSummary] = useState<string | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
+
+  const qualify = useAiQualify();
+  const sentiment = useAiSentiment();
+  const summarize = useAiSummarize();
+  const resolve = useResolveConversation();
+  const update = useUpdateConversation();
 
   if (!conversation) {
     return (
@@ -171,30 +187,128 @@ export function ContactPanel({
       {/* Quick actions */}
       <Section title="Quick actions">
         <div className="space-y-2">
-          {/* TODO [GAURANSH]: wire /api/ai/qualify — { conversationId } → score + BANT. */}
-          <Button variant="secondary" size="sm" className="w-full justify-start">
+          <Button
+            variant="secondary"
+            size="sm"
+            className="w-full justify-start"
+            disabled={qualify.isPending}
+            onClick={() => {
+              setActionError(null);
+              setSummary(null);
+              qualify.mutate(conversation.id, {
+                onError: (e: Error) => setActionError(e.message),
+              });
+            }}
+          >
             <Sparkles className="h-4 w-4 text-emerald-600" />
-            Qualify Lead (AI)
+            {qualify.isPending ? "Qualifying…" : "Qualify Lead (AI)"}
           </Button>
-          {/* TODO [GAURANSH]: wire /api/ai/summarize — { conversationId } → { summary }. */}
-          <Button variant="secondary" size="sm" className="w-full justify-start">
+
+          <Button
+            variant="secondary"
+            size="sm"
+            className="w-full justify-start"
+            disabled={summarize.isPending}
+            onClick={() => {
+              setActionError(null);
+              summarize.mutate(conversation.id, {
+                onSuccess: (res: { data?: { summary?: string } }) =>
+                  setSummary(res.data?.summary ?? null),
+                onError: (e: Error) => setActionError(e.message),
+              });
+            }}
+          >
             <FileText className="h-4 w-4 text-emerald-600" />
-            Summarize (AI)
+            {summarize.isPending ? "Summarizing…" : "Summarize (AI)"}
           </Button>
-          {/* TODO [GAURANSH]: wire PATCH /api/conversations/[id] { status: "RESOLVED" }. */}
-          <Button variant="secondary" size="sm" className="w-full justify-start">
+
+          <Button
+            variant="secondary"
+            size="sm"
+            className="w-full justify-start"
+            disabled={sentiment.isPending}
+            onClick={() => {
+              setActionError(null);
+              sentiment.mutate(conversation.id, {
+                onError: (e: Error) => setActionError(e.message),
+              });
+            }}
+          >
+            <Gauge className="h-4 w-4 text-emerald-600" />
+            {sentiment.isPending ? "Analyzing…" : "Check Sentiment (AI)"}
+          </Button>
+
+          <Button
+            variant="secondary"
+            size="sm"
+            className="w-full justify-start"
+            disabled={resolve.isPending || conversation.status === "RESOLVED"}
+            onClick={() => {
+              setActionError(null);
+              resolve.mutate(conversation.id, {
+                onError: (e: Error) => setActionError(e.message),
+              });
+            }}
+          >
             <CheckCircle className="h-4 w-4 text-emerald-600" />
-            Resolve
+            {conversation.status === "RESOLVED"
+              ? "Resolved"
+              : resolve.isPending
+                ? "Resolving…"
+                : "Resolve"}
           </Button>
+
+          {/* The AI score lands on the lead, which this panel already renders — only the summary
+              has nowhere else to go, so it is shown here rather than discarded. */}
+          {qualify.isSuccess && !actionError && (
+            <p className="rounded-lg bg-emerald-50 px-3 py-2 text-xs text-emerald-800">
+              Lead scored{" "}
+              {(qualify.data as { data?: { score?: number } } | undefined)?.data?.score ?? "—"}
+              /100.
+            </p>
+          )}
+          {sentiment.isSuccess && !actionError && (
+            <p className="rounded-lg bg-slate-50 px-3 py-2 text-xs text-slate-700">
+              Customer sentiment:{" "}
+              <span className="font-semibold">
+                {(sentiment.data as { data?: { sentiment?: string } } | undefined)?.data?.sentiment ?? "unknown"}
+              </span>
+            </p>
+          )}
+          {summary && (
+            <p className="whitespace-pre-wrap rounded-lg bg-slate-50 px-3 py-2 text-xs text-slate-700">
+              {summary}
+            </p>
+          )}
+          {actionError && (
+            <p className="rounded-lg bg-rose-50 px-3 py-2 text-xs text-rose-700">{actionError}</p>
+          )}
         </div>
       </Section>
 
       {/* Assign */}
       <Section title="Assign agent">
-        {/* TODO [GAURANSH]: wire PATCH /api/conversations/[id] { assigneeId }. */}
         <select
           value={assignee}
-          onChange={(e) => setAssignee(e.target.value)}
+          onChange={(e) => {
+            const next = e.target.value;
+            // Optimistic on the control itself so the select does not snap back while the PATCH is
+            // in flight; the query invalidation is what makes it authoritative.
+            setAssignee(next);
+            setActionError(null);
+            update.mutate(
+              // "" is the Unassigned option; the API models that as an explicit null, not a
+              // missing field — omitting it would fail the "provide at least one" refinement.
+              { id: conversation.id, data: { assigneeId: next === "" ? null : next } },
+              {
+                onError: (e: Error) => {
+                  setAssignee(conversation.assignedTo?.id ?? conversation.assignedToId ?? "");
+                  setActionError(e.message);
+                },
+              },
+            );
+          }}
+          disabled={update.isPending}
           aria-label="Assign agent"
           className={cn(inputClass, "bg-white")}
         >

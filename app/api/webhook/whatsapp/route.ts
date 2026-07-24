@@ -19,14 +19,15 @@
 //   POST → processEntry → processChange → processIncomingMessage
 //                                         → resolveTenant
 //                                         → upsertContact
-//                                         → findOrCreateConversation
 //                                         → saveInboundMessage (+ conversation counters)
-//                       → processStatusUpdate
+//                                         → markInboundAsRead / broadcastMessage
+//                                         → creditCampaignReply
+//                                         → executeFlow, else handleAutoReply
+//                       → processStatusUpdate   (agent-authored messages)
+//                       → applyCampaignReceipt  (campaign recipients)
 //
-// NOT YET IMPLEMENTED (deliberately, tracked elsewhere): chatbot flow execution, AI auto-reply
-// (TenantSettings.aiEnabled / autoReply are read by nothing today), Pusher realtime events
-// (lib/pusher.ts does not exist), and markMessageAsRead. See the review notes accompanying this
-// module — none of these have their dependencies installed.
+// Chatbot flow execution, AI auto-reply, Pusher realtime events and markMessageAsRead are all live
+// on this path; an earlier revision of this header listed them as unimplemented.
 
 import { createHmac, timingSafeEqual } from "node:crypto";
 import { NextRequest, NextResponse } from "next/server";
@@ -39,6 +40,7 @@ import {
 } from "@prisma/client";
 import type { Contact, Conversation, Message } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
+import { ensureDefaultBusiness } from "@/lib/business";
 import { decryptSecret } from "@/lib/crypto";
 import { generateReply } from "@/lib/ai";
 import { retrieveContext } from "@/lib/rag";
@@ -240,13 +242,24 @@ async function resolveTenant(phoneNumberId: string): Promise<ResolvedTenant> {
     );
   }
 
-  // If not already set from the Business fallback, resolve businessId now
+  // If not already set from the Business fallback, resolve businessId now.
+  //
+  // A tenant that configured WhatsApp through Settings (the original single-number path) has
+  // `TenantSettings.waPhoneNumberId` set while no Business carries the same id — the two fields are
+  // written by different modules and were never kept in sync. That tenant lands here, and the
+  // businessId resolved for it is written onto every Contact and Conversation the webhook creates,
+  // both of which carry a foreign key to `businesses.id`. A synthesised id therefore does not
+  // degrade gracefully: it fails the constraint and the inbound message is dropped outright.
+  //
+  // `ensureDefaultBusiness` is the migration path that already exists for this exact shape — it
+  // returns the tenant's oldest business, or seeds one from those very TenantSettings — so the
+  // fallback resolves to a row that exists instead of to an id that cannot.
   if (!businessId) {
     const business = await prisma.business.findFirst({
       where: { whatsappPhoneNumberId: phoneNumberId, tenant: { isActive: true } },
       select: { id: true },
     });
-    businessId = business?.id ?? `biz_${settings.tenantId}`;
+    businessId = business?.id ?? (await ensureDefaultBusiness(settings.tenantId)).id;
   }
 
   return { ...settings, businessId };
@@ -771,14 +784,91 @@ async function executeFlow(
 
     // Handoff: assign to a human, disable AI active flag.
     if (result.handoff) {
-      await prisma.conversation.update({
-        where: { id: conversation.id },
-        data: { isAiActive: false },
-      });
+      const handoff = result.actions.find((a) => a.type === "handoff")?.handoff;
+      await assignConversationToAgent(conversation, handoff);
     }
   }
 
   return true;
+}
+
+/**
+ * Hand a conversation to a human, picking the agent with the lightest live workload.
+ *
+ * Before this, a handoff node only cleared `isAiActive`, which took the bot out of the thread but
+ * left the conversation belonging to nobody — it stayed OPEN and unassigned in a shared inbox, which
+ * is the state a handoff is supposed to end. The flow's `team`/`queue`/`department` were collected in
+ * the builder and then discarded entirely.
+ *
+ * Least-loaded rather than strict round-robin: the candidate with the fewest conversations still
+ * open is chosen, which is self-correcting — an agent who resolves their threads becomes eligible
+ * again, and one who is buried stops receiving work. Round-robin over a fixed order would keep
+ * feeding a saturated agent.
+ *
+ * The requested team/queue/department cannot be honoured as *routing*: `User` has no department or
+ * skills column, and inventing one is a schema change. It is preserved as a conversation label
+ * instead, so the intent survives on the thread and an agent can see which queue the bot meant —
+ * `labels` is an existing `String[]` on Conversation, so this costs no migration.
+ *
+ * Assigning is best-effort. A workspace with no active agents simply keeps the thread unassigned
+ * (still with AI off, which is the part that must not fail), rather than erroring out of a webhook.
+ */
+async function assignConversationToAgent(
+  conversation: Conversation,
+  handoff?: { team?: string; queue?: string; department?: string; note?: string }
+): Promise<void> {
+  // The queue the flow asked for, kept as a label. Deduplicated against what the thread already
+  // carries so a customer who loops through the same handoff twice does not stack duplicates.
+  const requestedQueue = handoff?.team ?? handoff?.queue ?? handoff?.department ?? null;
+  const labels = requestedQueue && !conversation.labels.includes(requestedQueue)
+    ? [...conversation.labels, requestedQueue]
+    : conversation.labels;
+
+  let assignedToId: string | null = conversation.assignedToId;
+
+  // An already-assigned thread keeps its agent: a handoff mid-conversation should not yank the
+  // customer away from the person already talking to them.
+  if (!assignedToId) {
+    const agents = await prisma.user.findMany({
+      where: {
+        tenantId: conversation.tenantId,
+        isActive: true,
+        role: { in: ["AGENT", "MANAGER", "ADMIN", "TENANT_OWNER"] },
+      },
+      select: {
+        id: true,
+        _count: {
+          select: {
+            assignedConvs: {
+              where: { status: { in: [ConversationStatus.OPEN, ConversationStatus.ASSIGNED] } },
+            },
+          },
+        },
+      },
+    });
+
+    if (agents.length > 0) {
+      // Ties break on id so the choice is deterministic rather than dependent on row order.
+      agents.sort(
+        (a, b) =>
+          a._count.assignedConvs - b._count.assignedConvs ||
+          a.id.localeCompare(b.id)
+      );
+      assignedToId = agents[0].id;
+    }
+  }
+
+  await prisma.conversation.update({
+    where: { id: conversation.id },
+    data: {
+      isAiActive: false,
+      labels,
+      ...(assignedToId && {
+        assignedToId,
+        status: ConversationStatus.ASSIGNED,
+      }),
+    },
+  });
 }
 
 /**
@@ -934,6 +1024,125 @@ async function processStatusUpdate(
 }
 
 /**
+ * Apply a delivery receipt to the campaign recipient it belongs to.
+ *
+ * Runs alongside `processStatusUpdate` rather than inside it, because a campaign send writes no
+ * `Message` row — the broadcast goes straight to Meta — so the lookup above finds nothing for these
+ * receipts and returns null. The two handlers are therefore disjoint by construction: a receipt
+ * belongs either to an agent-authored message or to a campaign recipient, never to both.
+ *
+ * `waMessageId` is unique on `CampaignContact`, so the recipient is found by the only key a receipt
+ * carries. Tenant ownership is asserted through the parent campaign rather than trusted from the
+ * payload: this endpoint is unauthenticated, and a globally unique id identifies a row without
+ * authorising access to it.
+ *
+ * Both writes are monotonic and first-write-wins. Meta redelivers receipts and emits them out of
+ * order, so `deliveredAt`/`readAt` are only stamped when still null, and the campaign's counter is
+ * only incremented on that same first transition — otherwise a redelivered `read` callback would
+ * inflate `readCount` past the number of recipients. The stamp and the counter move together in one
+ * transaction, so they cannot disagree.
+ *
+ * Failures are contained here, as with the other side concerns on this path: a counter that could
+ * not be moved is not a reason to fail a webhook that must still answer 200.
+ */
+async function applyCampaignReceipt(
+  tenantId: string,
+  status: WAStatus
+): Promise<void> {
+  const incoming = META_TO_MESSAGE_STATUS[status.status];
+  if (incoming !== MessageStatus.DELIVERED && incoming !== MessageStatus.READ) return;
+
+  const recipient = await prisma.campaignContact.findUnique({
+    where: { waMessageId: status.id },
+    select: {
+      id: true,
+      deliveredAt: true,
+      readAt: true,
+      campaign: { select: { id: true, tenantId: true } },
+    },
+  });
+
+  if (!recipient || recipient.campaign.tenantId !== tenantId) return;
+
+  // `read` implies delivery even when the `delivered` callback never arrived or arrived after it.
+  const stampDelivered = recipient.deliveredAt === null;
+  const stampRead = incoming === MessageStatus.READ && recipient.readAt === null;
+  if (!stampDelivered && !stampRead) return;
+
+  const now = new Date();
+
+  try {
+    await prisma.$transaction([
+      prisma.campaignContact.update({
+        where: { id: recipient.id },
+        data: {
+          ...(stampDelivered && { deliveredAt: now }),
+          ...(stampRead && { readAt: now }),
+        },
+      }),
+      prisma.campaign.update({
+        where: { id: recipient.campaign.id },
+        data: {
+          ...(stampDelivered && { deliveredCount: { increment: 1 } }),
+          ...(stampRead && { readCount: { increment: 1 } }),
+        },
+      }),
+    ]);
+  } catch (error) {
+    console.error(
+      `[WEBHOOK] Failed to apply campaign receipt ${status.id}:`,
+      error
+    );
+  }
+}
+
+/**
+ * Credit a campaign recipient's reply, the first time they answer a broadcast.
+ *
+ * "Replied" is the one campaign metric Meta never reports: a reply is an ordinary inbound message,
+ * indistinguishable at the API from any other. It is therefore inferred here — the sender is matched
+ * against recipients of this tenant's campaigns who were sent to and have not yet replied.
+ *
+ * Only the most recent such send is credited, and only once (`repliedAt` null-guarded), so an ongoing
+ * conversation cannot keep incrementing `repliedCount` with every message the customer types.
+ */
+async function creditCampaignReply(
+  tenantId: string,
+  phone: string
+): Promise<void> {
+  const recipient = await prisma.campaignContact.findFirst({
+    where: {
+      phone,
+      repliedAt: null,
+      sentAt: { not: null },
+      campaign: { tenantId },
+    },
+    orderBy: { sentAt: "desc" },
+    select: { id: true, campaignId: true },
+  });
+
+  if (!recipient) return;
+
+  try {
+    await prisma.$transaction([
+      prisma.campaignContact.update({
+        where: { id: recipient.id },
+        data: { repliedAt: new Date() },
+      }),
+      prisma.campaign.update({
+        where: { id: recipient.campaignId },
+        data: { repliedCount: { increment: 1 } },
+      }),
+    ]);
+  } catch (error) {
+    console.error(
+      `[WEBHOOK] Failed to credit campaign reply from ${phone}:`,
+      error
+    );
+  }
+}
+
+/**
  * Everything an inbound message resolves to, handed back to the caller in one piece.
  *
  * Downstream concerns the webhook still has to attend to — updating the thread's preview and
@@ -1009,6 +1218,9 @@ async function processIncomingMessage(
     await markInboundAsRead(tenant, message.id);
     await broadcastMessage(tenant.tenantId, saved);
 
+    // Guarded by `isNew`, so a redelivered inbound message cannot credit the same reply twice.
+    await creditCampaignReply(tenant.tenantId, contact.phone);
+
     // Flow execution takes priority over generic AI auto-reply.
     const flowHandled = await executeFlow(
       tenant,
@@ -1064,6 +1276,9 @@ async function processChange(change: WAChange): Promise<void> {
 
   for (const status of statuses ?? []) {
     await processStatusUpdate(tenant.tenantId, status);
+    // Disjoint from the call above: campaign sends write no Message row, so a receipt for one is
+    // invisible to `processStatusUpdate` and has to be attributed through `CampaignContact`.
+    await applyCampaignReceipt(tenant.tenantId, status);
   }
 }
 
