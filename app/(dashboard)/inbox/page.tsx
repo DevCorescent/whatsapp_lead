@@ -1,6 +1,8 @@
 "use client";
 
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import PusherClient from "pusher-js";
+import { useQueryClient } from "@tanstack/react-query";
 import { useSession } from "next-auth/react";
 import { useConversation, useConversations } from "@/hooks/useMessages";
 import { ChatWindow } from "@/components/inbox/ChatWindow";
@@ -34,6 +36,30 @@ export default function InboxPage() {
   const userId = session?.user?.id;
   const userName = session?.user?.name;
   const userAvatar = session?.user?.avatar;
+  const tenantId = session?.user?.tenantId;
+
+  const queryClient = useQueryClient();
+
+  // Pusher real-time subscription: invalidate conversations when a new message arrives.
+  // Falls back to the 30s poll in useConversations when Pusher is not configured.
+  useEffect(() => {
+    const key = process.env.NEXT_PUBLIC_PUSHER_KEY;
+    const cluster = process.env.NEXT_PUBLIC_PUSHER_CLUSTER;
+    if (!key || !cluster || !tenantId) return;
+
+    const client = new PusherClient(key, { cluster });
+    const channel = client.subscribe(`tenant-${tenantId}`);
+
+    channel.bind("new-message", () => {
+      void queryClient.invalidateQueries({ queryKey: ["conversations"] });
+    });
+
+    return () => {
+      channel.unbind_all();
+      client.unsubscribe(`tenant-${tenantId}`);
+      client.disconnect();
+    };
+  }, [tenantId, queryClient]);
 
   const [tab, setTab] = useState<InboxTab>("all");
   const [search, setSearch] = useState("");

@@ -5,6 +5,7 @@ import type { ImportRequest, ImportResult } from "@/lib/contactsImport";
 interface ContactFilters {
   search?: string;
   tagId?: string;
+  source?: string;
   page?: number;
   limit?: number;
 }
@@ -16,6 +17,7 @@ export function useContacts(filters?: ContactFilters) {
       const params = new URLSearchParams();
       if (filters?.search) params.set("search", filters.search);
       if (filters?.tagId) params.set("tagId", filters.tagId);
+      if (filters?.source) params.set("source", filters.source);
       if (filters?.page) params.set("page", String(filters.page));
       if (filters?.limit) params.set("limit", String(filters.limit));
       const res = await fetch(`/api/contacts?${params}`);

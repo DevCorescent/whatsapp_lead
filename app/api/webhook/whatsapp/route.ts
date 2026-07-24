@@ -846,6 +846,10 @@ async function handleAutoReply(
   // business replied with nothing.
   if (!reply) return;
 
+  // Honor the configurable reply delay (in seconds). A zero or missing value sends immediately.
+  const delayMs = (tenant.autoReplyDelay ?? 0) * 1000;
+  if (delayMs > 0) await new Promise<void>((resolve) => setTimeout(resolve, delayMs));
+
   let waMessageId: string | null;
   try {
     const sent = await sendTextMessage(

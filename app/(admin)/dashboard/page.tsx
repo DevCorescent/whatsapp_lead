@@ -21,6 +21,7 @@ import {
   UserPlus,
   Users,
   Webhook,
+  WifiOff,
 } from "lucide-react";
 import {
   CartesianGrid,
@@ -78,6 +79,28 @@ interface AdminStats {
   signupsLast30Days: { date: string; count: number }[];
   planBreakdown: { planName: string; count: number }[];
   recentTenants: RecentTenant[];
+}
+
+interface HealthData {
+  api: { latencyMs: number; status: string };
+  database: { latencyMs: number; status: string };
+  pusher: { configured: boolean; status: string };
+  whatsapp: { configured: boolean; status: string };
+  checkedAt: string;
+}
+
+function useAdminHealth() {
+  return useQuery<HealthData>({
+    queryKey: ["admin", "health"],
+    queryFn: async () => {
+      const res = await fetch("/api/admin/health");
+      if (!res.ok) throw new Error("Failed to load health");
+      const json = await res.json();
+      return (json.data ?? json) as HealthData;
+    },
+    refetchInterval: 60_000,
+    retry: false,
+  });
 }
 
 function useAdminStats() {
@@ -139,6 +162,7 @@ const shortDate = (iso: string) =>
 
 export default function AdminDashboardPage() {
   const { data, isLoading, isError } = useAdminStats();
+  const { data: health, isLoading: healthLoading } = useAdminHealth();
 
   const stats = data ?? PREVIEW;
   const preview = isError || !data;
@@ -379,16 +403,45 @@ export default function AdminDashboardPage() {
           )}
         </AdminPanel>
 
-        {/* TODO: wire to a real health probe (/api/admin/health) — static chips for now. */}
-        <AdminPanel title="System Health" subtitle="Static probe — TODO: wire to /api/admin/health">
-          <ul className="space-y-3">
-            <HealthRow icon={Activity} label="API latency" value="128 ms" tone="emerald" chip="Healthy" />
-            <HealthRow icon={Database} label="Database" value="Neon · ap-south-1" tone="emerald" chip="Online" />
-            <HealthRow icon={Webhook} label="Webhook queue" value="42 pending" tone="amber" chip="Degraded" />
-            <HealthRow icon={MessageSquare} label="WhatsApp Cloud API" value="Operational" tone="emerald" chip="Healthy" />
-          </ul>
+        <AdminPanel title="System Health" subtitle="Live probe — auto-refresh every 60s">
+          {healthLoading ? (
+            <AdminSkeleton className="h-32 w-full" />
+          ) : !health ? (
+            <AdminEmptyState icon={WifiOff} title="Health check unavailable" description="Could not reach /api/admin/health." />
+          ) : (
+            <ul className="space-y-3">
+              <HealthRow
+                icon={Activity}
+                label="API latency"
+                value={`${health.api.latencyMs} ms`}
+                tone={health.api.latencyMs < 300 ? "emerald" : health.api.latencyMs < 1000 ? "amber" : "rose"}
+                chip={health.api.status === "healthy" ? "Healthy" : "Degraded"}
+              />
+              <HealthRow
+                icon={Database}
+                label="Database"
+                value={`Neon · ${health.database.latencyMs} ms`}
+                tone={health.database.status === "online" ? "emerald" : "rose"}
+                chip={health.database.status === "online" ? "Online" : "Error"}
+              />
+              <HealthRow
+                icon={Webhook}
+                label="Pusher realtime"
+                value={health.pusher.configured ? "Configured" : "Not configured"}
+                tone={health.pusher.configured ? "emerald" : "amber"}
+                chip={health.pusher.configured ? "Active" : "Missing"}
+              />
+              <HealthRow
+                icon={MessageSquare}
+                label="WhatsApp Cloud API"
+                value={health.whatsapp.configured ? "App secret set" : "Not configured"}
+                tone={health.whatsapp.configured ? "emerald" : "amber"}
+                chip={health.whatsapp.configured ? "Configured" : "Missing"}
+              />
+            </ul>
+          )}
           <p className="mt-4 border-t border-slate-200 pt-3 text-xs text-slate-400">
-            Last checked just now · auto-refresh every 60s
+            Last checked: {health ? new Date(health.checkedAt).toLocaleTimeString() : "—"} · auto-refresh every 60s
           </p>
         </AdminPanel>
       </div>

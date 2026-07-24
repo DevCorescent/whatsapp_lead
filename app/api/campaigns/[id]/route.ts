@@ -89,19 +89,17 @@ const CAMPAIGN_DETAIL_SELECT = {
 } satisfies Prisma.CampaignSelect;
 
 /**
- * The only field a campaign exposes for update.
+ * Fields a campaign exposes for update.
  *
- * `strictObject` is the enforcement, not the documentation. A permissive object would let `status`,
- * `sentCount`, `tenantId`, `templateId`, `metadata` or the timestamps ride along in the body —
- * silently dropped today, silently applied the first time someone spreads the parsed result into a
- * Prisma `data`. Rejecting unknown keys is what makes "only the name is writable" a property of the
- * code rather than a promise in a comment.
- *
- * The counters in particular must never be writable: they are the campaign's record of what actually
- * happened to real customers, and a client able to set `sentCount` could rewrite that record.
+ * `name` — rename a campaign (allowed for any non-COMPLETED/FAILED campaign).
+ * `status` — toggle between RUNNING and PAUSED. Counters, IDs, timestamps, and metadata
+ * are never writable; a client that could set sentCount would rewrite history.
  */
-const updateCampaignSchema = z.strictObject({
-  name: z.string().trim().min(1, "Campaign name is required"),
+const updateCampaignSchema = z.object({
+  name: z.string().trim().min(1, "Campaign name is required").optional(),
+  status: z.enum(["RUNNING", "PAUSED"]).optional(),
+}).refine((d) => d.name !== undefined || d.status !== undefined, {
+  message: "Provide at least one of: name, status",
 });
 
 type UpdateCampaignInput = z.infer<typeof updateCampaignSchema>;
@@ -162,7 +160,13 @@ async function loadCampaign(tenantId: string, campaignId: string) {
 async function updateCampaign(campaignId: string, input: UpdateCampaignInput) {
   return prisma.campaign.update({
     where: { id: campaignId },
-    data: { name: input.name },
+    data: {
+      ...(input.name !== undefined && { name: input.name }),
+      ...(input.status !== undefined && {
+        status: input.status as CampaignStatus,
+        ...(input.status === "RUNNING" && { startedAt: new Date() }),
+      }),
+    },
     select: CAMPAIGN_DETAIL_SELECT,
   });
 }
@@ -275,16 +279,29 @@ export async function PATCH(
       );
     }
 
-    // 409 rather than 403: the request is well-formed and the caller is entitled to this campaign —
-    // it is the campaign's own state that forbids the change, and that state is reportable.
-    if (campaign.status !== CampaignStatus.DRAFT) {
+    // COMPLETED and FAILED campaigns are delivery records — their name and state are fixed.
+    const immutable =
+      campaign.status === CampaignStatus.COMPLETED ||
+      campaign.status === CampaignStatus.FAILED;
+
+    if (immutable) {
       return NextResponse.json(
-        {
-          success: false,
-          error: "Only draft campaigns can be renamed",
-        },
+        { success: false, error: "Completed and failed campaigns cannot be modified" },
         { status: 409 }
       );
+    }
+
+    // Status toggle is only valid on RUNNING/PAUSED campaigns.
+    if (parsed.data.status !== undefined) {
+      const canToggle =
+        campaign.status === CampaignStatus.RUNNING ||
+        campaign.status === CampaignStatus.PAUSED;
+      if (!canToggle) {
+        return NextResponse.json(
+          { success: false, error: "Only running or paused campaigns can have their status toggled" },
+          { status: 409 }
+        );
+      }
     }
 
     const updated = await updateCampaign(campaign.id, parsed.data);
@@ -332,12 +349,10 @@ export async function DELETE(
       );
     }
 
-    if (campaign.status !== CampaignStatus.DRAFT) {
+    // Prevent deleting an actively-sending campaign — it could be mid-loop over recipients.
+    if (campaign.status === CampaignStatus.RUNNING) {
       return NextResponse.json(
-        {
-          success: false,
-          error: "Only draft campaigns can be deleted",
-        },
+        { success: false, error: "Pause the campaign before deleting it" },
         { status: 409 }
       );
     }

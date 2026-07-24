@@ -43,6 +43,7 @@ export default function ContactsPage() {
   const { data, isLoading, isError } = useContacts({
     search: debounced || undefined,
     tagId: tagId || undefined,
+    source: source || undefined,
     page,
   });
   const { data: sourceOptions = [] } = useContactSources();
@@ -53,15 +54,7 @@ export default function ContactsPage() {
     return Array.isArray(list) ? (list as ContactRow[]) : [];
   }, [data]);
 
-  // TODO [SHALMON]: GET /api/contacts has no `source` filter yet — filtering the
-  // current page client-side until the query param exists.
-  const contacts = useMemo(
-    () =>
-      source
-        ? rows.filter((c) => (c.source ?? "").toLowerCase() === source.toLowerCase())
-        : rows,
-    [rows, source],
-  );
+  const contacts = rows;
 
   // TODO [SHALMON]: there is no tags endpoint, so the dropdown is built from the
   // tags present on the contacts the API returned. Filtering by a tag keeps that
@@ -77,11 +70,8 @@ export default function ContactsPage() {
   const pagination = (data as { pagination?: { total?: number; limit?: number } } | undefined)
     ?.pagination;
   const pageSize = pagination?.limit ?? (data as { limit?: number } | undefined)?.limit ?? PAGE_SIZE;
-  const apiTotal =
+  const total =
     pagination?.total ?? (data as { total?: number } | undefined)?.total ?? rows.length;
-  // With the client-side source filter on, the API total no longer describes
-  // what's on screen — fall back to the visible count.
-  const total = source ? contacts.length : apiTotal;
 
   const selectClass = cn(inputClass, "sm:w-44 cursor-pointer bg-white");
 

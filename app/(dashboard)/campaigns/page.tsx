@@ -111,10 +111,19 @@ export default function CampaignsPage() {
     invalidate();
   };
 
-  const deleteCampaign = async (id: string, name: string) => {
+  const deleteCampaign = async (id: string, name: string, status: CampaignStatus) => {
+    if (status === "RUNNING") {
+      alert("Pause the campaign before deleting it.");
+      return;
+    }
     if (!confirm(`Delete campaign "${name}"? This cannot be undone.`)) return;
     await fetch(`/api/campaigns/${id}`, { method: "DELETE" });
     invalidate();
+  };
+
+  const duplicateCampaign = async (id: string) => {
+    const res = await fetch(`/api/campaigns/${id}/duplicate`, { method: "POST" });
+    if (res.ok) invalidate();
   };
 
   return (
@@ -237,7 +246,12 @@ export default function CampaignsPage() {
                             <Play className="h-4 w-4" />
                           )}
                         </Button>
-                        <Button variant="ghost" size="sm" aria-label="Duplicate campaign">
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          aria-label="Duplicate campaign"
+                          onClick={() => duplicateCampaign(c.id)}
+                        >
                           <Copy className="h-4 w-4" />
                         </Button>
                         <Button
@@ -245,8 +259,8 @@ export default function CampaignsPage() {
                           size="sm"
                           aria-label="Delete campaign"
                           className="text-rose-600 hover:bg-rose-50"
-                          onClick={() => deleteCampaign(c.id, c.name)}
-                          disabled={c.status !== "DRAFT"}
+                          onClick={() => deleteCampaign(c.id, c.name, c.status)}
+                          disabled={c.status === "RUNNING"}
                         >
                           <Trash2 className="h-4 w-4" />
                         </Button>

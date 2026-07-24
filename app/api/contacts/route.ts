@@ -18,6 +18,7 @@ export async function GET(req: NextRequest) {
   const limit = Math.min(100, parseInt(searchParams.get("limit") ?? "20"));
   const search = searchParams.get("search") ?? "";
   const tagId = searchParams.get("tagId") ?? "";
+  const source = searchParams.get("source") ?? "";
 
   const where = {
     tenantId: scope.tenantId,
@@ -31,6 +32,7 @@ export async function GET(req: NextRequest) {
       ],
     }),
     ...(tagId && { tags: { some: { tagId } } }),
+    ...(source && { source: { equals: source, mode: "insensitive" as const } }),
   };
 
   const [total, contacts] = await Promise.all([

@@ -8,7 +8,8 @@
       "Bash(git commit -m ' *)",
       "Read(//tmp/**)",
       "Bash(node -e \"const { PrismaClient } = require\\('@prisma/client'\\); const p = new PrismaClient\\(\\); console.log\\(Object.keys\\(p.tenantSettings.fields\\)\\)\")",
-      "Bash(echo \"Exit code: $?\")"
+      "Bash(echo \"Exit code: $?\")",
+      "Bash(python -c \"import sys,json; p=json.load\\(sys.stdin\\); deps={**p.get\\('dependencies',{}\\), **p.get\\('devDependencies',{}\\)}; print\\('pusher-js:', deps.get\\('pusher-js','NOT FOUND'\\)\\); print\\('pusher:', deps.get\\('pusher','NOT FOUND'\\)\\)\")"
     ],
     "additionalDirectories": [
       "C:\\tmp"
