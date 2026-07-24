@@ -74,8 +74,6 @@ export function useBusinesses(initialData?: BusinessesResponse) {
 }
 
 export function useSwitchBusiness() {
-  const queryClient = useQueryClient();
-  const router = useRouter();
   return useMutation({
     mutationFn: async (businessId: string) => {
       const res = await fetch("/api/businesses/switch", {
@@ -88,13 +86,10 @@ export function useSwitchBusiness() {
       return json;
     },
     onSuccess: () => {
-      // Switching business changes the ENTIRE CRM context. Dropping every cached
-      // query forces the inbox, contacts, leads, campaigns, templates, knowledge
-      // base and analytics to refetch under the newly selected business — no logout,
-      // no manual reload. router.refresh() re-runs the server components (sidebar
-      // badge, current-business label) against the new cookie.
-      queryClient.invalidateQueries();
-      router.refresh();
+      // Hard reload: the new business cookie is already set on the response, so
+      // every request in the fresh page load goes to the correct workspace with
+      // no stale cache entries from the previous business leaking through.
+      window.location.reload();
     },
   });
 }
