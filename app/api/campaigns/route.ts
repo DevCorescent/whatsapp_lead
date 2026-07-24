@@ -32,7 +32,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { CampaignStatus, Prisma } from "@prisma/client";
 import { z } from "zod";
 import { prisma } from "@/lib/prisma";
-import { getBusinessScope } from "@/lib/business";
+import { getBusinessScope, resolveWhatsAppCreds } from "@/lib/business";
 import { sendTextMessage } from "@/lib/whatsapp";
 
 /**
@@ -67,20 +67,16 @@ const CAMPAIGN_LIST_SELECT = {
 /**
  * The body of a campaign being launched.
  *
- * `strictObject` because the writable surface must be enforced rather than merely documented: a
- * permissive object would let `status`, `sentCount` or `tenantId` ride along in the payload and be
- * quietly dropped today — or quietly applied the first time someone spreads the parsed result into a
- * Prisma `data`.
- *
- * `contactIds` is required non-empty. A campaign with no audience is a client bug, and creating a
- * COMPLETED campaign that sent nothing would be a row that lies about what happened.
+ * Accepts either an explicit `contactIds` list or `all: true` (send to all active
+ * contacts for the business). Using a regular `z.object` rather than `z.strictObject`
+ * so that the UI can send either form without triggering schema validation failures.
  */
-const createCampaignSchema = z.strictObject({
+const createCampaignSchema = z.object({
   name: z.string().min(1, "Campaign name is required"),
   message: z.string().min(1, "Campaign message is required"),
-  contactIds: z
-    .array(z.string().min(1))
-    .nonempty("At least one contact is required"),
+  contactIds: z.array(z.string().min(1)).optional(),
+  all: z.boolean().optional(),
+  scheduledAt: z.string().optional(),
 });
 
 type CreateCampaignInput = z.infer<typeof createCampaignSchema>;
@@ -89,12 +85,6 @@ type CreateCampaignInput = z.infer<typeof createCampaignSchema>;
 interface CampaignRecipient {
   id: string;
   phone: string;
-}
-
-/** The WhatsApp credentials a tenant sends under. */
-interface WhatsAppCredentials {
-  phoneNumberId: string;
-  apiKey: string;
 }
 
 /** The tally a completed campaign reports back. */
@@ -143,31 +133,6 @@ async function resolveContacts(
   if (contacts.length !== contactIds.length) return null;
 
   return contacts;
-}
-
-/**
- * Resolve the tenant's WhatsApp credentials, or null when the workspace has not connected a number.
- *
- * Both columns are nullable in the schema — a workspace exists before it is wired to Meta — so an
- * unconfigured tenant is an ordinary state reported as a precondition failure, not an exception.
- *
- * `findUnique` is correct here and is the one place in this module that does not carry `tenantId` as
- * a filter: `TenantSettings.tenantId` is itself the unique key, so the lookup *is* the tenant scope.
- */
-async function resolveWhatsAppCredentials(
-  tenantId: string
-): Promise<WhatsAppCredentials | null> {
-  const settings = await prisma.tenantSettings.findUnique({
-    where: { tenantId },
-    select: { waPhoneNumberId: true, waApiKey: true },
-  });
-
-  if (!settings?.waPhoneNumberId || !settings.waApiKey) return null;
-
-  return {
-    phoneNumberId: settings.waPhoneNumberId,
-    apiKey: settings.waApiKey,
-  };
 }
 
 /**
@@ -292,7 +257,7 @@ async function updateCampaignContact(
  * discarded rather than stored somewhere it does not belong.
  */
 async function sendCampaign(
-  credentials: WhatsAppCredentials,
+  credentials: { phoneNumberId: string; apiKey: string },
   message: string,
   recipients: CampaignRecipient[]
 ): Promise<CampaignOutcome> {
@@ -410,7 +375,30 @@ export async function POST(req: NextRequest) {
 
     const input = parsed.data;
 
-    const contacts = await resolveContacts(tenantId, input.contactIds);
+    let contactIdList: string[];
+    if (input.all) {
+      const allContacts = await prisma.contact.findMany({
+        where: { tenantId, businessId },
+        select: { id: true },
+      });
+      contactIdList = allContacts.map((c) => c.id);
+      if (contactIdList.length === 0) {
+        return NextResponse.json(
+          { success: false, error: "No contacts in this business" },
+          { status: 400 }
+        );
+      }
+    } else {
+      if (!input.contactIds?.length) {
+        return NextResponse.json(
+          { success: false, error: "At least one contact is required" },
+          { status: 400 }
+        );
+      }
+      contactIdList = input.contactIds;
+    }
+
+    const contacts = await resolveContacts(tenantId, contactIdList);
     if (!contacts) {
       return NextResponse.json(
         { success: false, error: "One or more contacts could not be found" },
@@ -418,8 +406,8 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const credentials = await resolveWhatsAppCredentials(tenantId);
-    if (!credentials) {
+    const creds = await resolveWhatsAppCreds(businessId);
+    if (!creds.phoneNumberId || !creds.apiKey) {
       return NextResponse.json(
         {
           success: false,
@@ -428,6 +416,7 @@ export async function POST(req: NextRequest) {
         { status: 409 }
       );
     }
+    const credentials = { phoneNumberId: creds.phoneNumberId, apiKey: creds.apiKey };
 
     const campaign = await createCampaign(tenantId, businessId, input, contacts);
 

@@ -39,6 +39,7 @@ import {
 } from "@prisma/client";
 import type { Contact, Conversation, Message } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
+import { decryptSecret } from "@/lib/crypto";
 import { generateReply } from "@/lib/ai";
 import { retrieveContext } from "@/lib/rag";
 import { pusher, tenantChannel, PusherEvent } from "@/lib/pusher";
@@ -203,10 +204,27 @@ export type ResolvedTenant = Prisma.TenantSettingsGetPayload<{
  * @throws {Error} If no tenant has this number configured, or the resolved tenant is inactive.
  */
 async function resolveTenant(phoneNumberId: string): Promise<ResolvedTenant> {
-  const settings = await prisma.tenantSettings.findFirst({
+  // Primary path: TenantSettings (legacy, single-business)
+  let settings = await prisma.tenantSettings.findFirst({
     where: { waPhoneNumberId: phoneNumberId },
     include: { tenant: true },
   });
+  let businessId: string | null = null;
+
+  // Fallback path: Business table (multi-business)
+  if (!settings) {
+    const business = await prisma.business.findFirst({
+      where: { whatsappPhoneNumberId: phoneNumberId, tenant: { isActive: true } },
+      select: { id: true, tenantId: true },
+    });
+    if (business) {
+      businessId = business.id;
+      settings = await prisma.tenantSettings.findUnique({
+        where: { tenantId: business.tenantId },
+        include: { tenant: true },
+      });
+    }
+  }
 
   if (!settings) {
     throw new Error(
@@ -222,11 +240,14 @@ async function resolveTenant(phoneNumberId: string): Promise<ResolvedTenant> {
     );
   }
 
-  const business = await prisma.business.findFirst({
-    where: { whatsappPhoneNumberId: phoneNumberId, tenant: { isActive: true } },
-    select: { id: true },
-  });
-  const businessId = business?.id ?? `biz_${settings.tenantId}`;
+  // If not already set from the Business fallback, resolve businessId now
+  if (!businessId) {
+    const business = await prisma.business.findFirst({
+      where: { whatsappPhoneNumberId: phoneNumberId, tenant: { isActive: true } },
+      select: { id: true },
+    });
+    businessId = business?.id ?? `biz_${settings.tenantId}`;
+  }
 
   return { ...settings, businessId };
 }
@@ -521,9 +542,11 @@ async function markInboundAsRead(
   if (!tenant.waPhoneNumberId || !tenant.waApiKey) return;
 
   try {
+    const apiKey = decryptSecret(tenant.waApiKey);
+    if (!apiKey) return;
     await markMessageAsRead(
       tenant.waPhoneNumberId,
-      tenant.waApiKey,
+      apiKey,
       waMessageId
     );
   } catch (error) {

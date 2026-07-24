@@ -296,6 +296,7 @@ function NewTicketModal({ open, onClose }: { open: boolean; onClose: () => void 
   const queryClient = useQueryClient();
   const [subject, setSubject] = useState("");
   const [contact, setContact] = useState("");
+  const [contactId, setContactId] = useState("");
   const [priority, setPriority] = useState<TicketPriority>("MEDIUM");
   const [department, setDepartment] = useState(DEPARTMENTS[0]);
   const [sla, setSla] = useState("");
@@ -303,7 +304,7 @@ function NewTicketModal({ open, onClose }: { open: boolean; onClose: () => void 
   const [error, setError] = useState<string | null>(null);
 
   const create = useMutation({
-    mutationFn: async (data: { subject: string; priority: TicketPriority; department: string }) => {
+    mutationFn: async (data: { subject: string; priority: TicketPriority; department: string; contactId?: string }) => {
       const res = await fetch("/api/tickets", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -315,7 +316,7 @@ function NewTicketModal({ open, onClose }: { open: boolean; onClose: () => void 
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["tickets"] });
-      setSubject(""); setContact(""); setPriority("MEDIUM"); setDepartment(DEPARTMENTS[0]);
+      setSubject(""); setContact(""); setContactId(""); setPriority("MEDIUM"); setDepartment(DEPARTMENTS[0]);
       setSla(""); setDetails(""); setError(null);
       onClose();
     },
@@ -334,7 +335,7 @@ function NewTicketModal({ open, onClose }: { open: boolean; onClose: () => void 
         onSubmit={(e) => {
           e.preventDefault();
           setError(null);
-          create.mutate({ subject, priority, department });
+          create.mutate({ subject, priority, department, ...(contactId && { contactId }) });
         }}
       >
         <Field label="Subject" htmlFor="ticket-subject" required>
@@ -351,7 +352,7 @@ function NewTicketModal({ open, onClose }: { open: boolean; onClose: () => void 
           <input
             id="ticket-contact"
             value={contact}
-            onChange={(e) => setContact(e.target.value)}
+            onChange={(e) => { setContact(e.target.value); setContactId(e.target.value); }}
             className={inputClass}
             placeholder="Search by name or phone…"
           />

@@ -35,6 +35,7 @@ import { prisma } from "@/lib/prisma";
 
 /** The rolling windows the dashboard offers, and how many calendar days each spans. */
 const PERIOD_DAYS = {
+  "today": 1,
   "7d": 7,
   "30d": 30,
   "90d": 90,
@@ -56,7 +57,7 @@ const MILLISECONDS_PER_MINUTE = 60 * 1000;
  * there is no input a caller could supply to read another workspace's numbers.
  */
 const analyticsQuerySchema = z.object({
-  period: z.enum(["7d", "30d", "90d"]).default("30d"),
+  period: z.enum(["today", "7d", "30d", "90d"]).default("30d"),
 });
 
 type Period = z.infer<typeof analyticsQuerySchema>["period"];
@@ -81,6 +82,40 @@ interface LeadStageCount {
   count: number;
 }
 
+/** Period-over-period delta for each KPI (positive = up, negative = down). */
+interface AnalyticsDeltas {
+  totalConversations: number | null;
+  openConversations: number | null;
+  resolvedToday: number | null;
+  totalMessages: number | null;
+  avgResponseTimeMinutes: number | null;
+  totalLeads: number | null;
+  wonDeals: number | null;
+  conversionRate: number | null;
+}
+
+interface ScoreDistributionPoint {
+  label: string;
+  count: number;
+}
+
+interface CampaignPerformancePoint {
+  campaign: string;
+  sent: number;
+  delivered: number;
+  read: number;
+  replied: number;
+}
+
+interface AgentPerformanceRow {
+  id: string;
+  agent: string;
+  avatar: string | null;
+  conversations: number;
+  avgResponseTime: number;
+  resolved: number;
+}
+
 /** The dashboard payload. Shape is a contract with the client and does not vary by period. */
 interface AnalyticsResponse {
   totalConversations: number;
@@ -93,6 +128,10 @@ interface AnalyticsResponse {
   conversionRate: number;
   messagesChart: MessagesChartPoint[];
   leadsByStage: LeadStageCount[];
+  deltas: AnalyticsDeltas;
+  scoreDistribution: ScoreDistributionPoint[];
+  campaignPerformance: CampaignPerformancePoint[];
+  agentPerformance: AgentPerformanceRow[];
 }
 
 /**
@@ -382,6 +421,137 @@ function roundToTwoDecimals(value: number): number {
   return Math.round(value * 100) / 100;
 }
 
+/** The date range for the period immediately preceding the given range (same duration). */
+function priorDateRange(range: DateRange): DateRange {
+  const durationMs = range.days * MILLISECONDS_PER_DAY;
+  const to = new Date(range.from.getTime() - 1); // one ms before the current window
+  const from = new Date(to.getTime() - durationMs + 1);
+  return { from, to, days: range.days };
+}
+
+/**
+ * Compute period-over-period deltas for key metrics.
+ * A positive delta means the current period is higher than the prior period.
+ */
+async function getDeltas(
+  tenantId: string,
+  range: DateRange,
+  current: { totalConversations: number; openConversations: number; resolvedToday: number; totalMessages: number; avgResponseTimeMinutes: number; totalLeads: number; wonDeals: number; conversionRate: number }
+): Promise<AnalyticsDeltas> {
+  try {
+    const prior = priorDateRange(range);
+    const [priorConvs, priorMessages, priorLeads] = await Promise.all([
+      getConversationMetrics(tenantId, prior),
+      loadMessageActivity(tenantId, prior),
+      getLeadMetrics(tenantId, prior),
+    ]);
+    const priorAvgResponse = calculateAverageResponseTime(priorMessages);
+
+    const delta = (curr: number, prev: number): number | null => {
+      if (prev === 0 && curr === 0) return null;
+      if (prev === 0) return null;
+      return roundToTwoDecimals(((curr - prev) / prev) * 100);
+    };
+
+    return {
+      totalConversations: delta(current.totalConversations, priorConvs.totalConversations),
+      openConversations: delta(current.openConversations, priorConvs.openConversations),
+      resolvedToday: delta(current.resolvedToday, priorConvs.resolvedToday),
+      totalMessages: delta(current.totalMessages, priorMessages.length),
+      avgResponseTimeMinutes: delta(current.avgResponseTimeMinutes, priorAvgResponse),
+      totalLeads: delta(current.totalLeads, priorLeads.totalLeads),
+      wonDeals: delta(current.wonDeals, priorLeads.wonDeals),
+      conversionRate: delta(current.conversionRate, priorLeads.conversionRate),
+    };
+  } catch {
+    return {
+      totalConversations: null, openConversations: null, resolvedToday: null,
+      totalMessages: null, avgResponseTimeMinutes: null, totalLeads: null,
+      wonDeals: null, conversionRate: null,
+    };
+  }
+}
+
+/** Count leads grouped by scoreLabel. */
+async function getScoreDistribution(tenantId: string): Promise<ScoreDistributionPoint[]> {
+  try {
+    const groups = await prisma.lead.groupBy({
+      by: ["scoreLabel"],
+      where: { tenantId },
+      _count: { id: true },
+    });
+    return groups.map((g) => ({ label: g.scoreLabel, count: g._count.id }));
+  } catch {
+    return [];
+  }
+}
+
+/** Last 5 campaigns with delivery funnel stats. */
+async function getCampaignPerformance(tenantId: string): Promise<CampaignPerformancePoint[]> {
+  try {
+    const campaigns = await prisma.campaign.findMany({
+      where: { tenantId },
+      orderBy: { createdAt: "desc" },
+      take: 5,
+      select: {
+        name: true,
+        sentCount: true,
+        deliveredCount: true,
+        readCount: true,
+        repliedCount: true,
+      },
+    });
+    return campaigns.map((c) => ({
+      campaign: c.name,
+      sent: c.sentCount,
+      delivered: c.deliveredCount,
+      read: c.readCount,
+      replied: c.repliedCount,
+    }));
+  } catch {
+    return [];
+  }
+}
+
+/** Agents with count of resolved conversations assigned to them in the period. */
+async function getAgentPerformance(
+  tenantId: string,
+  range: DateRange
+): Promise<AgentPerformanceRow[]> {
+  try {
+    const agents = await prisma.user.findMany({
+      where: { tenantId, role: "AGENT", isActive: true },
+      select: {
+        id: true,
+        name: true,
+        avatar: true,
+        assignedConvs: {
+          where: {
+            tenantId,
+            createdAt: { gte: range.from, lte: range.to },
+          },
+          select: { id: true, status: true },
+        },
+      },
+    });
+
+    return agents.map((a) => {
+      const conversations = a.assignedConvs.length;
+      const resolved = a.assignedConvs.filter((c) => c.status === "RESOLVED").length;
+      return {
+        id: a.id,
+        agent: a.name,
+        avatar: a.avatar ?? null,
+        conversations,
+        avgResponseTime: 0,
+        resolved,
+      };
+    });
+  } catch {
+    return [];
+  }
+}
+
 /**
  * Assemble the dashboard payload.
  *
@@ -393,19 +563,34 @@ async function buildAnalyticsResponse(
   tenantId: string,
   range: DateRange
 ): Promise<AnalyticsResponse> {
-  const [conversations, messages, leads] = await Promise.all([
+  const [conversations, messages, leads, scoreDistribution, campaignPerformance, agentPerformance] = await Promise.all([
     getConversationMetrics(tenantId, range),
     loadMessageActivity(tenantId, range),
     getLeadMetrics(tenantId, range),
+    getScoreDistribution(tenantId),
+    getCampaignPerformance(tenantId),
+    getAgentPerformance(tenantId, range),
   ]);
 
-  return {
+  const totalMessages = messages.length;
+  const avgResponseTimeMinutes = calculateAverageResponseTime(messages);
+
+  const current = {
     ...conversations,
-    // Counted from rows already in hand rather than a sixth `count()` over the same predicate.
-    totalMessages: messages.length,
-    avgResponseTimeMinutes: calculateAverageResponseTime(messages),
+    totalMessages,
+    avgResponseTimeMinutes,
     ...leads,
+  };
+
+  const deltas = await getDeltas(tenantId, range, current);
+
+  return {
+    ...current,
     messagesChart: buildMessagesChart(messages, range),
+    deltas,
+    scoreDistribution,
+    campaignPerformance,
+    agentPerformance,
   };
 }
 

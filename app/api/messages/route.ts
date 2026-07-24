@@ -23,6 +23,7 @@ import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { pusher, tenantChannel, PusherEvent } from "@/lib/pusher";
 import { sendTextMessage } from "@/lib/whatsapp";
+import { resolveWhatsAppCreds } from "@/lib/business";
 import { sendMessageSchema } from "@/lib/validators/message";
 
 /**
@@ -57,41 +58,6 @@ async function resolveConversation(
     where: { id: conversationId, tenantId },
     include: { contact: true },
   });
-}
-
-/**
- * The WhatsApp credentials a tenant sends under.
- *
- * Kept as its own type so the send path can state, in its signature, that it will not run without
- * both halves — rather than threading two nullable columns through and null-checking at the point
- * of use.
- */
-interface WhatsAppCredentials {
-  phoneNumberId: string;
-  apiKey: string;
-}
-
-/**
- * Resolve the tenant's WhatsApp credentials, or null when the workspace has not connected a number.
- *
- * Both columns are nullable in the schema — a workspace exists before it is wired to Meta — so an
- * unconfigured tenant is an ordinary state, not an error, and is reported to the caller as a
- * precondition failure rather than an exception.
- */
-async function resolveWhatsAppCredentials(
-  tenantId: string
-): Promise<WhatsAppCredentials | null> {
-  const settings = await prisma.tenantSettings.findUnique({
-    where: { tenantId },
-    select: { waPhoneNumberId: true, waApiKey: true },
-  });
-
-  if (!settings?.waPhoneNumberId || !settings.waApiKey) return null;
-
-  return {
-    phoneNumberId: settings.waPhoneNumberId,
-    apiKey: settings.waApiKey,
-  };
 }
 
 /**
@@ -286,8 +252,8 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ success: true, data: note }, { status: 201 });
     }
 
-    const credentials = await resolveWhatsAppCredentials(tenantId);
-    if (!credentials) {
+    const creds = await resolveWhatsAppCreds(conversation.businessId);
+    if (!creds.phoneNumberId || !creds.apiKey) {
       return NextResponse.json(
         { success: false, error: "WhatsApp is not connected for this workspace" },
         { status: 409 }
@@ -295,8 +261,8 @@ export async function POST(req: NextRequest) {
     }
 
     const sent = await sendTextMessage(
-      credentials.phoneNumberId,
-      credentials.apiKey,
+      creds.phoneNumberId,
+      creds.apiKey,
       conversation.contact.phone,
       body
     );

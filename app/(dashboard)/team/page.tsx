@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   UserCog,
@@ -29,7 +29,7 @@ import { cn, formatCompact, timeAgo } from "@/lib/utils";
 
 // TODO [SHALMON]: GET /api/team + POST /api/team/invite (currently 501).
 
-type Member = User & { conversationCount?: number };
+type Member = User & { _count?: { assignedConvs?: number; assignedTickets?: number } };
 
 const ROLE_STYLE: Record<UserRole, string> = {
   SUPER_ADMIN: "bg-slate-900 text-white ring-slate-900/20",
@@ -90,8 +90,21 @@ function StatTile({
 }
 
 export default function TeamPage() {
+  const queryClient = useQueryClient();
   const { data, isLoading, isError } = useTeam();
   const [open, setOpen] = useState(false);
+  const [editingMember, setEditingMember] = useState<Member | null>(null);
+
+  const toggleActive = async (member: Member) => {
+    const label = member.isActive ? "deactivate" : "activate";
+    if (!confirm(`${label.charAt(0).toUpperCase() + label.slice(1)} ${member.name}?`)) return;
+    await fetch(`/api/team/${member.id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ isActive: !member.isActive }),
+    });
+    queryClient.invalidateQueries({ queryKey: ["team"] });
+  };
 
   const members = data ?? [];
   const stats = {
@@ -186,12 +199,12 @@ export default function TeamPage() {
                     <td className="px-4 py-3">
                       <span className="inline-flex items-center gap-1.5 tabular-nums text-slate-700">
                         <MessagesSquare className="h-3.5 w-3.5 text-slate-400" />
-                        {formatCompact(m.conversationCount ?? 0)}
+                        {formatCompact((m as any)._count?.assignedConvs ?? 0)}
                       </span>
                     </td>
                     <td className="px-4 py-3">
                       <div className="flex items-center justify-end gap-1">
-                        <Button variant="ghost" size="sm">
+                        <Button variant="ghost" size="sm" onClick={() => setEditingMember(m)}>
                           <UserCog className="h-4 w-4" />
                           Change role
                         </Button>
@@ -199,6 +212,7 @@ export default function TeamPage() {
                           variant="ghost"
                           size="sm"
                           className={m.isActive ? "text-rose-600 hover:bg-rose-50" : ""}
+                          onClick={() => toggleActive(m)}
                         >
                           {m.isActive ? (
                             <>
@@ -223,6 +237,7 @@ export default function TeamPage() {
       </Card>
 
       <InviteModal open={open} onClose={() => setOpen(false)} />
+      <ChangeRoleModal member={editingMember} onClose={() => setEditingMember(null)} />
     </div>
   );
 }
@@ -328,6 +343,46 @@ function InviteModal({ open, onClose }: { open: boolean; onClose: () => void }) 
           </Button>
         </div>
       </form>
+    </Modal>
+  );
+}
+
+function ChangeRoleModal({ member, onClose }: { member: Member | null; onClose: () => void }) {
+  const queryClient = useQueryClient();
+  const [role, setRole] = useState<UserRole>(member?.role ?? "AGENT");
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => { if (member) setRole(member.role); }, [member]);
+
+  const save = useMutation({
+    mutationFn: async () => {
+      const res = await fetch(`/api/team/${member!.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ role }),
+      });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error ?? "Failed");
+      return json;
+    },
+    onSuccess: () => { queryClient.invalidateQueries({ queryKey: ["team"] }); onClose(); },
+    onError: (err: Error) => setError(err.message),
+  });
+
+  return (
+    <Modal open={!!member} onClose={onClose} title="Change Role" description={`Update ${member?.name ?? ""}'s role.`}>
+      <div className="space-y-4">
+        <Field label="Role" htmlFor="change-role">
+          <select id="change-role" value={role} onChange={(e) => setRole(e.target.value as UserRole)} className={inputClass}>
+            {INVITABLE_ROLES.map((r) => <option key={r} value={r}>{ROLE_LABEL[r]}</option>)}
+          </select>
+        </Field>
+        {error && <p className="rounded-lg bg-rose-50 px-3 py-2 text-xs text-rose-700">{error}</p>}
+        <div className="flex justify-end gap-2">
+          <Button variant="secondary" onClick={onClose}>Cancel</Button>
+          <Button onClick={() => save.mutate()} disabled={save.isPending}>{save.isPending ? "Saving…" : "Save"}</Button>
+        </div>
+      </div>
     </Modal>
   );
 }
