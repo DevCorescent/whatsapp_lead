@@ -43,6 +43,8 @@ import { generateReply } from "@/lib/ai";
 import { retrieveContext } from "@/lib/rag";
 import { pusher, tenantChannel, PusherEvent } from "@/lib/pusher";
 import { markMessageAsRead, sendTextMessage } from "@/lib/whatsapp";
+import { runFlowStep, type FlowVariables } from "@/lib/chatbot/engine";
+import { toFlowDocument } from "@/lib/chatbot/types";
 import type {
   WAChange,
   WAEntry,
@@ -652,6 +654,111 @@ async function saveOutboundMessage(
 }
 
 /**
+ * Execute a chatbot flow for an inbound message and return whether a flow ran.
+ *
+ * Two entry paths:
+ * - The conversation already has an active flow session (resumed mid-Q&A): resume
+ *   from the paused question node, passing the user's reply as input.
+ * - No active session: match the message text against keyword triggers of all
+ *   published flows; start from the beginning of the first match.
+ *
+ * Each action the engine emits is sent to the customer immediately, in order.
+ * When the engine pauses on a Question node, the session state (flow id, node id,
+ * collected variables) is written back to the conversation so the next inbound
+ * message continues the same flow. When the flow ends, the session is cleared.
+ */
+async function executeFlow(
+  tenant: ResolvedTenant,
+  conversation: Conversation & { activeFlowId?: string | null; activeNodeId?: string | null; flowVars?: Prisma.JsonValue },
+  contact: Contact,
+  inboundText: string | null,
+): Promise<boolean> {
+  if (!tenant.waPhoneNumberId || !tenant.waApiKey) return false;
+
+  let flowId: string | null = conversation.activeFlowId ?? null;
+  let fromNodeId: string | undefined = conversation.activeNodeId ?? undefined;
+  let vars: FlowVariables = (conversation.flowVars as FlowVariables | null) ?? {};
+  const isResuming = Boolean(flowId && fromNodeId);
+
+  // Match a new flow by keyword when no session is active.
+  if (!isResuming) {
+    if (!inboundText) return false;
+    const normalised = inboundText.toLowerCase().trim();
+
+    const activeFlows = await prisma.chatbotFlow.findMany({
+      where: { tenantId: tenant.tenantId, isActive: true },
+      select: { id: true, keywords: true, nodes: true, edges: true },
+    });
+
+    const matched = activeFlows.find((f) =>
+      f.keywords.some((kw) => normalised.includes(kw.toLowerCase())),
+    );
+    if (!matched) return false;
+
+    flowId = matched.id;
+    fromNodeId = undefined;
+    vars = {};
+  }
+
+  const flow = await prisma.chatbotFlow.findFirst({
+    where: { id: flowId!, tenantId: tenant.tenantId },
+  });
+  if (!flow) {
+    // Stale session — clear it.
+    await prisma.conversation.update({
+      where: { id: conversation.id },
+      data: { activeFlowId: null, activeNodeId: null, flowVars: Prisma.JsonNull },
+    });
+    return false;
+  }
+
+  const doc = toFlowDocument(flow.nodes, flow.edges);
+  const result = await runFlowStep(doc, {
+    fromNodeId,
+    input: isResuming ? (inboundText ?? "") : undefined,
+    variables: vars,
+  });
+
+  // Send every message action to the customer.
+  for (const action of result.actions) {
+    if ((action.type === "message" || action.type === "ai") && action.text) {
+      try {
+        await sendTextMessage(tenant.waPhoneNumberId!, tenant.waApiKey!, contact.phone, action.text);
+      } catch (err) {
+        console.error("[FLOW] Failed to send message:", err);
+      }
+    }
+  }
+
+  // Persist or clear session state.
+  if (result.status === "awaiting_input" && result.awaitingQuestionId) {
+    await prisma.conversation.update({
+      where: { id: conversation.id },
+      data: {
+        activeFlowId: flow.id,
+        activeNodeId: result.awaitingQuestionId,
+        flowVars: result.variables as Prisma.InputJsonValue,
+      },
+    });
+  } else {
+    await prisma.conversation.update({
+      where: { id: conversation.id },
+      data: { activeFlowId: null, activeNodeId: null, flowVars: Prisma.JsonNull },
+    });
+
+    // Handoff: assign to a human, disable AI active flag.
+    if (result.handoff) {
+      await prisma.conversation.update({
+        where: { id: conversation.id },
+        data: { isAiActive: false },
+      });
+    }
+  }
+
+  return true;
+}
+
+/**
  * Draft and send an AI reply to an inbound message, when the tenant has asked us to.
  *
  * Gated on `aiEnabled` *and* `autoReply`. `aiEnabled` is the workspace's master switch: a tenant who
@@ -852,11 +959,18 @@ async function processIncomingMessage(
     contactName
   );
 
-  const conversation = await findOrCreateConversation(
-    tenant.tenantId,
-    tenant.businessId,
-    contact.id
-  );
+  // Fetch conversation with flow session fields so executeFlow can resume mid-Q&A.
+  const existingConv = await prisma.conversation.findFirst({
+    where: { tenantId: tenant.tenantId, contactId: contact.id },
+    orderBy: { createdAt: "desc" },
+    select: { id: true, activeFlowId: true, activeNodeId: true, flowVars: true },
+  });
+
+  const conversation = existingConv
+    ? await prisma.conversation.findUnique({ where: { id: existingConv.id } })!
+    : await prisma.conversation.create({ data: { tenantId: tenant.tenantId, businessId: tenant.businessId, contactId: contact.id } });
+
+  if (!conversation) throw new Error("Failed to resolve conversation");
 
   const { message: saved, isNew } = await saveInboundMessage(
     tenant.tenantId,
@@ -867,7 +981,17 @@ async function processIncomingMessage(
   if (isNew) {
     await markInboundAsRead(tenant, message.id);
     await broadcastMessage(tenant.tenantId, saved);
-    await handleAutoReply(tenant, conversation, contact);
+
+    // Flow execution takes priority over generic AI auto-reply.
+    const flowHandled = await executeFlow(
+      tenant,
+      { ...conversation, activeFlowId: existingConv?.activeFlowId ?? null, activeNodeId: existingConv?.activeNodeId ?? null, flowVars: existingConv?.flowVars ?? null },
+      contact,
+      extractContent(message),
+    );
+    if (!flowHandled) {
+      await handleAutoReply(tenant, conversation, contact);
+    }
   }
 
   return { tenant, contact, conversation, message: saved };
