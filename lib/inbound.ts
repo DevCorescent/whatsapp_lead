@@ -29,7 +29,7 @@ import {
 } from "@prisma/client";
 import type { Contact, Conversation, Message } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
-import { ensureDefaultBusiness } from "@/lib/business";
+import { ensureDefaultBusiness, resolveWhatsAppCreds } from "@/lib/business";
 import { decryptSecret } from "@/lib/crypto";
 import { generateReply } from "@/lib/ai";
 import { retrieveContext } from "@/lib/rag";
@@ -630,7 +630,8 @@ async function executeFlow(
   contact: Contact,
   inboundText: string | null,
 ): Promise<boolean> {
-  if (!tenant.waPhoneNumberId || !tenant.waApiKey) return false;
+  const flowCreds = await resolveWhatsAppCreds(tenant.businessId);
+  if (!flowCreds.phoneNumberId || !flowCreds.apiKey) return false;
 
   let flowId: string | null = conversation.activeFlowId ?? null;
   let fromNodeId: string | undefined = conversation.activeNodeId ?? undefined;
@@ -680,7 +681,7 @@ async function executeFlow(
   for (const action of result.actions) {
     if ((action.type === "message" || action.type === "ai") && action.text) {
       try {
-        await sendTextMessage(tenant.waPhoneNumberId!, tenant.waApiKey!, contact.phone, action.text);
+        await sendTextMessage(flowCreds.phoneNumberId, flowCreds.apiKey, contact.phone, action.text);
       } catch (err) {
         console.error("[FLOW] Failed to send message:", err);
       }
@@ -816,9 +817,10 @@ export async function handleAutoReply(
 ): Promise<void> {
   if (!tenant.aiEnabled || !tenant.autoReply) return;
 
-  if (!tenant.waPhoneNumberId || !tenant.waApiKey) {
+  const creds = await resolveWhatsAppCreds(tenant.businessId);
+  if (!creds.phoneNumberId || !creds.apiKey) {
     console.warn(
-      `[WEBHOOK] Auto-reply enabled for tenant ${tenant.tenantId} but WhatsApp credentials are missing`
+      `[INBOUND] Auto-reply enabled for tenant ${tenant.tenantId} but WhatsApp credentials are missing on business ${tenant.businessId}`
     );
     return;
   }
@@ -886,8 +888,8 @@ export async function handleAutoReply(
   let waMessageId: string | null;
   try {
     const sent = await sendTextMessage(
-      tenant.waPhoneNumberId,
-      tenant.waApiKey,
+      creds.phoneNumberId,
+      creds.apiKey,
       contact.phone,
       reply
     );
