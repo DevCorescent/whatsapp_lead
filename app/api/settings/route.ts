@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { auth } from "@/lib/auth";
+import { invalidateCredsCache, invalidateTenantCache } from "@/lib/cache";
 import { prisma } from "@/lib/prisma";
 
 const patchSchema = z.object({
@@ -62,11 +63,57 @@ export async function PATCH(req: NextRequest) {
 
     const data = parsed.data;
 
+    // Read before the write. The upsert replaces the number in place, and it is the entry cached
+    // under the OLD number that would go on routing inbound messages to this tenant — once the
+    // update has happened there is no way to learn what that number was.
+    const previous = await prisma.tenantSettings.findUnique({
+      where: { tenantId },
+      select: { waPhoneNumberId: true },
+    });
+
     const settings = await prisma.tenantSettings.upsert({
       where: { tenantId },
       create: { tenantId, ...data },
       update: data,
     });
+
+    // Only when something the cache actually depends on has moved. `waWebhookVerifyToken` is
+    // deliberately absent: it is used during Meta's subscription handshake and appears in neither
+    // cached value, so changing it invalidates nothing.
+    const whatsappChanged =
+      data.waPhoneNumberId !== undefined ||
+      data.waApiKey !== undefined ||
+      data.waBusinessAccountId !== undefined;
+
+    // Contained as a whole. The invalidation helpers cannot throw, but the lookup below is a
+    // database call that can — and by this point the settings have already been saved. Letting it
+    // reach the outer catch would answer 500 for a write that succeeded, sending the user to
+    // retry a change that already landed. Cache maintenance must not decide the outcome of a
+    // completed write, so a failure here is logged and the stale entries are left to their TTL.
+    if (whatsappChanged) {
+      try {
+        // Both numbers, old first — the old entry is the one that can misroute, and the new one
+        // may still be cached against whichever workspace held it previously.
+        if (previous?.waPhoneNumberId) {
+          await invalidateTenantCache(previous.waPhoneNumberId);
+        }
+        if (settings.waPhoneNumberId && settings.waPhoneNumberId !== previous?.waPhoneNumberId) {
+          await invalidateTenantCache(settings.waPhoneNumberId);
+        }
+
+        // TenantSettings is the fallback credential source in resolveWhatsAppCreds: any business
+        // that has not set its own number or token reads these values. A change here can therefore
+        // stale the cached credentials of every business in the tenant, not just one, so all of
+        // them are dropped. Businesses with their own credentials are unaffected by the re-resolve.
+        const businesses = await prisma.business.findMany({
+          where: { tenantId },
+          select: { id: true },
+        });
+        await Promise.all(businesses.map((business) => invalidateCredsCache(business.id)));
+      } catch (error) {
+        console.error("[SETTINGS PATCH] Cache invalidation failed after a successful save:", error);
+      }
+    }
 
     // Also allow updating tenant name/logo via same endpoint
     const tenantBody = body as Record<string, unknown>;

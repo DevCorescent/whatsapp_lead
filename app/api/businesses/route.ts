@@ -10,6 +10,7 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { getBusinessScope, listBusinesses, publicBusiness, uniqueBusinessSlug } from "@/lib/business";
+import { invalidateTenantCache } from "@/lib/cache";
 import { prisma } from "@/lib/prisma";
 import { encryptSecret } from "@/lib/crypto";
 import { createBusinessSchema } from "@/lib/validators/business";
@@ -82,6 +83,14 @@ export async function POST(req: NextRequest) {
         whatsappAccessToken: whatsappAccessToken ? encryptSecret(whatsappAccessToken) : null,
       },
     });
+
+    // A number can be reconnected after being freed by another business, in which case the routing
+    // entry cached against its previous owner is still live and would send this workspace's
+    // inbound messages there. No credentials cache is dropped: the id was generated a moment ago,
+    // so no entry can exist under it yet.
+    if (business.whatsappPhoneNumberId) {
+      await invalidateTenantCache(business.whatsappPhoneNumberId);
+    }
 
     await prisma.auditLog.create({
       data: {

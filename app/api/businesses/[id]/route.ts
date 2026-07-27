@@ -10,6 +10,7 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { getBusinessScope, publicBusiness, CURRENT_BUSINESS_COOKIE } from "@/lib/business";
+import { invalidateCredsCache, invalidateTenantCache } from "@/lib/cache";
 import { prisma } from "@/lib/prisma";
 import { encryptSecret } from "@/lib/crypto";
 import { updateBusinessSchema } from "@/lib/validators/business";
@@ -72,6 +73,29 @@ export async function PATCH(req: NextRequest, { params }: Params) {
       },
     });
 
+    // The row has changed; the cache still holds what it used to say. Both keys this business can
+    // be reached under are dropped here, immediately after the write and before the response, so
+    // the next webhook delivery and the next campaign send both resolve from Postgres.
+    //
+    // Placed ahead of the audit log deliberately: if that write were to fail, the cache would
+    // otherwise be left describing credentials that no longer exist.
+    await invalidateCredsCache(business.id);
+
+    // The old number first. It is the entry that would keep routing inbound messages to this
+    // business after it has stopped owning that number — and if the number has since been claimed
+    // by another workspace, that is a cross-tenant misroute, not merely stale data.
+    if (existing.whatsappPhoneNumberId) {
+      await invalidateTenantCache(existing.whatsappPhoneNumberId);
+    }
+
+    // Then the new one, which may still be cached against whichever business held it before.
+    if (
+      business.whatsappPhoneNumberId &&
+      business.whatsappPhoneNumberId !== existing.whatsappPhoneNumberId
+    ) {
+      await invalidateTenantCache(business.whatsappPhoneNumberId);
+    }
+
     await prisma.auditLog.create({
       data: {
         tenantId: scope.tenantId,
@@ -112,6 +136,15 @@ export async function DELETE(req: NextRequest, { params }: Params) {
 
   try {
     await prisma.business.delete({ where: { id } });
+
+    // A cached entry now points at a business that no longer exists. `businessId` is a foreign key
+    // on every Contact and Conversation the webhook creates, so leaving the routing entry in place
+    // would not merely serve stale data — inbound messages for that number would fail the
+    // constraint and be dropped until the TTL expired.
+    await invalidateCredsCache(id);
+    if (existing.whatsappPhoneNumberId) {
+      await invalidateTenantCache(existing.whatsappPhoneNumberId);
+    }
 
     await prisma.auditLog.create({
       data: {

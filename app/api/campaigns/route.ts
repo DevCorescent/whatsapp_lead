@@ -16,36 +16,25 @@
 //
 // A campaign is a one-to-many send over contacts the webhook already created. The send is the
 // irreversible part of this module — a message that reaches a customer cannot be un-reached — so the
-// route proves ownership of every recipient before it dispatches anything, and records the outcome
-// of each individual send rather than the outcome of the batch.
+// route proves ownership of every recipient before it dispatches anything.
 //
-// The schema does not model everything this flow would like to record. Two adaptations, made rather
-// than inventing columns:
+// This route no longer performs the send. It proves the preconditions, writes the campaign and its
+// recipients, and publishes one QStash job per recipient; /api/workers/campaign-send does the
+// sending. The loop that used to run here held the HTTP request open for the entire broadcast, so a
+// large audience met the serverless timeout mid-way and left the campaign permanently RUNNING and
+// half sent, with no way to resume. One job per recipient makes each send individually retryable and
+// removes the request-path ceiling on audience size.
 //
-//   - `Campaign` has no body column (it models `templateId`, not free text), so the broadcast text
-//     is stored in the `metadata` Json column the schema provides for exactly this.
-//   - `CampaignContact` has no `waMessageId` column, so Meta's message id is not persisted per
-//     recipient. The consequence is that the webhook's delivery receipts cannot be correlated back
-//     to a campaign row, which is why `deliveredCount` / `readCount` on Campaign stay at zero.
+// `Campaign` has no body column (it models `templateId`, not free text), so the broadcast text is
+// stored in the `metadata` Json column the schema provides for exactly this, and travels to the
+// worker on the job — resolved once here, never re-read on a retry.
 
 import { NextRequest, NextResponse } from "next/server";
 import { CampaignStatus, Prisma } from "@prisma/client";
 import { z } from "zod";
 import { prisma } from "@/lib/prisma";
 import { getBusinessScope, resolveWhatsAppCreds } from "@/lib/business";
-import { sendTextMessage } from "@/lib/whatsapp";
-
-/**
- * Per-recipient delivery states.
- *
- * `CampaignContact.status` is a plain String in the schema, not an enum, so the vocabulary lives
- * here as constants rather than as magic strings scattered through the send loop. PENDING is the
- * column's own default and is never written explicitly.
- */
-const CampaignContactStatus = {
-  SENT: "SENT",
-  FAILED: "FAILED",
-} as const;
+import { publishCampaignSend } from "@/lib/queue";
 
 /**
  * Columns the campaigns list actually renders.
@@ -85,12 +74,6 @@ type CreateCampaignInput = z.infer<typeof createCampaignSchema>;
 interface CampaignRecipient {
   id: string;
   phone: string;
-}
-
-/** The tally a completed campaign reports back. */
-interface CampaignOutcome {
-  sentCount: number;
-  failedCount: number;
 }
 
 /**
@@ -213,115 +196,30 @@ async function loadCampaignRecipients(
 }
 
 /**
- * Record the outcome of a single recipient's send.
+ * Hand every recipient to the queue, one job each.
  *
- * Written per recipient rather than batched at the end of the loop, because the loop is the part of
- * this route most likely to be cut short — a serverless timeout mid-broadcast leaves the campaign
- * half-sent, and a database that recorded the first half is the only thing that makes the rest
- * recoverable. Buffering the results in memory would lose exactly the information needed to resume.
+ * Published sequentially rather than with `Promise.all`: this is a loop of HTTP calls to QStash, and
+ * firing a thousand at once would rate-limit the publish itself. It is not the send rate limiter —
+ * that concern now belongs to the worker, which receives one message per job.
  *
- * `failedReason` is the schema's column; there is no `errorMessage`. Meta's error text is stored
- * as-is for an operator to read, and is never returned to the caller — it embeds account identifiers
- * and token hints.
+ * The message text is resolved once, here, and travels on each job. Nothing is re-read at send time,
+ * so a retry of any recipient sends byte-identical text to the first attempt.
  */
-async function updateCampaignContact(
-  campaignContactId: string,
-  outcome: { sent: true; waMessageId: string | null } | { sent: false; reason: string }
-): Promise<void> {
-  await prisma.campaignContact.update({
-    where: { id: campaignContactId },
-    data: outcome.sent
-      ? {
-          status: CampaignContactStatus.SENT,
-          sentAt: new Date(),
-          // Meta's id for this send. Delivery receipts arrive keyed by it, so storing it here is
-          // what lets the webhook attribute a `delivered`/`read` callback back to this recipient.
-          waMessageId: outcome.waMessageId,
-        }
-      : {
-          status: CampaignContactStatus.FAILED,
-          failedReason: outcome.reason,
-        },
-  });
-}
-
-/**
- * Work through the audience, one message at a time.
- *
- * Sequential by requirement, not by omission. `Promise.all` over a thousand recipients would open a
- * thousand concurrent connections to Meta and breach the Cloud API's rate limits within a second —
- * the failure mode is not a slow campaign but a throttled, and eventually suspended, business number.
- * The loop is the rate limiter.
- *
- * A failed send is a per-recipient outcome, not a campaign outcome: one wrong number must not stop
- * the other nine hundred and ninety-nine messages. The catch is therefore inside the loop, and the
- * loop always runs to completion.
- *
- * No transaction wraps any of this. Holding one open across a network call to Meta would pin a
- * database connection for the entire broadcast, and a rollback would undo delivery records for
- * messages the customers have already received.
- *
- * Meta's message id *is* persisted, onto `CampaignContact.waMessageId`. It is the only key a delivery
- * receipt carries, so without it the `delivered`/`read`/`replied` columns this module already
- * declares could never be filled — see the webhook's status handler, which reads it back.
- */
-async function sendCampaign(
-  credentials: { phoneNumberId: string; apiKey: string },
+async function publishCampaign(
+  campaignId: string,
+  businessId: string,
   message: string,
   recipients: CampaignRecipient[]
-): Promise<CampaignOutcome> {
-  let sentCount = 0;
-  let failedCount = 0;
-
-  for (const recipient of recipients) {
-    try {
-      const sent = await sendTextMessage(
-        credentials.phoneNumberId,
-        credentials.apiKey,
-        recipient.phone,
-        message
-      );
-
-      await updateCampaignContact(recipient.id, {
-        sent: true,
-        waMessageId: sent.messages?.[0]?.id ?? null,
-      });
-      sentCount += 1;
-    } catch (error) {
-      const reason = error instanceof Error ? error.message : "Unknown error";
-
-      await updateCampaignContact(recipient.id, { sent: false, reason });
-      failedCount += 1;
-    }
-  }
-
-  return { sentCount, failedCount };
-}
-
-/**
- * Close the campaign out with what actually happened.
- *
- * The counters are written once, from the loop's own tally, rather than incremented per send: a
- * campaign row updated a thousand times would serialise a thousand writes against one row for
- * numbers nobody reads until the end.
- *
- * COMPLETED means "the loop finished", not "every message succeeded" — a campaign in which every
- * recipient failed is still a campaign that ran, and `failedCount` is where that is said. Conflating
- * the two would leave an operator unable to tell a finished campaign from an interrupted one.
- */
-async function completeCampaign(
-  campaignId: string,
-  outcome: CampaignOutcome
 ): Promise<void> {
-  await prisma.campaign.update({
-    where: { id: campaignId },
-    data: {
-      status: CampaignStatus.COMPLETED,
-      completedAt: new Date(),
-      sentCount: outcome.sentCount,
-      failedCount: outcome.failedCount,
-    },
-  });
+  for (const recipient of recipients) {
+    await publishCampaignSend({
+      campaignId,
+      recipientId: recipient.id,
+      phone: recipient.phone,
+      message,
+      businessId,
+    });
+  }
 }
 
 /**
@@ -428,7 +326,6 @@ export async function POST(req: NextRequest) {
         { status: 409 }
       );
     }
-    const credentials = { phoneNumberId: creds.phoneNumberId, apiKey: creds.apiKey };
 
     // A schedule in the future defers the send; one already past is treated as "send now", which is
     // what a user who picked a moment that has since elapsed means. An unparseable value is rejected
@@ -466,18 +363,21 @@ export async function POST(req: NextRequest) {
     }
 
     const recipients = await loadCampaignRecipients(tenantId, campaign.id);
-    const outcome = await sendCampaign(credentials, input.message, recipients);
 
-    await completeCampaign(campaign.id, outcome);
+    await publishCampaign(campaign.id, businessId, input.message, recipients);
 
+    // The counters are zero because nothing has been sent yet, not because nothing will be. The
+    // campaign is RUNNING and the worker moves `sentCount`/`failedCount` as each job lands, then
+    // marks it COMPLETED once no recipient is still in flight. This matches the shape the scheduled
+    // branch above has always returned.
     return NextResponse.json(
       {
         success: true,
         data: {
           campaignId: campaign.id,
           total: recipients.length,
-          sentCount: outcome.sentCount,
-          failedCount: outcome.failedCount,
+          sentCount: 0,
+          failedCount: 0,
         },
       },
       { status: 201 }

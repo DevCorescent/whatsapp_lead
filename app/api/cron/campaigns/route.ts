@@ -1,10 +1,15 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { resolveWhatsAppCreds } from "@/lib/business";
-import { sendTextMessage } from "@/lib/whatsapp";
+import { publishCampaignSend } from "@/lib/queue";
 
-// Vercel Cron calls this every minute. It finds SCHEDULED campaigns whose
-// scheduledAt has passed and sends their messages.
+// Vercel Cron calls this every minute. It finds SCHEDULED campaigns whose scheduledAt has passed
+// and publishes one job per pending recipient.
+//
+// This route triggers a campaign; it does not send it. Sending belongs to
+// /api/workers/campaign-send, which is the single path a campaign message can take — the same one
+// an immediate campaign from /api/campaigns uses. The inline loop that used to live here was a
+// second, parallel implementation of sending, with its own credential handling, its own one-attempt
+// failure semantics and its own counters, none of which matched the worker's.
 export async function GET(req: NextRequest) {
   // Protect the cron endpoint from public access
   const authHeader = req.headers.get("authorization");
@@ -34,70 +39,41 @@ export async function GET(req: NextRequest) {
   let totalProcessed = 0;
 
   for (const campaign of dueCampaigns) {
-    // Same resolver the interactive send path uses, so a campaign scheduled from a business with
-    // its own WhatsApp number goes out on that number instead of falling back to the workspace's.
-    const creds = await resolveWhatsAppCreds(campaign.businessId);
-
     // Mark RUNNING
     await prisma.campaign.update({
       where: { id: campaign.id },
       data: { status: "RUNNING", startedAt: now },
     });
 
-    // No channel to send on. Recording every recipient as FAILED is the honest outcome: the
-    // previous behaviour marked them SENT without a send having happened, which reported a
-    // successful broadcast that no customer ever received.
-    if (!creds.phoneNumberId || !creds.apiKey) {
-      const failedIds = campaign.contacts.map((cc) => cc.id);
-      await prisma.campaignContact.updateMany({
-        where: { id: { in: failedIds } },
-        data: { status: "FAILED", failedReason: "WhatsApp is not connected for this workspace" },
-      });
+    // A campaign whose recipients have all already settled would have no job left to close it out,
+    // so it is completed here rather than left RUNNING forever.
+    if (campaign.contacts.length === 0) {
       await prisma.campaign.update({
         where: { id: campaign.id },
-        data: {
-          status: "COMPLETED",
-          completedAt: new Date(),
-          sentCount: 0,
-          failedCount: failedIds.length,
-        },
+        data: { status: "COMPLETED", completedAt: new Date() },
       });
       totalProcessed++;
       continue;
     }
-
-    let sent = 0;
-    let failed = 0;
 
     const message =
       campaign.metadata && typeof campaign.metadata === "object"
         ? ((campaign.metadata as Record<string, string>).message ?? "Hello from WhatsCRM")
         : "Hello from WhatsCRM";
 
+    // Credentials are deliberately not resolved here. The worker resolves them per recipient and,
+    // when a workspace has no connected number, settles that recipient FAILED with the same reason
+    // this route used to write in bulk — reaching the same end state through one implementation
+    // instead of two.
     for (const cc of campaign.contacts) {
-      const phone = cc.contact?.phone ?? cc.phone;
-      try {
-        const res = await sendTextMessage(creds.phoneNumberId, creds.apiKey, phone, message);
-        // Stored so the webhook can attribute delivery receipts back to this recipient.
-        const waMessageId = res.messages?.[0]?.id ?? null;
-        await prisma.campaignContact.update({
-          where: { id: cc.id },
-          data: { status: "SENT", sentAt: now, waMessageId },
-        });
-        sent++;
-      } catch {
-        await prisma.campaignContact.update({
-          where: { id: cc.id },
-          data: { status: "FAILED", failedReason: "Send failed" },
-        });
-        failed++;
-      }
+      await publishCampaignSend({
+        campaignId: campaign.id,
+        recipientId: cc.id,
+        phone: cc.contact?.phone ?? cc.phone,
+        message,
+        businessId: campaign.businessId,
+      });
     }
-
-    await prisma.campaign.update({
-      where: { id: campaign.id },
-      data: { status: "COMPLETED", completedAt: new Date(), sentCount: sent, failedCount: failed },
-    });
 
     totalProcessed++;
   }
