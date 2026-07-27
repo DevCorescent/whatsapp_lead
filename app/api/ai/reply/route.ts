@@ -51,7 +51,7 @@ export async function POST(req: NextRequest) {
 
     // RAG: retrieve only the chunks relevant to the customer's latest question.
     const lastCustomerMsg = [...messages].reverse().find((m) => m.role === "user")?.content ?? "";
-    const knowledgeContext = await retrieveContext(tenantId, lastCustomerMsg);
+    const knowledgeContext = await retrieveContext(tenantId, conversation.businessId, lastCustomerMsg);
 
     const systemPrompt = "You are a helpful WhatsApp CRM assistant. Suggest a concise, professional reply to the customer's last message.";
     const reply = await generateReply(messages, systemPrompt, knowledgeContext, settings?.aiModel);

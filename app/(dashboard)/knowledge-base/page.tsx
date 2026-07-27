@@ -3,6 +3,7 @@
 import { useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
+  AlertCircle,
   BookOpen,
   FileText,
   UploadCloud,
@@ -28,6 +29,28 @@ import {
 import { cn, formatDate } from "@/lib/utils";
 
 
+/**
+ * Indexing status, as the upload route and the worker record it on `metadata`.
+ *
+ * Kept in the existing Json column rather than added to the schema. A document is PROCESSING from
+ * the moment it is stored until the worker finishes, so the list has something true to show while
+ * the queue works instead of implying the upload is still running.
+ */
+type DocStatus = "PROCESSING" | "INDEXED" | "FAILED";
+
+function readStatus(doc: KnowledgeDoc): { status: DocStatus; error?: string } {
+  const meta = doc.metadata;
+  if (meta && typeof meta === "object" && !Array.isArray(meta)) {
+    const raw = (meta as Record<string, unknown>).status;
+    if (raw === "PROCESSING" || raw === "INDEXED" || raw === "FAILED") {
+      const error = (meta as Record<string, unknown>).error;
+      return { status: raw, error: typeof error === "string" ? error : undefined };
+    }
+  }
+  // Documents uploaded before status tracking existed carry no marker; fall back to the flag.
+  return { status: doc.isIndexed ? "INDEXED" : "PROCESSING" };
+}
+
 function useKnowledgeDocs() {
   return useQuery<KnowledgeDoc[]>({
     queryKey: ["knowledge"],
@@ -38,6 +61,11 @@ function useKnowledgeDocs() {
       return Array.isArray(json) ? json : (json.data ?? []);
     },
     retry: false,
+    // Indexing happens in a worker, so the row changes without the user doing anything. Polled
+    // only while something is actually in flight — once every document has settled the interval
+    // stops, so an idle knowledge base costs no requests.
+    refetchInterval: (query) =>
+      (query.state.data ?? []).some((d) => readStatus(d).status === "PROCESSING") ? 3000 : false,
   });
 }
 
@@ -151,17 +179,34 @@ export default function KnowledgeBasePage() {
               </div>
 
               <div className="mt-4 flex items-center justify-between border-t border-slate-100 pt-3 text-xs">
-                {doc.isIndexed ? (
-                  <span className="inline-flex items-center gap-1 font-medium text-emerald-700">
-                    <CheckCircle2 className="h-3.5 w-3.5" />
-                    Indexed
-                  </span>
-                ) : (
-                  <span className="inline-flex items-center gap-1 font-medium text-amber-700">
-                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                    Indexing…
-                  </span>
-                )}
+                {(() => {
+                  const { status, error } = readStatus(doc);
+                  if (status === "INDEXED")
+                    return (
+                      <span className="inline-flex items-center gap-1 font-medium text-emerald-700">
+                        <CheckCircle2 className="h-3.5 w-3.5" />
+                        Indexed
+                      </span>
+                    );
+                  // A failed document used to render the same endless spinner as one still being
+                  // worked on, so a file the AI could never read looked like it was about to be.
+                  if (status === "FAILED")
+                    return (
+                      <span
+                        className="inline-flex items-center gap-1 font-medium text-rose-700"
+                        title={error ?? "Indexing failed"}
+                      >
+                        <AlertCircle className="h-3.5 w-3.5" />
+                        Failed
+                      </span>
+                    );
+                  return (
+                    <span className="inline-flex items-center gap-1 font-medium text-amber-700">
+                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                      Indexing…
+                    </span>
+                  );
+                })()}
                 <span className="text-slate-400">{readSize(doc)}</span>
               </div>
               <p className="mt-1.5 text-xs text-slate-400">Uploaded {formatDate(doc.createdAt)}</p>

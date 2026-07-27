@@ -19,7 +19,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { ConversationStatus } from "@prisma/client";
 import { z } from "zod";
-import { auth } from "@/lib/auth";
+import { getBusinessScope } from "@/lib/business";
 import { prisma } from "@/lib/prisma";
 
 /**
@@ -49,6 +49,9 @@ const CONVERSATION_LIST_SELECT = {
   id: true,
   status: true,
   assignedToId: true,
+  // Carried so the inbox header's AI auto-reply switch renders correctly from the list row
+  // alone, before the detail query for that thread has resolved.
+  isAiActive: true,
   unreadCount: true,
   lastMessagePreview: true,
   lastMessageAt: true,
@@ -73,11 +76,17 @@ const CONVERSATION_LIST_SELECT = {
  */
 async function listConversations(
   tenantId: string,
+  businessId: string,
   filters: ListConversationsFilters
 ) {
   return prisma.conversation.findMany({
     where: {
       tenantId,
+      // The inbox belongs to one business, not to the whole workspace. Every Conversation
+      // carries the businessId it was created under (see lib/inbound.ts), so omitting this
+      // showed every business in the tenant the union of all their inboxes — which is what
+      // made switching accounts appear to do nothing.
+      businessId,
       ...(filters.status !== undefined && { status: filters.status }),
       ...(filters.assigneeId !== undefined && { assignedToId: filters.assigneeId }),
     },
@@ -94,15 +103,17 @@ async function listConversations(
  * into an invitation to read another workspace.
  */
 export async function GET(req: NextRequest) {
-  const session = await auth();
-  if (!session?.user) {
+  // getBusinessScope rather than auth(): the inbox is scoped to the *active business*, which
+  // lives in the current_business cookie and is re-validated against the tenant on every call.
+  const scope = await getBusinessScope();
+  if (!scope) {
     return NextResponse.json(
       { success: false, error: "Unauthorized" },
       { status: 401 }
     );
   }
 
-  const { tenantId } = session.user;
+  const { tenantId, businessId } = scope;
 
   try {
     const { searchParams } = new URL(req.url);
@@ -121,7 +132,7 @@ export async function GET(req: NextRequest) {
       );
     }
 
-    const conversations = await listConversations(tenantId, parsed.data);
+    const conversations = await listConversations(tenantId, businessId, parsed.data);
 
     return NextResponse.json({ success: true, data: conversations });
   } catch (error) {

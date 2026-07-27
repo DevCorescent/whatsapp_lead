@@ -106,8 +106,29 @@ export function qdrant(): QdrantRestClient {
   return client;
 }
 
+/**
+ * Resolves once the collection is known to exist, and is then reused.
+ *
+ * `ensureCollection` is called on every ingest and, before this, paid a `GET /collections` round
+ * trip each time to answer a question whose answer changes once in the lifetime of the deployment.
+ * The promise is cached rather than a boolean so that concurrent uploads share one in-flight check
+ * instead of racing three creates. A rejection clears the cache so the next ingest retries rather
+ * than inheriting a failure forever.
+ */
+let collectionReady: Promise<void> | null = null;
+
 /** Idempotently ensures the collection exists. Safe to call on every ingest. */
 export async function ensureCollection(): Promise<void> {
+  if (!collectionReady) {
+    collectionReady = createCollectionIfMissing().catch((error) => {
+      collectionReady = null;
+      throw error;
+    });
+  }
+  return collectionReady;
+}
+
+async function createCollectionIfMissing(): Promise<void> {
   const c = qdrant();
   const { collections } = await c.getCollections();
   if (collections.some((col) => col.name === KB_COLLECTION)) return;
@@ -123,6 +144,13 @@ export async function ensureCollection(): Promise<void> {
   });
   await c.createPayloadIndex(KB_COLLECTION, {
     field_name: "docId",
+    field_schema: "keyword",
+  });
+  // Retrieval filters on tenantId AND businessId together, and Qdrant Cloud requires an index on
+  // a field before it can be filtered on at all — without this the business filter would error
+  // rather than narrow.
+  await c.createPayloadIndex(KB_COLLECTION, {
+    field_name: "businessId",
     field_schema: "keyword",
   });
 }

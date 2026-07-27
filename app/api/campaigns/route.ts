@@ -82,9 +82,11 @@ interface CampaignRecipient {
  * `tenantId` is the predicate that makes this a list rather than a leak — it is taken from the
  * session and never from the request, so there is no input a caller could supply to widen it.
  */
-async function listCampaigns(tenantId: string) {
+async function listCampaigns(tenantId: string, businessId: string) {
   return prisma.campaign.findMany({
-    where: { tenantId },
+    // Campaigns are created with the active businessId and send on that business's WhatsApp
+    // number, so the list belongs to that business alone.
+    where: { tenantId, businessId },
     select: CAMPAIGN_LIST_SELECT,
     orderBy: { createdAt: "desc" },
   });
@@ -234,10 +236,10 @@ export async function GET() {
     );
   }
 
-  const { tenantId } = scope;
+  const { tenantId, businessId } = scope;
 
   try {
-    const campaigns = await listCampaigns(tenantId);
+    const campaigns = await listCampaigns(tenantId, businessId);
 
     return NextResponse.json({ success: true, data: campaigns });
   } catch (error) {

@@ -64,10 +64,14 @@ const updateConversationSchema = z
   .strictObject({
     status: z.nativeEnum(ConversationStatus).optional(),
     assigneeId: z.string().min(1).nullable().optional(),
+    isAiActive: z.boolean().optional(),
   })
   .refine(
-    (data) => data.status !== undefined || data.assigneeId !== undefined,
-    { message: "Provide at least one of: status, assigneeId" }
+    (data) =>
+      data.status !== undefined ||
+      data.assigneeId !== undefined ||
+      data.isAiActive !== undefined,
+    { message: "Provide at least one of: status, assigneeId, isAiActive" }
   );
 
 type UpdateConversationInput = z.infer<typeof updateConversationSchema>;
@@ -88,6 +92,10 @@ async function resolveConversation(tenantId: string, conversationId: string) {
       id: true,
       status: true,
       assignedToId: true,
+      // The inbox header's AI auto-reply switch reads this. Without it the field arrives
+      // undefined, the switch renders off however the row is actually set, and the setting
+      // looks like it failed to save.
+      isAiActive: true,
       unreadCount: true,
       lastMessagePreview: true,
       lastMessageAt: true,
@@ -191,11 +199,13 @@ async function updateConversation(
     data: {
       status: input.status,
       assignedToId: input.assigneeId,
+      isAiActive: input.isAiActive,
     },
     select: {
       id: true,
       status: true,
       assignedToId: true,
+      isAiActive: true,
       unreadCount: true,
       lastMessagePreview: true,
       lastMessageAt: true,

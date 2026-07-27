@@ -73,7 +73,7 @@ export async function POST(req: NextRequest) {
 
     // RAG: pull only the chunks relevant to the customer's latest message.
     const lastCustomerMsg = [...messages].reverse().find((m) => m.role === "user")?.content ?? "";
-    const knowledgeContext = await retrieveContext(tenantId, lastCustomerMsg);
+    const knowledgeContext = await retrieveContext(tenantId, conversation.businessId, lastCustomerMsg);
 
     const reply = await generateReply(messages, systemPrompt, knowledgeContext, settings?.aiModel);
     return NextResponse.json({ success: true, data: { reply } });

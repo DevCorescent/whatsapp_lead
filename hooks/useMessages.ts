@@ -75,6 +75,8 @@ interface ConversationFilters {
 interface UpdateConversationInput {
   status?: "OPEN" | "ASSIGNED" | "RESOLVED" | "CLOSED";
   assigneeId?: string | null;
+  /** Per-conversation AI auto-reply switch, stored on the conversation itself. */
+  isAiActive?: boolean;
 }
 
 export function useConversations(filters?: ConversationFilters) {
@@ -154,6 +156,94 @@ export function useUpdateConversation() {
     onSuccess: (_data, { id }) => {
       queryClient.invalidateQueries({ queryKey: ["conversations"] });
       queryClient.invalidateQueries({ queryKey: ["conversations", id] });
+    },
+  });
+}
+
+/**
+ * Patch `isAiActive` onto whichever cached conversation payloads carry this thread.
+ *
+ * Two shapes hold conversations and both must move together: the inbox list caches an array under
+ * `["conversations", filters]`, and the open thread caches a single object under
+ * `["conversations", id]`. Updating one and not the other is how a toggle ends up on in the header
+ * and off in the list — the same row disagreeing with itself in two panels.
+ *
+ * Written defensively rather than cast, because these caches also hold rejected and in-flight
+ * states, and a blind `payload.data.map` would throw on the first one it met.
+ */
+function patchCachedAiActive(payload: unknown, id: string, isAiActive: boolean): unknown {
+  if (!payload || typeof payload !== "object") return payload;
+
+  const envelope = payload as { data?: unknown };
+  const inner = envelope.data;
+
+  if (Array.isArray(inner)) {
+    return {
+      ...envelope,
+      data: inner.map((row) =>
+        row && typeof row === "object" && (row as { id?: string }).id === id
+          ? { ...row, isAiActive }
+          : row
+      ),
+    };
+  }
+
+  if (inner && typeof inner === "object" && (inner as { id?: string }).id === id) {
+    return { ...envelope, data: { ...inner, isAiActive } };
+  }
+
+  return payload;
+}
+
+/**
+ * Turn a conversation's AI auto-reply on or off, and keep the cache as the only source of truth.
+ *
+ * `isAiActive` is a column on Conversation and the flag the inbound worker reads before it drafts a
+ * reply, so this is a real state change, not a display preference. The component that renders the
+ * switch holds no copy of it — it reads the cached conversation — which is what makes the setting
+ * survive a remount, a route change and a refresh: there is no local state to lose.
+ *
+ * The cache is patched in `onMutate` so the switch responds immediately, and the pre-mutation
+ * snapshot is restored if the write fails. Leaving it flipped on a failure would be the worse lie:
+ * it would tell an agent the bot is off for a conversation it is still answering.
+ *
+ * `cancelQueries` matters more here than it usually does. Both conversation queries poll — every 30s
+ * for the list, 15s for the thread — so a refetch issued before the toggle can land would otherwise
+ * resolve afterwards and overwrite the optimistic value with the pre-toggle one, making the switch
+ * appear to flip itself back a few seconds later.
+ */
+export function useSetConversationAiActive() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: ({ id, isAiActive }: { id: string; isAiActive: boolean }) =>
+      request<{ id: string; isAiActive: boolean }>(`/api/conversations/${id}`, {
+        method: "PATCH",
+        body: JSON.stringify({ isAiActive }),
+      }),
+
+    onMutate: async ({ id, isAiActive }) => {
+      await queryClient.cancelQueries({ queryKey: ["conversations"] });
+
+      const snapshot = queryClient.getQueriesData({ queryKey: ["conversations"] });
+
+      queryClient.setQueriesData({ queryKey: ["conversations"] }, (old: unknown) =>
+        patchCachedAiActive(old, id, isAiActive)
+      );
+
+      return { snapshot };
+    },
+
+    onError: (_error, _variables, context) => {
+      for (const [key, data] of context?.snapshot ?? []) {
+        queryClient.setQueryData(key, data);
+      }
+    },
+
+    // Reconcile with the server either way: on success to confirm, on failure to discard whatever
+    // the rollback could not restore.
+    onSettled: () => {
+      void queryClient.invalidateQueries({ queryKey: ["conversations"] });
     },
   });
 }

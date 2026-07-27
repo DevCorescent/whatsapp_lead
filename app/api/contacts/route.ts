@@ -22,6 +22,10 @@ export async function GET(req: NextRequest) {
 
   const where = {
     tenantId: scope.tenantId,
+    // Contacts are created under the active business (see the `phone_businessId` unique key),
+    // so the list must be filtered by it too — otherwise every business in the tenant shows
+    // every other business's contacts and switching accounts changes nothing.
+    businessId: scope.businessId,
     isBlocked: false,
     ...(search && {
       OR: [

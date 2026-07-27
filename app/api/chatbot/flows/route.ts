@@ -16,7 +16,7 @@ const createSchema = z.object({
 export async function GET(req: NextRequest) {
   const scope = await getBusinessScope();
   if (!scope) return NextResponse.json({ success: false, error: "Unauthorized" }, { status: 401 });
-  const { tenantId } = scope;
+  const { tenantId, businessId } = scope;
 
   try {
     const { searchParams } = new URL(req.url);
@@ -25,6 +25,9 @@ export async function GET(req: NextRequest) {
     const flows = await prisma.chatbotFlow.findMany({
       where: {
         tenantId,
+        // Flows are created against the active business; listing them tenant-wide let one
+        // business see (and publish over) another's chatbot.
+        businessId,
         ...(activeOnly && { isActive: true }),
       },
       orderBy: { updatedAt: "desc" },

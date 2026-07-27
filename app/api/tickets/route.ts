@@ -128,9 +128,11 @@ type CreateTicketInput = z.infer<typeof createTicketSchema>;
  * the tenant clause they would narrow across all of them. The `(tenantId, status)` index serves the
  * status filter directly.
  */
-async function listTickets(tenantId: string, filters: ListTicketsFilters) {
+async function listTickets(tenantId: string, businessId: string, filters: ListTicketsFilters) {
   const where = {
     tenantId,
+    // Tickets are raised against a business's conversations, so they belong to that business.
+    businessId,
     status: filters.status,
     priority: filters.priority,
     ...(filters.assigneeId !== undefined && { assignedToId: filters.assigneeId }),
@@ -275,7 +277,7 @@ export async function GET(req: NextRequest) {
     );
   }
 
-  const { tenantId } = scope;
+  const { tenantId, businessId } = scope;
 
   try {
     const { searchParams } = new URL(req.url);
@@ -297,7 +299,7 @@ export async function GET(req: NextRequest) {
       );
     }
 
-    const { tickets, pagination } = await listTickets(tenantId, parsed.data);
+    const { tickets, pagination } = await listTickets(tenantId, businessId, parsed.data);
 
     return NextResponse.json({ success: true, data: tickets, pagination });
   } catch (error) {

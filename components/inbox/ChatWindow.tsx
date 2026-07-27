@@ -22,7 +22,7 @@ import type { MessageStatus } from "@prisma/client";
 import { Avatar, Badge, Button, EmptyState, Skeleton } from "@/components/ui";
 import { CONVERSATION_STATUS_STYLE, cn, dayLabel, formatTime } from "@/lib/utils";
 import { ATTACHMENT_ACCEPT, formatBytes } from "@/lib/attachments";
-import { useAiReply } from "@/hooks/useMessages";
+import { useAiReply, useSetConversationAiActive } from "@/hooks/useMessages";
 import { useQuickReplies, type QuickReply } from "@/hooks/useQuickReplies";
 import { contactName, type InboxConversation, type InboxMessage } from "./ConversationList";
 import { AttachmentDropOverlay } from "./AttachmentDropOverlay";
@@ -59,7 +59,13 @@ export function ChatWindow({
 }) {
   const conversationId = conversation?.id ?? null;
 
-  const [aiActive, setAiActive] = useState(Boolean(conversation?.isAiActive));
+  // Read, never held. `isAiActive` lives on the conversation row and reaches this component through
+  // the React Query cache, so the switch reflects what is stored rather than what this component
+  // last remembered. Copying it into `useState` was the bug: the inbox mounts this with
+  // `key={selectedId}`, so that copy was discarded on every remount — a route change, a refresh, or
+  // simply reopening the thread — and the switch fell back to whatever the initial render had seen.
+  const aiActive = Boolean(conversation?.isAiActive);
+
   const [draft, setDraft] = useState("");
   const [isNote, setIsNote] = useState(false);
   const [showEmoji, setShowEmoji] = useState(false);
@@ -98,6 +104,19 @@ export function ChatWindow({
   const inputRef = useRef<HTMLInputElement>(null);
 
   const aiReply = useAiReply();
+  const setAiActive = useSetConversationAiActive();
+
+  /**
+   * Hand the change to the mutation and nothing else.
+   *
+   * There is deliberately no local write here. The mutation patches the cached conversation
+   * optimistically and rolls that patch back if the request fails, so the switch responds instantly
+   * while the cache stays the one thing describing this conversation's state.
+   */
+  function handleAiToggle(next: boolean) {
+    if (!conversationId) return;
+    setAiActive.mutate({ id: conversationId, isAiActive: next });
+  }
 
   // All attachment behaviour (drag-and-drop, file picker, clipboard paste, preview and the
   // shared upload → send pipeline) lives in this hook so the composer stays a thin shell.
@@ -206,7 +225,7 @@ export function ChatWindow({
           />
           <Switch
             checked={aiActive}
-            onChange={setAiActive}
+            onChange={handleAiToggle}
             label="Toggle AI auto-reply for this conversation"
           />
         </div>

@@ -67,6 +67,20 @@ export interface AiReplyJob {
   waMessageId: string;
 }
 
+/**
+ * One knowledge document waiting to be chunked, embedded and indexed.
+ *
+ * The job carries ids only. The extracted text is already on `KnowledgeDoc.content` by the time
+ * this is published — extraction needs the uploaded bytes, which do not survive the request on a
+ * serverless deployment, so it stays on the request path while everything after it moves here.
+ * That also keeps the job body small: a 10 MB document would not fit in a QStash message.
+ */
+export interface KnowledgeIngestJob {
+  tenantId: string;
+  businessId: string;
+  docId: string;
+}
+
 export interface CampaignSendJob {
   campaignId: string;
   recipientId: string;    // CampaignContact.id
@@ -111,6 +125,20 @@ export async function publishAiReply(job: AiReplyJob, delaySeconds = 0) {
     url: `${APP_URL}/api/workers/ai-reply`,
     body: job,
     delay: delaySeconds,   // honours autoReplyDelay setting
+    retries: 2,
+  });
+}
+
+/**
+ * Enqueue the indexing of one knowledge document.
+ *
+ * The upload route publishes this and returns 201 immediately, so the user is not held for the
+ * embedding calls — the dominant cost, measured at roughly 66ms per chunk before batching.
+ */
+export async function publishKnowledgeIngest(job: KnowledgeIngestJob) {
+  return qstash.publishJSON({
+    url: `${APP_URL}/api/workers/knowledge-ingest`,
+    body: job,
     retries: 2,
   });
 }

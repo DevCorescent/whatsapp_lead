@@ -38,7 +38,7 @@ const createLeadSchema = z.object({
 export async function GET(req: NextRequest) {
   const scope = await getBusinessScope();
   if (!scope) return NextResponse.json({ success: false, error: "Unauthorized" }, { status: 401 });
-  const { tenantId } = scope;
+  const { tenantId, businessId } = scope;
 
   try {
     const { searchParams } = new URL(req.url);
@@ -59,6 +59,8 @@ export async function GET(req: NextRequest) {
 
     const where = {
       tenantId,
+      // Leads hang off business-scoped contacts and are created with the active businessId.
+      businessId,
       ...(stageId !== undefined && { stageId }),
       ...(assigneeId !== undefined && { assignedToId: assigneeId }),
       ...(scoreLabel !== undefined && { scoreLabel }),

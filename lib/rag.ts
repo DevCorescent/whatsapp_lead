@@ -142,6 +142,22 @@ export function chunkText(raw: string, chunkSize = 1000, overlap = 150): string[
       continue;
     }
 
+    // Prose longer than a chunk on its own has no sentence boundary to break on — extracted
+    // PDFs without terminators, CJK text, bullet lists and log dumps all produce one. Left
+    // whole it became a single chunk of the entire document, which the embedding API rejects
+    // outright ("Input text exceeds the model's maximum of 8194 tokens"), failing the whole
+    // upload. Hard-split it on length, keeping the same overlap prose chunks get.
+    if (!atom.table && atom.text.length > chunkSize) {
+      if (current.trim()) chunks.push(current.trim());
+      current = "";
+      const step = Math.max(1, chunkSize - overlap);
+      for (let i = 0; i < atom.text.length; i += step) {
+        const piece = atom.text.slice(i, i + chunkSize).trim();
+        if (piece) chunks.push(piece);
+      }
+      continue;
+    }
+
     const sep = current ? (atom.table || current.endsWith("|") ? "\n\n" : " ") : "";
     if (current && (current.length + sep.length + atom.text.length) > chunkSize) {
       chunks.push(current.trim());
@@ -169,6 +185,14 @@ export interface IngestResult {
  */
 export async function ingestDocument(params: {
   tenantId: string;
+  /**
+   * Owning business. Written into every point's payload so retrieval can filter on it — a tenant
+   * may run several businesses and their knowledge bases are not shared.
+   *
+   * Optional only for backward compatibility with points written before business scoping existed;
+   * every caller in the application supplies it.
+   */
+  businessId?: string;
   docId: string;
   type: DocType;
   buffer?: Buffer;
@@ -176,7 +200,7 @@ export async function ingestDocument(params: {
   text?: string;
   filename?: string;
 }): Promise<IngestResult> {
-  const { tenantId, docId, type, buffer, url, text, filename } = params;
+  const { tenantId, businessId, docId, type, buffer, url, text, filename } = params;
 
   const extracted = await extractDocumentText(type, { buffer, url, text, filename });
   const chunks = chunkText(extracted);
@@ -187,14 +211,23 @@ export async function ingestDocument(params: {
   const vectors = await embedPassages(chunks);
   const vectorIds = chunks.map(() => randomUUID());
 
-  await qdrant().upsert(KB_COLLECTION, {
-    wait: true,
-    points: chunks.map((chunk, i) => ({
-      id: vectorIds[i],
-      vector: vectors[i],
-      payload: { tenantId, docId, chunkIndex: i, text: chunk },
-    })),
-  });
+  try {
+    await qdrant().upsert(KB_COLLECTION, {
+      wait: true,
+      points: chunks.map((chunk, i) => ({
+        id: vectorIds[i],
+        vector: vectors[i],
+        payload: { tenantId, ...(businessId && { businessId }), docId, chunkIndex: i, text: chunk },
+      })),
+    });
+  } catch (error) {
+    try {
+      await deleteDocumentVectors(tenantId, businessId ?? "", docId);
+    } catch {
+      // Swallow cleanup errors so the original ingestion failure remains visible.
+    }
+    throw error;
+  }
 
   return { chunkCount: chunks.length, vectorIds };
 }
@@ -208,6 +241,7 @@ export async function ingestDocument(params: {
  */
 export async function retrieveContext(
   tenantId: string,
+  businessId: string,
   query: string,
   opts: { limit?: number; scoreThreshold?: number } = {},
 ): Promise<string | undefined> {
@@ -221,7 +255,16 @@ export async function retrieveContext(
       // jina-embeddings-v3 cosine scores run low; relevant chunks land ~0.35-0.55,
       // so 0.4 was dropping legitimately relevant context. 0.3 keeps recall higher.
       score_threshold: opts.scoreThreshold ?? 0.3,
-      filter: { must: [{ key: "tenantId", match: { value: tenantId } }] },
+      // Both keys, always. The knowledge-base UI has been business-scoped for a while, but this
+      // filter was still tenant-only — so a customer messaging business A could be answered from
+      // business B's documents, which is the leak the UI scoping was meant to prevent. `must` is
+      // an AND, and both keys carry a payload index (see ensureCollection).
+      filter: {
+        must: [
+          { key: "tenantId", match: { value: tenantId } },
+          { key: "businessId", match: { value: businessId } },
+        ],
+      },
       with_payload: true,
     });
 
@@ -241,7 +284,7 @@ export async function retrieveContext(
 // ─── Deletion ────────────────────────────────────────────────────────────────
 
 /** Remove all of a document's vectors (call when a KnowledgeDoc is deleted). */
-export async function deleteDocumentVectors(tenantId: string, docId: string): Promise<void> {
+export async function deleteDocumentVectors(tenantId: string, businessId: string, docId: string): Promise<void> {
   if (!process.env.QDRANT_URL) return;
   try {
     await qdrant().delete(KB_COLLECTION, {
@@ -249,6 +292,7 @@ export async function deleteDocumentVectors(tenantId: string, docId: string): Pr
       filter: {
         must: [
           { key: "tenantId", match: { value: tenantId } },
+          ...(businessId ? [{ key: "businessId", match: { value: businessId } }] : []),
           { key: "docId", match: { value: docId } },
         ],
       },
