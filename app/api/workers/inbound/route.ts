@@ -32,9 +32,14 @@ export async function POST(req: NextRequest) {
   // 1. Verify this came from QStash. This route sends WhatsApp messages and spends model
   //    tokens, so an unauthenticated caller must never reach the pipeline below.
   const valid = await verifyQStashSignature(req);
-  if (!valid) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  if (!valid) {
+    console.warn("[WORKER INBOUND] Unauthorized — missing or invalid QStash signature");
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
 
   const job = (await req.json()) as InboundMessageJob;
+
+  console.log("[WORKER INBOUND] Processing job", { waMessageId: job.waMessageId, from: job.from, tenantId: job.tenantId });
 
   try {
     // The webhook already resolved which workspace this number belongs to and put the ids on
@@ -45,6 +50,8 @@ export async function POST(req: NextRequest) {
     //    (read receipt, broadcast, campaign credit, flow engine, and the AI reply which
     //    `dispatchAutoReply` publishes on to /api/workers/ai-reply rather than running here).
     await processIncomingMessage(tenant, job.rawMessage, job.contactName);
+
+    console.log("[WORKER INBOUND] Message processed successfully", { waMessageId: job.waMessageId });
   } catch (error) {
     console.error(
       `[WORKER INBOUND] Failed to process message ${job.waMessageId}:`,

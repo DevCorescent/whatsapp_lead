@@ -383,17 +383,23 @@ async function processChange(change: WAChange): Promise<void> {
     return { tenantId: tenant.tenantId, businessId: tenant.businessId };
   });
 
+  console.log("[WEBHOOK] Tenant resolved", { tenantId, businessId, phoneNumberId, messageCount: messages?.length ?? 0 });
+
   for (const message of messages ?? []) {
     // Match each sender to their own profile entry. Meta can batch messages from several contacts
     // into one change, in which case taking contacts[0] would file every message under the first
     // sender's name — creating the second contact with the wrong person's name entirely.
     const profile = contacts?.find((contact) => contact.wa_id === message.from);
 
+    console.log("[WEBHOOK] Dispatching message", { waMessageId: message.id, from: message.from, type: message.type, skipQueue: process.env.SKIP_QUEUE === "true" });
+
     await dispatchInboundMessage(
       { tenantId, businessId, phoneNumberId },
       message,
       profile?.profile?.name
     );
+
+    console.log("[WEBHOOK] Message dispatched", { waMessageId: message.id });
   }
 
   // Receipts stay on the request path. They are one indexed lookup and one narrow update, with no
@@ -482,10 +488,21 @@ export async function POST(req: NextRequest) {
   const signature = req.headers.get(SIGNATURE_HEADER);
   const rawBody = await req.text();
 
+  console.log("[WEBHOOK] POST received", {
+    hasSignature: !!signature,
+    bodyLength: rawBody.length,
+    appSecretConfigured: !!process.env.WHATSAPP_APP_SECRET,
+  });
+
   if (!verifySignature(rawBody, signature)) {
-    console.warn("[WEBHOOK] Rejected request: missing or invalid signature");
+    console.warn("[WEBHOOK] Rejected: signature invalid", {
+      appSecretMissing: !process.env.WHATSAPP_APP_SECRET,
+      signaturePresent: !!signature,
+    });
     return new NextResponse("Forbidden", { status: 403 });
   }
+
+  console.log("[WEBHOOK] Signature verified — processing payload");
 
   try {
     const payload = JSON.parse(rawBody) as WAWebhookPayload;
@@ -497,6 +514,9 @@ export async function POST(req: NextRequest) {
       );
       return NextResponse.json({ success: true }, { status: 200 });
     }
+
+    const entryCount = payload.entry?.length ?? 0;
+    console.log("[WEBHOOK] Processing entries", { entryCount });
 
     for (const entry of payload.entry ?? []) {
       try {
