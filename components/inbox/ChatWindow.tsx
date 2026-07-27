@@ -23,6 +23,7 @@ import { Avatar, Badge, Button, EmptyState, Skeleton } from "@/components/ui";
 import { CONVERSATION_STATUS_STYLE, cn, dayLabel, formatTime } from "@/lib/utils";
 import { ATTACHMENT_ACCEPT, formatBytes } from "@/lib/attachments";
 import { useAiReply } from "@/hooks/useMessages";
+import { useQuickReplies, type QuickReply } from "@/hooks/useQuickReplies";
 import { contactName, type InboxConversation, type InboxMessage } from "./ConversationList";
 import { AttachmentDropOverlay } from "./AttachmentDropOverlay";
 import { AttachmentPreviewModal } from "./AttachmentPreviewModal";
@@ -62,6 +63,35 @@ export function ChatWindow({
   const [draft, setDraft] = useState("");
   const [isNote, setIsNote] = useState(false);
   const [showEmoji, setShowEmoji] = useState(false);
+
+  // Quick replies expand from a "/shortcode" typed at the start of the composer. `qrDismissed`
+  // exists so Escape can close the picker without also clearing what the agent has typed —
+  // the draft still begins with "/", so without it the picker would immediately reopen.
+  const [qrIndex, setQrIndex] = useState(0);
+  const [qrDismissed, setQrDismissed] = useState(false);
+  const quickRepliesQuery = useQuickReplies();
+  const quickRepliesData = quickRepliesQuery.data;
+  const quickReplies: QuickReply[] = useMemo(
+    () => quickRepliesData?.data ?? [],
+    [quickRepliesData],
+  );
+
+  const qrMatches = useMemo(() => {
+    if (!draft.startsWith("/")) return [];
+    const term = draft.slice(1).toLowerCase();
+    // The whole draft is the search term, so a space means the agent has moved on to writing a
+    // real message that merely happens to start with a slash.
+    if (term.includes(" ")) return [];
+    return quickReplies.filter((q) => q.shortcode.startsWith(term)).slice(0, 6);
+  }, [draft, quickReplies]);
+
+  const qrOpen = !qrDismissed && qrMatches.length > 0;
+
+  const applyQuickReply = (reply: QuickReply) => {
+    setDraft(reply.content);
+    setQrDismissed(true);
+    inputRef.current?.focus();
+  };
 
   const fileRef = useRef<HTMLInputElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
@@ -264,7 +294,7 @@ export function ChatWindow({
           )}
         </div>
 
-        <form onSubmit={handleSend} className="flex items-end gap-2">
+        <form onSubmit={handleSend} className="relative flex items-end gap-2">
           <div className="relative flex shrink-0 items-center gap-0.5">
             <input
               ref={fileRef}
@@ -311,10 +341,61 @@ export function ChatWindow({
             )}
           </div>
 
+          {qrOpen && (
+            <div className="absolute bottom-14 left-3 right-3 z-20 overflow-hidden rounded-xl border border-slate-200 bg-white shadow-lg">
+              <p className="border-b border-slate-100 px-3 py-1.5 text-[11px] font-medium uppercase tracking-wide text-slate-400">
+                Quick replies
+              </p>
+              {qrMatches.map((reply, index) => (
+                <button
+                  key={reply.id}
+                  type="button"
+                  // onMouseDown, not onClick: the input blurs before a click lands, and the blur
+                  // handler closes the picker — the button would be gone before it ever fired.
+                  onMouseDown={(e) => {
+                    e.preventDefault();
+                    applyQuickReply(reply);
+                  }}
+                  onMouseEnter={() => setQrIndex(index)}
+                  className={cn(
+                    "flex w-full flex-col gap-0.5 px-3 py-2 text-left",
+                    index === qrIndex ? "bg-emerald-50" : "hover:bg-slate-50",
+                  )}
+                >
+                  <span className="text-xs font-semibold text-emerald-700">/{reply.shortcode}</span>
+                  <span className="line-clamp-2 text-xs text-slate-600">{reply.content}</span>
+                </button>
+              ))}
+            </div>
+          )}
+
           <input
             ref={inputRef}
             value={draft}
-            onChange={(e) => setDraft(e.target.value)}
+            onChange={(e) => {
+              setDraft(e.target.value);
+              setQrDismissed(false);
+              setQrIndex(0);
+            }}
+            onKeyDown={(e) => {
+              if (!qrOpen) return;
+              // While the picker is open it owns these keys — Enter in particular, which would
+              // otherwise submit the form and send the raw "/shortcode" as the message.
+              if (e.key === "ArrowDown") {
+                e.preventDefault();
+                setQrIndex((i) => (i + 1) % qrMatches.length);
+              } else if (e.key === "ArrowUp") {
+                e.preventDefault();
+                setQrIndex((i) => (i - 1 + qrMatches.length) % qrMatches.length);
+              } else if (e.key === "Enter" || e.key === "Tab") {
+                e.preventDefault();
+                applyQuickReply(qrMatches[qrIndex] ?? qrMatches[0]);
+              } else if (e.key === "Escape") {
+                e.preventDefault();
+                setQrDismissed(true);
+              }
+            }}
+            onBlur={() => setQrDismissed(true)}
             onPaste={attach.onPaste}
             placeholder={isNote ? "Write an internal note…" : "Type a message"}
             aria-label={isNote ? "Internal note" : "Message"}

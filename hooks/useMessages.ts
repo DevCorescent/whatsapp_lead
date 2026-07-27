@@ -66,9 +66,15 @@ interface ConversationFilters {
   assigneeId?: string;
 }
 
+/**
+ * PATCH /api/conversations/[id] validates with a `strictObject` naming the field `assigneeId` — the
+ * API name and the `assignedToId` column it writes deliberately differ. This interface said
+ * `assignedToId`, which that validator rejects outright, so any assignment made through this hook
+ * would have failed; it names what the route actually accepts.
+ */
 interface UpdateConversationInput {
   status?: "OPEN" | "ASSIGNED" | "RESOLVED" | "CLOSED";
-  assignedToId?: string | null;
+  assigneeId?: string | null;
 }
 
 export function useConversations(filters?: ConversationFilters) {
@@ -195,6 +201,52 @@ export function useAiReply() {
       if (!res.ok) {
         const err = await res.json().catch(() => ({}));
         throw new Error((err as { error?: string }).error ?? "AI reply failed");
+      }
+      return res.json();
+    },
+  });
+}
+
+/**
+ * Score the conversation's lead with AI.
+ *
+ * `/api/ai/qualify` writes the score and BANT fields onto the lead, so unlike summarise this is not
+ * read-only — the leads and conversations caches both go stale on success and are invalidated.
+ */
+export function useAiQualify() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (conversationId: string) => {
+      const res = await fetch("/api/ai/qualify", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ conversationId }),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error((err as { error?: string }).error ?? "Qualification failed");
+      }
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["leads"] });
+      queryClient.invalidateQueries({ queryKey: ["conversations"] });
+    },
+  });
+}
+
+/** Classify how the customer currently feels. Read-only, like summarise — nothing to invalidate. */
+export function useAiSentiment() {
+  return useMutation({
+    mutationFn: async (conversationId: string) => {
+      const res = await fetch("/api/ai/sentiment", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ conversationId }),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error((err as { error?: string }).error ?? "Sentiment analysis failed");
       }
       return res.json();
     },

@@ -180,7 +180,7 @@ export default function CampaignsPage() {
           />
         ) : (
           <div className="scrollbar-slim overflow-x-auto">
-            <table className="w-full min-w-[64rem] text-left text-sm">
+            <table className="w-full min-w-5xl text-left text-sm">
               <thead className="border-b border-slate-200 bg-slate-50 text-xs uppercase tracking-wide text-slate-500">
                 <tr>
                   <th className="px-4 py-3 font-medium">Campaign</th>
@@ -288,7 +288,7 @@ function CreateCampaignModal({ open, onClose }: { open: boolean; onClose: () => 
   const [error, setError] = useState<string | null>(null);
 
   const create = useMutation({
-    mutationFn: async (data: { name: string; message: string; all?: boolean }) => {
+    mutationFn: async (data: { name: string; message: string; all?: boolean; scheduledAt?: string }) => {
       const res = await fetch("/api/campaigns", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -317,7 +317,15 @@ function CreateCampaignModal({ open, onClose }: { open: boolean; onClose: () => 
         className="space-y-4"
         onSubmit={(e) => {
           e.preventDefault();
-          create.mutate({ name, message, all: audience === "all" });
+          // `datetime-local` yields a wall-clock string with no zone; the API compares against a
+          // real instant, so it is converted here rather than shipped ambiguous.
+          const when = schedule ? new Date(schedule) : null;
+          create.mutate({
+            name,
+            message,
+            all: audience === "all",
+            ...(when && !Number.isNaN(when.getTime()) && { scheduledAt: when.toISOString() }),
+          });
         }}
       >
         <Field label="Campaign name" htmlFor="campaign-name" required>
@@ -384,7 +392,9 @@ function CreateCampaignModal({ open, onClose }: { open: boolean; onClose: () => 
             onChange={(e) => setSchedule(e.target.value)}
             className={inputClass}
           />
-          <p className="mt-1.5 text-xs text-slate-500">Leave empty to save as a draft.</p>
+          <p className="mt-1.5 text-xs text-slate-500">
+            Leave empty to send immediately.
+          </p>
         </Field>
 
         {error && <p className="rounded-lg bg-rose-50 px-3 py-2 text-xs text-rose-700">{error}</p>}

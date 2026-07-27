@@ -38,11 +38,11 @@ import { prisma } from "@/lib/prisma";
  * The per-recipient delivery record.
  *
  * Every column named here exists on CampaignContact — the delivery timestamps and `failedReason` are
- * real columns, not an approximation of them. What is *not* here is a WhatsApp message id: the schema
- * has no column for one, so `deliveredAt`, `readAt` and `repliedAt` can never be filled by the
- * webhook's receipts, which have no way to correlate a receipt back to a campaign row. They are
- * returned regardless because they are the schema's own shape, and a client that draws a delivery
- * table should see the columns exist rather than have this route quietly hide them.
+ * real columns, not an approximation of them, and they are populated: the send path records Meta's
+ * message id on `waMessageId`, which is what lets the webhook correlate a `delivered`/`read` receipt
+ * back to the recipient row and stamp `deliveredAt`/`readAt`. `repliedAt` is stamped by the same
+ * webhook when a recipient answers. `waMessageId` itself is deliberately not returned: it is an
+ * internal correlation key, and no client renders it.
  *
  * The contact is a nested `select`, not a second query: resolving the customer behind each recipient
  * row by looping would be the canonical N+1 over an audience that can run to thousands. It is also

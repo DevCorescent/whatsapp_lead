@@ -41,17 +41,11 @@ export function useTickets(filters?: TicketFilters) {
   });
 }
 
-export function useTicket(id: string) {
-  return useQuery({
-    queryKey: ["tickets", id],
-    queryFn: async () => {
-      const res = await fetch(`/api/tickets/${id}`);
-      if (!res.ok) throw new Error("Failed to fetch ticket");
-      return res.json();
-    },
-    enabled: !!id,
-  });
-}
+// There is deliberately no useTicket(id) or useDeleteTicket here. /api/tickets/[id] exposes PATCH
+// only: the list already carries every column the detail view draws, and a ticket is the record of a
+// customer having asked for help, which an agent should not be able to erase. Hooks for GET and
+// DELETE existed once and could only ever have returned 405 — they are removed rather than backed by
+// endpoints the API documents itself as intentionally withholding.
 
 export function useCreateTicket() {
   const queryClient = useQueryClient();
@@ -96,19 +90,3 @@ export function useUpdateTicket() {
   });
 }
 
-export function useDeleteTicket() {
-  const queryClient = useQueryClient();
-  return useMutation({
-    mutationFn: async (id: string) => {
-      const res = await fetch(`/api/tickets/${id}`, { method: "DELETE" });
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({}));
-        throw new Error((err as { error?: string }).error ?? "Failed to delete ticket");
-      }
-      return res.json();
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["tickets"] });
-    },
-  });
-}

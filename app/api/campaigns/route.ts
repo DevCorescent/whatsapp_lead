@@ -153,15 +153,17 @@ async function resolveContacts(
  * Json column is the schema's provision for payloads it does not have a column for; inventing one
  * would be a schema change.
  *
- * The campaign is created RUNNING rather than DRAFT: by the time this returns, the send loop is about
- * to begin, and a row that claimed DRAFT while messages were leaving would be untrue for the entire
- * duration of the send.
+ * An immediate campaign is created RUNNING rather than DRAFT: by the time this returns, the send loop
+ * is about to begin, and a row that claimed DRAFT while messages were leaving would be untrue for the
+ * entire duration of the send. A scheduled one is created SCHEDULED with no `startedAt`, which is the
+ * state /api/cron/campaigns selects on — nothing has started, and nothing should until the due date.
  */
 async function createCampaign(
   tenantId: string,
   businessId: string,
   input: CreateCampaignInput,
-  contacts: { id: string; phone: string }[]
+  contacts: { id: string; phone: string }[],
+  scheduledAt: Date | null
 ) {
   return prisma.$transaction(async (tx) => {
     const campaign = await tx.campaign.create({
@@ -169,8 +171,8 @@ async function createCampaign(
         tenantId,
         businessId,
         name: input.name,
-        status: CampaignStatus.RUNNING,
-        startedAt: new Date(),
+        status: scheduledAt ? CampaignStatus.SCHEDULED : CampaignStatus.RUNNING,
+        ...(scheduledAt ? { scheduledAt } : { startedAt: new Date() }),
         totalCount: contacts.length,
         metadata: { message: input.message },
       },
@@ -224,12 +226,18 @@ async function loadCampaignRecipients(
  */
 async function updateCampaignContact(
   campaignContactId: string,
-  outcome: { sent: true } | { sent: false; reason: string }
+  outcome: { sent: true; waMessageId: string | null } | { sent: false; reason: string }
 ): Promise<void> {
   await prisma.campaignContact.update({
     where: { id: campaignContactId },
     data: outcome.sent
-      ? { status: CampaignContactStatus.SENT, sentAt: new Date() }
+      ? {
+          status: CampaignContactStatus.SENT,
+          sentAt: new Date(),
+          // Meta's id for this send. Delivery receipts arrive keyed by it, so storing it here is
+          // what lets the webhook attribute a `delivered`/`read` callback back to this recipient.
+          waMessageId: outcome.waMessageId,
+        }
       : {
           status: CampaignContactStatus.FAILED,
           failedReason: outcome.reason,
@@ -253,8 +261,9 @@ async function updateCampaignContact(
  * database connection for the entire broadcast, and a rollback would undo delivery records for
  * messages the customers have already received.
  *
- * Meta's message id is not persisted: `CampaignContact` has no column for it. The id is therefore
- * discarded rather than stored somewhere it does not belong.
+ * Meta's message id *is* persisted, onto `CampaignContact.waMessageId`. It is the only key a delivery
+ * receipt carries, so without it the `delivered`/`read`/`replied` columns this module already
+ * declares could never be filled — see the webhook's status handler, which reads it back.
  */
 async function sendCampaign(
   credentials: { phoneNumberId: string; apiKey: string },
@@ -266,14 +275,17 @@ async function sendCampaign(
 
   for (const recipient of recipients) {
     try {
-      await sendTextMessage(
+      const sent = await sendTextMessage(
         credentials.phoneNumberId,
         credentials.apiKey,
         recipient.phone,
         message
       );
 
-      await updateCampaignContact(recipient.id, { sent: true });
+      await updateCampaignContact(recipient.id, {
+        sent: true,
+        waMessageId: sent.messages?.[0]?.id ?? null,
+      });
       sentCount += 1;
     } catch (error) {
       const reason = error instanceof Error ? error.message : "Unknown error";
@@ -418,7 +430,40 @@ export async function POST(req: NextRequest) {
     }
     const credentials = { phoneNumberId: creds.phoneNumberId, apiKey: creds.apiKey };
 
-    const campaign = await createCampaign(tenantId, businessId, input, contacts);
+    // A schedule in the future defers the send; one already past is treated as "send now", which is
+    // what a user who picked a moment that has since elapsed means. An unparseable value is rejected
+    // rather than silently ignored — the alternative is a campaign the user believed was scheduled
+    // going out immediately to the whole audience, which is not a recoverable mistake.
+    let scheduledAt: Date | null = null;
+    if (input.scheduledAt) {
+      const parsedDate = new Date(input.scheduledAt);
+      if (Number.isNaN(parsedDate.getTime())) {
+        return NextResponse.json(
+          { success: false, error: "Invalid scheduled date" },
+          { status: 400 }
+        );
+      }
+      if (parsedDate.getTime() > Date.now()) scheduledAt = parsedDate;
+    }
+
+    const campaign = await createCampaign(tenantId, businessId, input, contacts, scheduledAt);
+
+    // The recipients stay PENDING and the cron picks the campaign up when it comes due.
+    if (scheduledAt) {
+      return NextResponse.json(
+        {
+          success: true,
+          data: {
+            campaignId: campaign.id,
+            total: contacts.length,
+            scheduledAt: scheduledAt.toISOString(),
+            sentCount: 0,
+            failedCount: 0,
+          },
+        },
+        { status: 201 }
+      );
+    }
 
     const recipients = await loadCampaignRecipients(tenantId, campaign.id);
     const outcome = await sendCampaign(credentials, input.message, recipients);
