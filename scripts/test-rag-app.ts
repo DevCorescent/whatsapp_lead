@@ -7,6 +7,7 @@ import { randomUUID } from "crypto";
 import { ingestDocument, retrieveContext, deleteDocumentVectors } from "../lib/rag";
 
 const TENANT_ID = `test-tenant-${randomUUID()}`;
+const BUSINESS_ID = `test-business-${randomUUID()}`;
 const DOC_ID = randomUUID();
 
 const SAMPLE_DOC = `
@@ -31,12 +32,12 @@ async function main() {
     "What are your support hours?",
   ]) {
     console.log(`? "${q}"`);
-    const ctx = await retrieveContext(TENANT_ID, q, { limit: 2, scoreThreshold: 0.3 });
+    const ctx = await retrieveContext(TENANT_ID, BUSINESS_ID, q, { limit: 2, scoreThreshold: 0.3 });
     console.log(ctx ? `  → ${ctx.replace(/\n+/g, " ").slice(0, 140)}...\n` : "  → (no context)\n");
   }
 
   console.log("→ deleteDocumentVectors()...");
-  await deleteDocumentVectors(TENANT_ID, DOC_ID);
+  await deleteDocumentVectors(TENANT_ID, BUSINESS_ID, DOC_ID);
   console.log("  ✅ Cleaned up.");
 }
 

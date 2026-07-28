@@ -835,7 +835,7 @@ export async function handleAutoReply(
 
   // RAG: ground the reply in the tenant's knowledge base, scoped to what the customer just asked.
   const lastCustomerMsg = [...history].reverse().find((m) => m.role === "user")?.content ?? "";
-  const knowledgeContext = await retrieveContext(tenant.tenantId, lastCustomerMsg);
+  const knowledgeContext = await retrieveContext(tenant.tenantId, tenant.businessId, lastCustomerMsg);
 
   const personality = tenant.aiPersonality?.trim() || DEFAULT_AI_PERSONALITY;
 

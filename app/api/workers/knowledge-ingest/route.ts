@@ -110,7 +110,7 @@ export async function POST(req: NextRequest) {
     try {
       await prisma.knowledgeDoc.update({
         where: { id: job.docId },
-        data: { isIndexed: false, metadata: mergeMetadata(doc?.metadata, { status: "FAILED", error: reason }) },
+        data: { isIndexed: false, metadata: mergeMetadata(existingMetadata, { status: "FAILED", error: reason }) },
       });
     } catch (writeError) {
       console.error(`[WORKER KB] Could not record failure for ${job.docId}:`, writeError);
