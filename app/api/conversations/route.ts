@@ -5,10 +5,14 @@
 //
 // METHODS
 // GET    - List the authenticated tenant's conversations for the inbox
+// POST   - Open the conversation with a saved contact, creating it on first use
 //
 // ACCESS
 // GET    - Authenticated. Scoped to session.user.tenantId; a conversation belonging
 //          to another workspace is never returned, under any filter combination.
+// POST   - Authenticated. The contact must belong to the caller's tenant *and* active
+//          business; one belonging to another workspace answers 404, exactly as a
+//          non-existent one does.
 // ============================================================================
 //
 // The inbox list is a read model over rows the WhatsApp webhook writes. It reads the conversation's
@@ -20,6 +24,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { ConversationStatus } from "@prisma/client";
 import { z } from "zod";
 import { getBusinessScope } from "@/lib/business";
+import { findOrCreateConversation } from "@/lib/conversations";
 import { prisma } from "@/lib/prisma";
 
 /**
@@ -39,6 +44,22 @@ const listConversationsSchema = z.object({
 type ListConversationsFilters = z.infer<typeof listConversationsSchema>;
 
 /**
+ * The body of "start a conversation with this contact".
+ *
+ * `strictObject` because the writable surface is exactly one field. A conversation is not a thing
+ * a client gets to describe — its status, channel, counters and preview are all owned by the
+ * schema and by the two writers that move them — so anything else in the body is a client bug
+ * worth reporting rather than a value to quietly drop.
+ *
+ * The contact is named by id rather than by phone number: the contact must already exist for its
+ * conversation to be opened, and resolving a number here would let this route create contacts as a
+ * side effect of opening a thread. Creating contacts is POST /api/contacts' job.
+ */
+const createConversationSchema = z.strictObject({
+  contactId: z.string().min(1, "A contact is required"),
+});
+
+/**
  * The columns the inbox list actually renders.
  *
  * Declared as a `select` rather than an `include` because the inbox is the highest-traffic read in
@@ -55,9 +76,14 @@ const CONVERSATION_LIST_SELECT = {
   unreadCount: true,
   lastMessagePreview: true,
   lastMessageAt: true,
+  createdAt: true,
   updatedAt: true,
   contact: {
-    select: { id: true, name: true, phone: true },
+    // `avatarUrl` and `company` are drawn by the row's avatar and matched by the list's search
+    // box; without them the avatar always falls back to initials and searching by company finds
+    // nothing. `createdAt` above is what keeps a brand-new thread — one with no message yet, and
+    // therefore no `lastMessageAt` — sortable at the top of the list instead of at the bottom.
+    select: { id: true, name: true, phone: true, avatarUrl: true, company: true },
   },
 } as const;
 
@@ -142,6 +168,101 @@ export async function GET(req: NextRequest) {
 
     return NextResponse.json(
       { success: false, error: "Failed to load conversations" },
+      { status: 500 }
+    );
+  }
+}
+
+/**
+ * Open the conversation with a saved contact, creating it only if there isn't one.
+ *
+ * This is what "message this contact" resolves to. It is deliberately idempotent: the caller asks
+ * for *the* thread with a contact, not for a new one, so pressing the button twice — or two agents
+ * pressing it at once — lands both of them in the same thread rather than splitting the contact's
+ * history in half. The find-or-create rule itself is `findOrCreateConversation`, the same helper
+ * the inbound pipeline uses, so a thread opened from the CRM and a thread opened by the customer's
+ * first message are the same row.
+ *
+ * The contact is re-read under the active business before anything is written. `contactId` arrives
+ * from the client, and `Conversation.contactId` is a foreign key the database constrains only to
+ * *some* contact — so without this check an id copied from another workspace would open a thread
+ * that this business's inbox then lists as its own.
+ *
+ * Answers 201 when a thread was created and 200 when an existing one was returned, so the client
+ * can tell "started a conversation" from "opened one" without a second request.
+ */
+export async function POST(req: NextRequest) {
+  const scope = await getBusinessScope();
+  if (!scope) {
+    return NextResponse.json(
+      { success: false, error: "Unauthorized" },
+      { status: 401 }
+    );
+  }
+
+  const { tenantId, businessId } = scope;
+
+  try {
+    let body: unknown;
+    try {
+      body = await req.json();
+    } catch {
+      return NextResponse.json({ success: false, error: "Invalid JSON body" }, { status: 400 });
+    }
+
+    const parsed = createConversationSchema.safeParse(body);
+    if (!parsed.success) {
+      return NextResponse.json(
+        { success: false, error: parsed.error.issues[0].message },
+        { status: 400 }
+      );
+    }
+
+    const contact = await prisma.contact.findFirst({
+      where: { id: parsed.data.contactId, tenantId, businessId },
+      select: { id: true, isBlocked: true },
+    });
+
+    if (!contact) {
+      return NextResponse.json(
+        { success: false, error: "Contact not found" },
+        { status: 404 }
+      );
+    }
+
+    // A blocked contact is one the workspace has chosen to stop talking to. Opening a thread for
+    // them would put the conversation back in the inbox and invite an agent to reply, which is the
+    // opposite of what blocking means.
+    if (contact.isBlocked) {
+      return NextResponse.json(
+        { success: false, error: "This contact is blocked. Unblock them to start a conversation." },
+        { status: 409 }
+      );
+    }
+
+    const { conversation, created } = await findOrCreateConversation(
+      tenantId,
+      businessId,
+      contact.id
+    );
+
+    // Re-read through the list projection so the response is shaped exactly like a row of
+    // GET /api/conversations — the client can select it, or drop it into the cached list, with no
+    // reshaping and no second fetch for the contact.
+    const row = await prisma.conversation.findUnique({
+      where: { id: conversation.id },
+      select: CONVERSATION_LIST_SELECT,
+    });
+
+    return NextResponse.json(
+      { success: true, data: row, created },
+      { status: created ? 201 : 200 }
+    );
+  } catch (error) {
+    console.error("[CONVERSATIONS]", error);
+
+    return NextResponse.json(
+      { success: false, error: "Failed to start conversation" },
       { status: 500 }
     );
   }

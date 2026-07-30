@@ -1,14 +1,50 @@
+// ============================================================================
+// MODULE : Tenant settings
+// ROUTE  : /api/settings
+//
+// METHODS
+// GET    - Workspace identity, business hours and mail configuration
+// PATCH  - Update the above
+//
+// ACCESS
+// GET    - Authenticated. Scoped to session.user.tenantId.
+// PATCH  - Authenticated, admin roles only. Same scoping.
+// ============================================================================
+//
+// This route owns what is genuinely *tenant*-wide: the account's name and domain, the working
+// hours the team keeps, and the SMTP relay its notification mail leaves through. One row, one
+// tenant.
+//
+// It deliberately no longer reads or writes the WhatsApp credentials. Those are per-workspace —
+// a tenant runs several WhatsApp accounts, each with its own phone number id, business account id
+// and token — and keeping them here is what made saving them in one workspace change every other
+// one, and what routed inbound messages to whichever business happened to be the tenant's oldest.
+// They live on `Business` and are edited through /api/businesses/[id]; `resolveWhatsAppCreds`
+// still consults the legacy columns on this row, but only for the tenant's original business.
+
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { auth } from "@/lib/auth";
-import { invalidateCredsCache, invalidateTenantCache } from "@/lib/cache";
 import { prisma } from "@/lib/prisma";
 
+/** Secrets and per-workspace credentials are never returned; both are read elsewhere. */
+const SETTINGS_SELECT = {
+  id: true,
+  tenantId: true,
+  timezone: true,
+  businessHoursStart: true,
+  businessHoursEnd: true,
+  businessDays: true,
+  offHoursMessage: true,
+  smtpHost: true,
+  smtpPort: true,
+  smtpUser: true,
+  smtpFrom: true,
+  createdAt: true,
+  updatedAt: true,
+} as const;
+
 const patchSchema = z.object({
-  waPhoneNumberId: z.string().optional(),
-  waBusinessAccountId: z.string().optional(),
-  waApiKey: z.string().optional(),
-  waWebhookVerifyToken: z.string().optional(),
   timezone: z.string().optional(),
   businessHoursStart: z.string().optional(),
   businessHoursEnd: z.string().optional(),
@@ -31,6 +67,7 @@ export async function GET() {
       where: { tenantId },
       create: { tenantId },
       update: {},
+      select: SETTINGS_SELECT,
     });
 
     const tenant = await prisma.tenant.findUnique({
@@ -63,57 +100,16 @@ export async function PATCH(req: NextRequest) {
 
     const data = parsed.data;
 
-    // Read before the write. The upsert replaces the number in place, and it is the entry cached
-    // under the OLD number that would go on routing inbound messages to this tenant — once the
-    // update has happened there is no way to learn what that number was.
-    const previous = await prisma.tenantSettings.findUnique({
-      where: { tenantId },
-      select: { waPhoneNumberId: true },
-    });
-
     const settings = await prisma.tenantSettings.upsert({
       where: { tenantId },
       create: { tenantId, ...data },
       update: data,
+      select: SETTINGS_SELECT,
     });
 
-    // Only when something the cache actually depends on has moved. `waWebhookVerifyToken` is
-    // deliberately absent: it is used during Meta's subscription handshake and appears in neither
-    // cached value, so changing it invalidates nothing.
-    const whatsappChanged =
-      data.waPhoneNumberId !== undefined ||
-      data.waApiKey !== undefined ||
-      data.waBusinessAccountId !== undefined;
-
-    // Contained as a whole. The invalidation helpers cannot throw, but the lookup below is a
-    // database call that can — and by this point the settings have already been saved. Letting it
-    // reach the outer catch would answer 500 for a write that succeeded, sending the user to
-    // retry a change that already landed. Cache maintenance must not decide the outcome of a
-    // completed write, so a failure here is logged and the stale entries are left to their TTL.
-    if (whatsappChanged) {
-      try {
-        // Both numbers, old first — the old entry is the one that can misroute, and the new one
-        // may still be cached against whichever workspace held it previously.
-        if (previous?.waPhoneNumberId) {
-          await invalidateTenantCache(previous.waPhoneNumberId);
-        }
-        if (settings.waPhoneNumberId && settings.waPhoneNumberId !== previous?.waPhoneNumberId) {
-          await invalidateTenantCache(settings.waPhoneNumberId);
-        }
-
-        // TenantSettings is the fallback credential source in resolveWhatsAppCreds: any business
-        // that has not set its own number or token reads these values. A change here can therefore
-        // stale the cached credentials of every business in the tenant, not just one, so all of
-        // them are dropped. Businesses with their own credentials are unaffected by the re-resolve.
-        const businesses = await prisma.business.findMany({
-          where: { tenantId },
-          select: { id: true },
-        });
-        await Promise.all(businesses.map((business) => invalidateCredsCache(business.id)));
-      } catch (error) {
-        console.error("[SETTINGS PATCH] Cache invalidation failed after a successful save:", error);
-      }
-    }
+    // No cache invalidation here any more, and none is owed: nothing this route writes takes part
+    // in the routing or credentials caches. Those keys are dropped by /api/businesses/[id], which
+    // is now the only writer of the values they hold.
 
     // Also allow updating tenant name/logo via same endpoint
     const tenantBody = body as Record<string, unknown>;

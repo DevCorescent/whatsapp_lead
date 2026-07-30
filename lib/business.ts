@@ -181,6 +181,34 @@ export async function listBusinesses(tenantId: string) {
   });
 }
 
+/**
+ * Whether this business is the tenant's original one — the row `ensureDefaultBusiness`
+ * seeds from `TenantSettings`.
+ *
+ * This is the seam between "one workspace, configured before businesses existed" and "several
+ * independent workspaces". The tenant-level `TenantSettings` row is the legacy home of the
+ * WhatsApp credentials and the AI flags, and it is still consulted — but only for this one
+ * business. Every business created afterwards reads its own columns and nothing else, which is
+ * what stops a workspace that has not been configured from silently borrowing another one's
+ * number, token or AI persona.
+ *
+ * "Oldest" is the same rule `getBusinessScope` and `ensureDefaultBusiness` already use to pick a
+ * tenant's default, so there is one definition of "the original business", not two.
+ */
+async function isTenantDefaultBusiness(tenantId: string, businessId: string): Promise<boolean> {
+  const oldest = await prisma.business.findFirst({
+    where: { tenantId },
+    orderBy: { createdAt: "asc" },
+    select: { id: true },
+  });
+  return oldest?.id === businessId;
+}
+
+/** Public form of the check above, for routes that must know whether legacy settings apply. */
+export async function isLegacySettingsBusiness(tenantId: string, businessId: string): Promise<boolean> {
+  return isTenantDefaultBusiness(tenantId, businessId);
+}
+
 /** WhatsApp credentials resolved for a business, with the token already decrypted. */
 export interface ResolvedWhatsAppCreds {
   phoneNumberId: string | null;
@@ -193,12 +221,16 @@ export interface ResolvedWhatsAppCreds {
 /**
  * Resolve a business's WhatsApp credentials for sending, decrypting the token.
  *
- * Business-level credentials win; anything the business hasn't set falls back to
- * the tenant's legacy TenantSettings so a workspace that configured WhatsApp
- * before businesses existed (or only ever uses one business) keeps sending
- * without re-entering anything. This is the single creds source for the campaign
- * runner and template service, so per-business isolation and backward
- * compatibility are decided in exactly one place.
+ * Business-level credentials win. Anything the business has not set falls back to the tenant's
+ * legacy TenantSettings — but only when this business *is* the tenant's original one, so a
+ * workspace that configured WhatsApp before businesses existed keeps sending without re-entering
+ * anything, while a newly created workspace that has not been connected yet reports "not
+ * connected" instead of quietly sending from another workspace's number. That distinction is the
+ * whole point of `isTenantDefaultBusiness`: an unscoped fallback is a settings leak across
+ * workspaces, which is exactly what the per-workspace settings work exists to remove.
+ *
+ * This is the single creds source for the message route, the campaign runner and the connection
+ * test, so isolation and backward compatibility are decided in exactly one place.
  */
 export async function resolveWhatsAppCreds(businessId: string): Promise<ResolvedWhatsAppCreds> {
   const business = await prisma.business.findUnique({
@@ -218,7 +250,10 @@ export async function resolveWhatsAppCreds(businessId: string): Promise<Resolved
   let token = business.whatsappAccessToken;
   let verifyToken = business.whatsappVerifyToken;
 
-  if (!phoneNumberId || !businessAccountId || !token) {
+  if (
+    (!phoneNumberId || !businessAccountId || !token) &&
+    (await isTenantDefaultBusiness(business.tenantId, businessId))
+  ) {
     const settings = await prisma.tenantSettings.findUnique({
       where: { tenantId: business.tenantId },
       select: {
@@ -242,6 +277,85 @@ export async function resolveWhatsAppCreds(businessId: string): Promise<Resolved
   }
 
   return { phoneNumberId, businessAccountId, apiKey, verifyToken };
+}
+
+/**
+ * The AI / auto-reply configuration that applies to one workspace.
+ *
+ * Mirrors the five fields the inbound pipeline actually reads before it drafts a reply. Kept as
+ * its own type rather than a partial Business so that the resolution rule below — business first,
+ * legacy tenant settings only for the tenant's original business — has one shape to return and
+ * one place to be understood.
+ */
+export interface ResolvedAiConfig {
+  aiEnabled: boolean;
+  autoReply: boolean;
+  autoReplyDelay: number;
+  aiModel: string | null;
+  aiPersonality: string | null;
+}
+
+/**
+ * Resolve the AI configuration for one workspace.
+ *
+ * Every field lives on `Business`, which is what makes the setting per-workspace: enabling the
+ * assistant for one WhatsApp account must not enable it for the tenant's other accounts, and the
+ * inbound worker reads this rather than the tenant row for exactly that reason.
+ *
+ * The tenant's legacy `TenantSettings` is still honoured for the tenant's *original* business, and
+ * only there. The booleans are OR-ed rather than overridden for that one business because a
+ * deployment that predates per-business AI has the flags on the tenant row and `false` on the
+ * business row — reading the business alone would silently switch its auto-replies off. The write
+ * path (PATCH /api/settings/ai) keeps both rows in step for that business, so turning the
+ * assistant off still turns it off; see the mirror there.
+ *
+ * Returns null when the business does not exist, which callers treat as "AI off".
+ */
+export async function resolveAiConfig(businessId: string): Promise<ResolvedAiConfig | null> {
+  const business = await prisma.business.findUnique({
+    where: { id: businessId },
+    select: {
+      tenantId: true,
+      aiEnabled: true,
+      autoReply: true,
+      autoReplyDelay: true,
+      aiModel: true,
+      aiPersonality: true,
+    },
+  });
+  if (!business) return null;
+
+  const config: ResolvedAiConfig = {
+    aiEnabled: business.aiEnabled,
+    autoReply: business.autoReply,
+    autoReplyDelay: business.autoReplyDelay,
+    aiModel: business.aiModel,
+    aiPersonality: business.aiPersonality,
+  };
+
+  if (!(await isTenantDefaultBusiness(business.tenantId, businessId))) return config;
+
+  const settings = await prisma.tenantSettings.findUnique({
+    where: { tenantId: business.tenantId },
+    select: {
+      aiEnabled: true,
+      autoReply: true,
+      autoReplyDelay: true,
+      aiModel: true,
+      aiPersonality: true,
+    },
+  });
+  if (!settings) return config;
+
+  return {
+    aiEnabled: config.aiEnabled || settings.aiEnabled,
+    autoReply: config.autoReply || settings.autoReply,
+    // The business column is non-nullable with a schema default, so "unset" cannot be told from
+    // "deliberately 3". The tenant value wins only where the business still carries that default.
+    autoReplyDelay: config.autoReplyDelay === 3 ? settings.autoReplyDelay : config.autoReplyDelay,
+    aiModel: config.aiModel || settings.aiModel,
+    aiPersonality: config.aiPersonality || settings.aiPersonality,
+  };
 }
 
 /**

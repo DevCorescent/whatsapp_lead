@@ -1,9 +1,10 @@
 "use client";
 
-import { useState, useEffect } from "react";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useState } from "react";
+import { useSession } from "next-auth/react";
 import {
   AlertCircle,
+  Building2,
   Check,
   CheckCircle2,
   Copy,
@@ -16,35 +17,47 @@ import {
   WifiOff,
   XCircle,
 } from "lucide-react";
-import { Button, Card, Field, inputClass } from "@/components/ui";
+import { Button, Card, Field, Skeleton, inputClass } from "@/components/ui";
+import { useBusinesses, useUpdateBusiness, type BusinessInput } from "@/hooks/useBusinesses";
 import { cn } from "@/lib/utils";
 
-type SettingsData = {
-  waPhoneNumberId?: string;
-  waBusinessAccountId?: string;
-  waApiKey?: string;
-  waWebhookVerifyToken?: string;
-};
+/**
+ * WhatsApp credentials for the *active workspace*.
+ *
+ * These used to be written to `TenantSettings`, which holds one row per tenant — so a tenant running
+ * two WhatsApp numbers had one set of credentials between them: saving in one workspace silently
+ * overwrote the other, and inbound messages were routed to whichever business happened to be the
+ * tenant's oldest, appearing in an inbox nobody was looking at. They are columns on `Business` now
+ * and are read and written through the businesses API, so a workspace's connection is its own.
+ *
+ * The access and verify tokens are never sent to the browser — `publicBusiness` replaces them with
+ * `hasWhatsappToken` / `hasWhatsappVerifyToken` booleans — so the inputs for them start empty and an
+ * empty value means "leave the stored one alone".
+ */
 
 type TestResult = {
   ok: boolean;
   phoneNumber?: string;
   verifiedName?: string;
   qualityRating?: string;
+  workspace?: string;
   error?: string;
 };
 
-export function WhatsAppTab() {
-  const qc = useQueryClient();
-  const { data } = useQuery<SettingsData>({
-    queryKey: ["settings"],
-    queryFn: async () => {
-      const r = await fetch("/api/settings");
-      const j = await r.json();
-      return j.data;
-    },
-  });
+/** Roles the businesses API lets edit a workspace. Mirrors MANAGER_ROLES on the route. */
+const MANAGER_ROLES = ["SUPER_ADMIN", "TENANT_OWNER", "ADMIN"];
 
+export function WhatsAppTab() {
+  const { data: session } = useSession();
+  const canEdit = MANAGER_ROLES.includes(session?.user?.role ?? "");
+
+  const { data, isLoading, isError, refetch } = useBusinesses();
+  const updateBusiness = useUpdateBusiness();
+
+  const businesses = data?.data ?? [];
+  const business = businesses.find((b) => b.id === data?.currentBusinessId) ?? businesses[0] ?? null;
+
+  const [displayNumber, setDisplayNumber] = useState("");
   const [phoneNumberId, setPhoneNumberId] = useState("");
   const [businessAccountId, setBusinessAccountId] = useState("");
   const [apiKey, setApiKey] = useState("");
@@ -54,18 +67,32 @@ export function WhatsAppTab() {
   const [saved, setSaved] = useState(false);
   const [testing, setTesting] = useState(false);
   const [testResult, setTestResult] = useState<TestResult | null>(null);
+  const [error, setError] = useState<string | null>(null);
 
-  useEffect(() => {
-    if (data) {
-      setPhoneNumberId(data.waPhoneNumberId ?? "");
-      setBusinessAccountId(data.waBusinessAccountId ?? "");
-      setApiKey(data.waApiKey ?? "");
-      setVerifyToken(data.waWebhookVerifyToken ?? "");
-      setTestResult(null);
-    }
-  }, [data]);
+  /**
+   * Seed the form from the workspace, once per workspace.
+   *
+   * Adjusted during render rather than in an effect, which is what React recommends for "reset this
+   * state when that value changes": an effect would run after a paint showing empty inputs, and it
+   * would re-run on every background refetch — overwriting whatever the operator had typed with the
+   * values already on screen. Keying off the id means a refetch of the *same* workspace leaves the
+   * form alone, while switching workspace reloads it.
+   */
+  const [seededBusinessId, setSeededBusinessId] = useState<string | null>(null);
+  if (business && business.id !== seededBusinessId) {
+    setSeededBusinessId(business.id);
+    setDisplayNumber(business.whatsappPhoneNumber ?? "");
+    setPhoneNumberId(business.whatsappPhoneNumberId ?? "");
+    setBusinessAccountId(business.whatsappBusinessId ?? "");
+    // Secrets are write-only: never prefilled, and blank on save means "unchanged".
+    setApiKey("");
+    setVerifyToken("");
+    setTestResult(null);
+    setError(null);
+  }
 
-  const connected = Boolean(phoneNumberId && apiKey);
+  const hasToken = Boolean(business?.hasWhatsappToken) || apiKey.trim().length > 0;
+  const connected = Boolean(phoneNumberId) && hasToken;
 
   const webhookUrl =
     typeof window !== "undefined"
@@ -98,31 +125,72 @@ export function WhatsAppTab() {
     }
   };
 
-  const save = useMutation({
-    mutationFn: async () => {
-      const r = await fetch("/api/settings", {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          waPhoneNumberId: phoneNumberId || undefined,
-          waBusinessAccountId: businessAccountId || undefined,
-          waApiKey: apiKey || undefined,
-          waWebhookVerifyToken: verifyToken || undefined,
-        }),
-      });
-      if (!r.ok) { const j = await r.json(); throw new Error(j.error ?? "Save failed"); }
-      return r.json();
-    },
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["settings"] });
+  const save = async () => {
+    if (!business) return;
+    setError(null);
+
+    // Only the secrets are conditional: an empty one means "keep what is stored", while an empty
+    // id is a deliberate clear and is sent as such.
+    const payload: BusinessInput & { id: string } = {
+      id: business.id,
+      name: business.name,
+      whatsappPhoneNumber: displayNumber.trim(),
+      whatsappPhoneNumberId: phoneNumberId.trim(),
+      whatsappBusinessId: businessAccountId.trim(),
+      ...(apiKey.trim() && { whatsappAccessToken: apiKey.trim() }),
+      ...(verifyToken.trim() && { whatsappVerifyToken: verifyToken.trim() }),
+    };
+
+    try {
+      await updateBusiness.mutateAsync(payload);
+      setApiKey("");
+      setVerifyToken("");
       setTestResult(null);
       setSaved(true);
       setTimeout(() => setSaved(false), 2500);
-    },
-  });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Save failed");
+    }
+  };
+
+  if (isLoading) {
+    return (
+      <div className="space-y-5">
+        <Skeleton className="h-24 w-full rounded-2xl" />
+        <Skeleton className="h-96 w-full rounded-2xl" />
+      </div>
+    );
+  }
+
+  if (isError || !business) {
+    return (
+      <Card className="flex flex-col items-start gap-3 p-5">
+        <p className="flex items-center gap-2 font-semibold text-slate-900">
+          <AlertCircle className="h-4 w-4 text-rose-500" />
+          Couldn&apos;t load this workspace
+        </p>
+        <p className="text-sm text-slate-500">
+          The workspace settings service didn&apos;t respond, so there is nothing to edit yet.
+        </p>
+        <Button variant="secondary" onClick={() => void refetch()}>
+          Try again
+        </Button>
+      </Card>
+    );
+  }
 
   return (
     <div className="space-y-5">
+      {/* Which workspace these credentials belong to. Without this the screen looks tenant-wide,
+          which is exactly the misunderstanding that made the old behaviour so surprising. */}
+      <div className="flex items-center gap-2 rounded-xl bg-slate-50 px-3.5 py-2.5 text-sm text-slate-600 ring-1 ring-inset ring-slate-200/70">
+        <Building2 className="h-4 w-4 shrink-0 text-slate-400" />
+        <span className="min-w-0">
+          These credentials apply to <strong className="font-semibold text-slate-900">{business.name}</strong> only.
+          {businesses.length > 1 && " Switch workspace in the sidebar to configure another."}
+        </span>
+      </div>
+
       {/* Status card */}
       <Card className={cn(
         "flex flex-wrap items-center justify-between gap-4 p-5",
@@ -206,35 +274,53 @@ export function WhatsAppTab() {
 
         <div className="mt-5 space-y-4">
           <div className="grid gap-4 sm:grid-cols-2">
+            <Field label="Display number" htmlFor="wa-display">
+              <input
+                id="wa-display"
+                value={displayNumber}
+                onChange={(e) => setDisplayNumber(e.target.value)}
+                disabled={!canEdit}
+                className={inputClass}
+                placeholder="+91 98765 43210"
+              />
+              <p className="mt-1.5 text-xs text-slate-500">Shown in the workspace switcher.</p>
+            </Field>
             <Field label="Phone Number ID" htmlFor="wa-phone-id" required>
               <input
                 id="wa-phone-id"
                 value={phoneNumberId}
                 onChange={(e) => setPhoneNumberId(e.target.value)}
+                disabled={!canEdit}
                 className={cn(inputClass, "font-mono text-xs")}
                 placeholder="109876543210987"
               />
-            </Field>
-            <Field label="Business Account ID" htmlFor="wa-business-id">
-              <input
-                id="wa-business-id"
-                value={businessAccountId}
-                onChange={(e) => setBusinessAccountId(e.target.value)}
-                className={cn(inputClass, "font-mono text-xs")}
-                placeholder="123456789012345"
-              />
+              <p className="mt-1.5 text-xs text-slate-500">
+                Meta routes inbound messages by this id — it must be unique to this workspace.
+              </p>
             </Field>
           </div>
 
-          <Field label="API key" htmlFor="wa-api-key" required>
+          <Field label="Business Account ID" htmlFor="wa-business-id">
+            <input
+              id="wa-business-id"
+              value={businessAccountId}
+              onChange={(e) => setBusinessAccountId(e.target.value)}
+              disabled={!canEdit}
+              className={cn(inputClass, "font-mono text-xs")}
+              placeholder="123456789012345"
+            />
+          </Field>
+
+          <Field label="API key" htmlFor="wa-api-key" required={!business.hasWhatsappToken}>
             <div className="relative">
               <input
                 id="wa-api-key"
                 type={showKey ? "text" : "password"}
                 value={apiKey}
                 onChange={(e) => setApiKey(e.target.value)}
+                disabled={!canEdit}
                 className={cn(inputClass, "pr-10 font-mono text-xs")}
-                placeholder="EAAG…"
+                placeholder={business.hasWhatsappToken ? "•••••• (unchanged)" : "EAAG…"}
               />
               <button
                 type="button"
@@ -245,7 +331,9 @@ export function WhatsAppTab() {
                 {showKey ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
               </button>
             </div>
-            <p className="mt-1.5 text-xs text-slate-500">Stored encrypted. Never shown to agents.</p>
+            <p className="mt-1.5 text-xs text-slate-500">
+              Stored encrypted and never sent back to the browser. Leave blank to keep the saved one.
+            </p>
           </Field>
 
           <Field label="Webhook URL" htmlFor="wa-webhook">
@@ -270,8 +358,9 @@ export function WhatsAppTab() {
               id="wa-verify"
               value={verifyToken}
               onChange={(e) => setVerifyToken(e.target.value)}
+              disabled={!canEdit}
               className={cn(inputClass, "font-mono text-xs")}
-              placeholder="my-verify-token"
+              placeholder={business.hasWhatsappVerifyToken ? "•••••• (unchanged)" : "my-verify-token"}
             />
             <p className="mt-1.5 text-xs text-slate-500">
               Must match the token you enter in Meta&apos;s webhook config.
@@ -279,16 +368,22 @@ export function WhatsAppTab() {
           </Field>
         </div>
 
-        {save.isError && (
+        {error && (
           <div className="mt-3 flex items-center gap-2 text-sm text-rose-600">
             <AlertCircle className="h-4 w-4 shrink-0" />
-            {(save.error as Error).message}
+            {error}
           </div>
         )}
 
+        {!canEdit && (
+          <p className="mt-3 text-sm text-slate-500">
+            Only workspace owners and admins can change the WhatsApp connection.
+          </p>
+        )}
+
         <div className="mt-5 flex justify-end border-t border-slate-100 pt-4">
-          <Button onClick={() => save.mutate()} disabled={save.isPending}>
-            {save.isPending ? (
+          <Button onClick={() => void save()} disabled={!canEdit || updateBusiness.isPending}>
+            {updateBusiness.isPending ? (
               <><Loader2 className="h-4 w-4 animate-spin" /> Saving…</>
             ) : saved ? (
               <><Check className="h-4 w-4 text-emerald-200" /> Saved!</>

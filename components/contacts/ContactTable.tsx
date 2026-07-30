@@ -6,6 +6,8 @@ import {
   ChevronLeft,
   ChevronRight,
   Eye,
+  Loader2,
+  MessageSquare,
   MoreHorizontal,
   Pencil,
   Tag as TagIcon,
@@ -14,6 +16,7 @@ import {
   Users,
 } from "lucide-react";
 import { Avatar, Badge, Button, Card, EmptyState, SkeletonRows } from "@/components/ui";
+import { useStartConversation } from "@/hooks/useMessages";
 import { cn, stageColorClasses, timeAgo } from "@/lib/utils";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -129,6 +132,24 @@ export function ContactTable({
   const router = useRouter();
   const [menu, setMenu] = useState<{ id: string; top: number; right: number } | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  const [messagingId, setMessagingId] = useState<string | null>(null);
+
+  // "Message" opens the contact's existing thread, or opens a new one, and navigates to it. The
+  // whole rule lives in the hook, so this table only has to say which contact and show progress.
+  const startConversation = useStartConversation();
+
+  const message = async (contactId: string) => {
+    if (startConversation.isPending) return;
+    setNotice(null);
+    setMessagingId(contactId);
+    try {
+      await startConversation.start(contactId);
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : "Could not open the conversation.");
+    } finally {
+      setMessagingId(null);
+    }
+  };
 
   // The dropdown is positioned `fixed` so the horizontally scrollable table
   // cannot clip it — that means it has to close when the page moves under it.
@@ -256,7 +277,7 @@ export function ContactTable({
                     </th>
                   ),
                 )}
-                <th className="w-12 px-4 py-3">
+                <th className="w-24 px-4 py-3">
                   <span className="sr-only">Actions</span>
                 </th>
               </tr>
@@ -327,15 +348,31 @@ export function ContactTable({
                     <td className="whitespace-nowrap px-4 py-3 text-slate-500">
                       {timeAgo(contactLastActivity(contact)) || "—"}
                     </td>
-                    <td className="px-4 py-3 text-right">
-                      <button
-                        type="button"
-                        aria-label="Row actions"
-                        onClick={(e) => openMenu(e, contact.id)}
-                        className="rounded-lg p-1.5 text-slate-400 transition hover:bg-slate-100 hover:text-slate-700"
-                      >
-                        <MoreHorizontal className="h-4 w-4" />
-                      </button>
+                    <td className="px-4 py-3" onClick={(e) => e.stopPropagation()}>
+                      <div className="flex items-center justify-end gap-1">
+                        <button
+                          type="button"
+                          aria-label={`Message ${contact.name ?? "contact"}`}
+                          title="Message on WhatsApp"
+                          disabled={startConversation.isPending}
+                          onClick={() => void message(contact.id)}
+                          className="rounded-lg p-1.5 text-slate-400 transition hover:bg-emerald-50 hover:text-emerald-600 disabled:pointer-events-none disabled:opacity-50"
+                        >
+                          {messagingId === contact.id ? (
+                            <Loader2 className="h-4 w-4 animate-spin text-emerald-600" />
+                          ) : (
+                            <MessageSquare className="h-4 w-4" />
+                          )}
+                        </button>
+                        <button
+                          type="button"
+                          aria-label="Row actions"
+                          onClick={(e) => openMenu(e, contact.id)}
+                          className="rounded-lg p-1.5 text-slate-400 transition hover:bg-slate-100 hover:text-slate-700"
+                        >
+                          <MoreHorizontal className="h-4 w-4" />
+                        </button>
+                      </div>
                     </td>
                   </tr>
                 );
@@ -383,6 +420,18 @@ export function ContactTable({
             style={{ top: menu.top, right: menu.right }}
             onClick={(e) => e.stopPropagation()}
           >
+            <button
+              type="button"
+              className="flex w-full items-center gap-2 px-3 py-2 text-sm text-slate-700 hover:bg-slate-50"
+              onClick={() => {
+                const id = menu.id;
+                setMenu(null);
+                void message(id);
+              }}
+            >
+              <MessageSquare className="h-4 w-4 text-slate-400" />
+              Send message
+            </button>
             <button
               type="button"
               className="flex w-full items-center gap-2 px-3 py-2 text-sm text-slate-700 hover:bg-slate-50"

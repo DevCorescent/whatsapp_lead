@@ -2,11 +2,12 @@
 
 import { useMemo, useState } from "react";
 import Link from "next/link";
-import { useParams, useRouter } from "next/navigation";
+import { useParams } from "next/navigation";
 import {
   Activity as ActivityIcon,
   AlertTriangle,
   ArrowLeft,
+  Loader2,
   MessageSquare,
   Pencil,
   TrendingUp,
@@ -15,6 +16,7 @@ import {
 } from "lucide-react";
 import type { LeadScoreLabel } from "@prisma/client";
 import { useContact } from "@/hooks/useContacts";
+import { useStartConversation } from "@/hooks/useMessages";
 import { Avatar, Badge, Button, Card, EmptyState, Skeleton } from "@/components/ui";
 import {
   StageBadge,
@@ -78,12 +80,24 @@ type Tab = (typeof TABS)[number];
 
 export default function ContactDetailPage() {
   const params = useParams<{ id: string }>();
-  const router = useRouter();
   const id = typeof params?.id === "string" ? params.id : "";
 
   const { data, isLoading, isError } = useContact(id);
   const [tab, setTab] = useState<Tab>("Overview");
   const [notice, setNotice] = useState<string | null>(null);
+
+  const startConversation = useStartConversation();
+
+  /** Open this contact's thread — the existing one, or a new one — and go to it. */
+  const message = async () => {
+    if (!id || startConversation.isPending) return;
+    setNotice(null);
+    try {
+      await startConversation.start(id);
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : "Could not open the conversation.");
+    }
+  };
 
   // The payload may be the contact itself or wrapped in { data }. Neither is
   // guaranteed while the route returns 501 — normalise, then verify.
@@ -168,8 +182,12 @@ export default function ContactDetailPage() {
           </div>
 
           <div className="flex flex-wrap items-center gap-2">
-            <Button onClick={() => router.push("/inbox")}>
-              <MessageSquare className="h-4 w-4" />
+            <Button onClick={() => void message()} disabled={startConversation.isPending}>
+              {startConversation.isPending ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <MessageSquare className="h-4 w-4" />
+              )}
               Message
             </Button>
             <Button
@@ -303,30 +321,38 @@ function ConversationsTab({ conversations }: { conversations: ConversationLite[]
       {conversations.map((conversation) => {
         const status = conversation.status ?? "OPEN";
         return (
-          <Card key={conversation.id} className="p-4 transition hover:border-slate-300">
-            <div className="flex items-start justify-between gap-4">
-              <div className="min-w-0">
-                <div className="flex flex-wrap items-center gap-2">
-                  <Badge
-                    className={CONVERSATION_STATUS_STYLE[status] ?? CONVERSATION_STATUS_STYLE.OPEN}
-                  >
-                    {status}
-                  </Badge>
-                  {!!conversation.unreadCount && conversation.unreadCount > 0 && (
-                    <Badge className="bg-emerald-600 text-white ring-emerald-600">
-                      {conversation.unreadCount} unread
+          // Straight into the thread. The inbox reads `?conversation=` and selects it, which is the
+          // same deep link the Message button above uses.
+          <Link
+            key={conversation.id}
+            href={`/inbox?conversation=${conversation.id}`}
+            className="block rounded-2xl focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-600"
+          >
+            <Card className="p-4 transition hover:ring-slate-300">
+              <div className="flex items-start justify-between gap-4">
+                <div className="min-w-0">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <Badge
+                      className={CONVERSATION_STATUS_STYLE[status] ?? CONVERSATION_STATUS_STYLE.OPEN}
+                    >
+                      {status}
                     </Badge>
-                  )}
+                    {!!conversation.unreadCount && conversation.unreadCount > 0 && (
+                      <Badge className="bg-emerald-600 text-white ring-emerald-600">
+                        {conversation.unreadCount} unread
+                      </Badge>
+                    )}
+                  </div>
+                  <p className="mt-2 truncate text-sm text-slate-600">
+                    {conversation.lastMessagePreview || "No messages yet."}
+                  </p>
                 </div>
-                <p className="mt-2 truncate text-sm text-slate-600">
-                  {conversation.lastMessagePreview || "No messages yet."}
-                </p>
+                <span className="shrink-0 text-xs text-slate-400">
+                  {timeAgo(conversation.lastMessageAt ?? conversation.updatedAt)}
+                </span>
               </div>
-              <span className="shrink-0 text-xs text-slate-400">
-                {timeAgo(conversation.lastMessageAt ?? conversation.updatedAt)}
-              </span>
-            </div>
-          </Card>
+            </Card>
+          </Link>
         );
       })}
     </div>

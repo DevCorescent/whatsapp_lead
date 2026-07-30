@@ -9,6 +9,7 @@ import {
   Clock,
   FileText,
   Image as ImageIcon,
+  Loader2,
   MapPin,
   MessageSquare,
   Paperclip,
@@ -22,7 +23,7 @@ import type { MessageStatus } from "@prisma/client";
 import { Avatar, Badge, Button, EmptyState, Skeleton } from "@/components/ui";
 import { CONVERSATION_STATUS_STYLE, cn, dayLabel, formatTime } from "@/lib/utils";
 import { ATTACHMENT_ACCEPT, formatBytes } from "@/lib/attachments";
-import { useAiReply, useSetConversationAiActive } from "@/hooks/useMessages";
+import { useAiReply, useSendMessage, useSetConversationAiActive } from "@/hooks/useMessages";
 import { useQuickReplies, type QuickReply } from "@/hooks/useQuickReplies";
 import { contactName, type InboxConversation, type InboxMessage } from "./ConversationList";
 import { AttachmentDropOverlay } from "./AttachmentDropOverlay";
@@ -69,6 +70,7 @@ export function ChatWindow({
   const [draft, setDraft] = useState("");
   const [isNote, setIsNote] = useState(false);
   const [showEmoji, setShowEmoji] = useState(false);
+  const [sendError, setSendError] = useState<string | null>(null);
 
   // Quick replies expand from a "/shortcode" typed at the start of the composer. `qrDismissed`
   // exists so Escape can close the picker without also clearing what the agent has typed —
@@ -104,6 +106,7 @@ export function ChatWindow({
   const inputRef = useRef<HTMLInputElement>(null);
 
   const aiReply = useAiReply();
+  const sendMessage = useSendMessage();
   const setAiActive = useSetConversationAiActive();
 
   /**
@@ -148,27 +151,32 @@ export function ChatWindow({
   const name = contactName(conversation);
   const status = conversation.status ?? "OPEN";
 
-  function handleSend(e: React.FormEvent) {
+  /**
+   * Send the draft to the server, and let the refetch put it in the thread.
+   *
+   * Nothing is painted locally first. The server calls Meta *before* it persists, and WhatsApp can
+   * refuse a send for reasons only it knows — an expired 24-hour session window, an opted-out
+   * recipient, a throttled number — so a message drawn into the timeline optimistically would be
+   * telling the agent something left the building when it may not have. On success the mutation
+   * invalidates the `["conversations"]` prefix, which refetches this thread *and* the inbox list, so
+   * the message and the list's preview and ordering all move together.
+   *
+   * The draft is kept on failure: the agent's words are the one thing here that cannot be
+   * regenerated, and clearing the composer on an error would destroy them.
+   */
+  async function handleSend(e: React.FormEvent) {
     e.preventDefault();
     const content = draft.trim();
-    if (!content || !conversationId) return;
+    if (!content || !conversationId || sendMessage.isPending) return;
 
-    // TODO [GAURANSH]: wire POST /api/messages — { conversationId, content, type, isNote }.
-    // Until then the message only lands in this local optimistic list.
-    const optimistic: InboxMessage = {
-      id: `local-${Date.now()}`,
-      type: "TEXT",
-      direction: "OUTBOUND",
-      content,
-      status: "SENT",
-      isNote,
-      isAiGenerated: false,
-      createdAt: new Date().toISOString(),
-    };
-
-    onSend(conversationId, optimistic);
-    setDraft("");
-    setShowEmoji(false);
+    setSendError(null);
+    try {
+      await sendMessage.mutateAsync({ conversationId, content, type: "TEXT", isNote });
+      setDraft("");
+      setShowEmoji(false);
+    } catch (err) {
+      setSendError(err instanceof Error ? err.message : "Failed to send message");
+    }
   }
 
   function insertEmoji(emoji: string) {
@@ -289,6 +297,24 @@ export function ChatWindow({
         onDrop={attach.dragHandlers.onDrop}
       >
         <AttachmentDropOverlay visible={attach.isDragging} />
+
+        {sendError && (
+          <div
+            role="alert"
+            className="mb-2 flex items-start gap-2 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-700"
+          >
+            <AlertCircle className="mt-px h-3.5 w-3.5 shrink-0" />
+            <span className="min-w-0 flex-1">{sendError}</span>
+            <button
+              type="button"
+              onClick={() => setSendError(null)}
+              aria-label="Dismiss error"
+              className="shrink-0 rounded p-0.5 text-rose-500 hover:bg-rose-100"
+            >
+              <X className="h-3.5 w-3.5" />
+            </button>
+          </div>
+        )}
 
         <div className="mb-2 flex flex-wrap items-center gap-2">
           <button
@@ -428,14 +454,18 @@ export function ChatWindow({
 
           <Button
             type="submit"
-            disabled={!draft.trim()}
-            aria-label="Send message"
+            disabled={!draft.trim() || sendMessage.isPending}
+            aria-label={isNote ? "Save note" : "Send message"}
             className={cn(
               "h-10 w-10 shrink-0 rounded-full p-0",
               isNote && "bg-amber-500 hover:bg-amber-600",
             )}
           >
-            <Send className="h-4 w-4" />
+            {sendMessage.isPending ? (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            ) : (
+              <Send className="h-4 w-4" />
+            )}
           </Button>
         </form>
       </div>

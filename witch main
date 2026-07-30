@@ -1,0 +1,22 @@
+ app/(dashboard)/campaigns/page.tsx         | 321 [32m++++++++++++++++++++++++[m[31m-----[m
+ app/(dashboard)/contacts/[id]/page.tsx     |  76 [32m++++[m[31m---[m
+ app/(dashboard)/inbox/page.tsx             | 113 [32m+++++++++[m[31m-[m
+ app/api/campaigns/route.ts                 |  73 [32m++++++[m[31m-[m
+ app/api/contacts/[id]/route.ts             |  44 [32m++[m[31m--[m
+ app/api/conversations/[id]/route.ts        | 145 [32m++++++++[m[31m-----[m
+ app/api/conversations/route.ts             | 123 [32m++++++++++[m[31m-[m
+ app/api/settings/ai/route.ts               | 137 [32m++++++++[m[31m----[m
+ app/api/settings/route.ts                  |  96 [32m+++++[m[31m----[m
+ app/api/settings/whatsapp-test/route.ts    |  58 [32m++++[m[31m--[m
+ app/api/templates/route.ts                 |  26 [32m++[m[31m-[m
+ components/contacts/ContactTable.tsx       |  69 [32m++++++[m[31m-[m
+ components/inbox/ChatWindow.tsx            |  74 [32m+++++[m[31m--[m
+ components/inbox/ConversationList.tsx      |  52 [32m+++[m[31m--[m
+ components/onboarding/OnboardingWizard.tsx |  76 [32m++++[m[31m---[m
+ components/settings/WhatsAppTab.tsx        | 223 [32m++++++++++++++[m[31m------[m
+ hooks/useBusinesses.ts                     |  10 [32m+[m[31m-[m
+ hooks/useMessages.ts                       |  78 [32m+++++++[m
+ hooks/useTemplates.ts                      |  53 [32m++++[m[31m-[m
+ lib/business.ts                            | 128 [32m+++++++++++[m[31m-[m
+ lib/inbound.ts                             | 133 [32m++++++[m[31m------[m
+ 21 files changed, 1632 insertions(+), 476 deletions(-)

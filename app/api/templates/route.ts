@@ -20,14 +20,30 @@ const createTemplateSchema = z.object({
   variables: z.array(z.string()).default([]),
 });
 
+/**
+ * List the active workspace's templates, newest first.
+ *
+ * A `status` filter is accepted so a caller that only cares about approved templates — the campaign
+ * composer, which cannot legally broadcast anything else — asks for them rather than fetching every
+ * draft and rejected template and filtering in the browser.
+ */
 export async function GET(req: NextRequest) {
   const scope = await getBusinessScope();
   if (!scope) return NextResponse.json({ success: false, error: "Unauthorized" }, { status: 401 });
-  const { tenantId } = scope;
+  const { tenantId, businessId } = scope;
 
   try {
+    // Templates are submitted to Meta per WhatsApp Business Account, and each business has its own,
+    // so a list scoped only by tenant showed one workspace the other's templates — and offered
+    // them for a campaign that would be sent from a number they were never approved on.
+    const status = new URL(req.url).searchParams.get("status");
+
     const templates = await prisma.messageTemplate.findMany({
-      where: { tenantId },
+      where: {
+        tenantId,
+        businessId,
+        ...(status ? { status: status.toUpperCase() } : {}),
+      },
       orderBy: { createdAt: "desc" },
     });
     return NextResponse.json({ success: true, data: templates });
@@ -51,8 +67,10 @@ export async function POST(req: NextRequest) {
 
     const data = parsed.data;
 
-    // Check for duplicate name
-    const existing = await prisma.messageTemplate.findFirst({ where: { name: data.name, tenantId } });
+    // Check for duplicate name. Scoped to the business because that is what the schema's
+    // `@@unique([name, businessId])` constrains — a tenant-wide check rejects a name another
+    // workspace happens to use, which the database would have allowed.
+    const existing = await prisma.messageTemplate.findFirst({ where: { name: data.name, businessId } });
     if (existing) return NextResponse.json({ success: false, error: "Template with this name already exists" }, { status: 409 });
 
     const template = await prisma.messageTemplate.create({

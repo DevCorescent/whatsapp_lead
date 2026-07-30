@@ -47,8 +47,18 @@ const CAMPAIGN_LIST_SELECT = {
   id: true,
   name: true,
   status: true,
+  // The list draws a delivery funnel — recipients, sent, delivered, read, replied, failed — and
+  // every counter it renders has to be selected or the column shows a blank where a number
+  // belongs. `scheduledAt` is what puts the send time under a SCHEDULED campaign's name.
+  totalCount: true,
   sentCount: true,
+  deliveredCount: true,
+  readCount: true,
+  repliedCount: true,
   failedCount: true,
+  scheduledAt: true,
+  templateId: true,
+  template: { select: { id: true, name: true } },
   createdAt: true,
   updatedAt: true,
 } satisfies Prisma.CampaignSelect;
@@ -66,6 +76,15 @@ const createCampaignSchema = z.object({
   contactIds: z.array(z.string().min(1)).optional(),
   all: z.boolean().optional(),
   scheduledAt: z.string().optional(),
+  /**
+   * The approved WhatsApp template this broadcast was composed from, when one was chosen.
+   *
+   * Optional because the send itself is a plain text message — `Campaign.templateId` records
+   * *which* approved template the copy came from, which is what makes a campaign auditable against
+   * Meta's approval. It is verified below rather than trusted: an id naming another workspace's
+   * template, or one Meta has not approved, is rejected.
+   */
+  templateId: z.string().min(1).optional(),
 });
 
 type CreateCampaignInput = z.infer<typeof createCampaignSchema>;
@@ -82,11 +101,15 @@ interface CampaignRecipient {
  * `tenantId` is the predicate that makes this a list rather than a leak — it is taken from the
  * session and never from the request, so there is no input a caller could supply to widen it.
  */
-async function listCampaigns(tenantId: string, businessId: string) {
+async function listCampaigns(
+  tenantId: string,
+  businessId: string,
+  status?: CampaignStatus
+) {
   return prisma.campaign.findMany({
     // Campaigns are created with the active businessId and send on that business's WhatsApp
     // number, so the list belongs to that business alone.
-    where: { tenantId, businessId },
+    where: { tenantId, businessId, ...(status && { status }) },
     select: CAMPAIGN_LIST_SELECT,
     orderBy: { createdAt: "desc" },
   });
@@ -158,6 +181,7 @@ async function createCampaign(
         name: input.name,
         status: scheduledAt ? CampaignStatus.SCHEDULED : CampaignStatus.RUNNING,
         ...(scheduledAt ? { scheduledAt } : { startedAt: new Date() }),
+        ...(input.templateId && { templateId: input.templateId }),
         totalCount: contacts.length,
         metadata: { message: input.message },
       },
@@ -225,9 +249,14 @@ async function publishCampaign(
 }
 
 /**
- * Return the tenant's campaigns.
+ * Return the workspace's campaigns, optionally narrowed to one status.
+ *
+ * The status tabs on the campaigns page have always sent `?status=`; nothing read it, so every tab
+ * showed every campaign. It is validated against the schema's own enum rather than interpolated: an
+ * unrecognised value is a client bug, and answering 400 is more useful than a list that silently
+ * ignored the filter.
  */
-export async function GET() {
+export async function GET(req: NextRequest) {
   const scope = await getBusinessScope();
   if (!scope) {
     return NextResponse.json(
@@ -239,7 +268,17 @@ export async function GET() {
   const { tenantId, businessId } = scope;
 
   try {
-    const campaigns = await listCampaigns(tenantId, businessId);
+    const requested = new URL(req.url).searchParams.get("status");
+    const parsedStatus = z.nativeEnum(CampaignStatus).optional().safeParse(requested ?? undefined);
+
+    if (!parsedStatus.success) {
+      return NextResponse.json(
+        { success: false, error: "Unknown campaign status filter" },
+        { status: 400 }
+      );
+    }
+
+    const campaigns = await listCampaigns(tenantId, businessId, parsedStatus.data);
 
     return NextResponse.json({ success: true, data: campaigns });
   } catch (error) {
@@ -286,6 +325,30 @@ export async function POST(req: NextRequest) {
     }
 
     const input = parsed.data;
+
+    // A template is proved to be this workspace's, and approved, before the campaign row exists.
+    // Meta rejects a broadcast composed from anything else, and a campaign that referenced another
+    // business's template would attribute the send to an approval it never had.
+    if (input.templateId) {
+      const template = await prisma.messageTemplate.findFirst({
+        where: { id: input.templateId, tenantId, businessId },
+        select: { status: true },
+      });
+
+      if (!template) {
+        return NextResponse.json(
+          { success: false, error: "Template not found in this workspace" },
+          { status: 400 }
+        );
+      }
+
+      if (template.status.toUpperCase() !== "APPROVED") {
+        return NextResponse.json(
+          { success: false, error: "Only approved templates can be used for a campaign" },
+          { status: 400 }
+        );
+      }
+    }
 
     let contactIdList: string[];
     if (input.all) {

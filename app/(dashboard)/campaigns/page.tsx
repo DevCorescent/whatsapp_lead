@@ -1,13 +1,17 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import Link from "next/link";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
+  AlertCircle,
   Megaphone,
   Plus,
   Play,
   Pause,
   Copy,
+  FileCheck2,
+  Loader2,
   Trash2,
   Users,
   CalendarClock,
@@ -22,9 +26,12 @@ import {
   Field,
   Modal,
   PageHeader,
+  Skeleton,
   SkeletonRows,
   inputClass,
+  selectClass,
 } from "@/components/ui";
+import { useApprovedTemplates, type MessageTemplateDTO } from "@/hooks/useTemplates";
 import { cn, formatCompact, formatDate } from "@/lib/utils";
 
 
@@ -47,16 +54,11 @@ const TABS: { key: "ALL" | CampaignStatus; label: string }[] = [
   { key: "FAILED", label: "Failed" },
 ];
 
-const AUDIENCES = [
-  { value: "all", label: "All contacts" },
-  { value: "tag:vip", label: "Tag — VIP customers" },
-  { value: "tag:new", label: "Tag — New signups" },
-  { value: "stage:qualified", label: "Lead stage — Qualified" },
-  { value: "score:hot", label: "Lead score — Hot" },
-];
+/** The list projection the campaigns API returns — `template` is joined for the name only. */
+type CampaignRow = Campaign & { template?: { id: string; name: string } | null };
 
 function useCampaigns(status: "ALL" | CampaignStatus) {
-  return useQuery<Campaign[]>({
+  return useQuery<CampaignRow[]>({
     queryKey: ["campaigns", status],
     queryFn: async () => {
       const qs = status === "ALL" ? "" : `?status=${status}`;
@@ -91,11 +93,107 @@ function RateBar({ value, total }: { value: number; total: number }) {
   );
 }
 
+/** How many approved templates the summary panel shows before it stops listing them. */
+const TEMPLATE_PREVIEW_LIMIT = 6;
+
+/**
+ * The approved templates this workspace can broadcast with.
+ *
+ * Read from the templates API for the *active workspace* and filtered to Meta's APPROVED state by
+ * the server, because those are the only templates a business-initiated broadcast may use — showing
+ * drafts or rejected ones here would offer a campaign that Meta refuses at send time. There is no
+ * placeholder data behind this panel: when the workspace has no approved template it says so and
+ * points at where templates are created.
+ */
+function ApprovedTemplatesPanel() {
+  const { data, isLoading, isError, refetch } = useApprovedTemplates();
+  const templates = data ?? [];
+
+  return (
+    <Card className="mb-4 p-4">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div className="flex items-center gap-2">
+          <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-emerald-50 text-emerald-600">
+            <FileCheck2 className="h-4 w-4" />
+          </span>
+          <div>
+            <h2 className="text-sm font-semibold text-slate-900">Approved templates</h2>
+            <p className="text-xs text-slate-500">
+              Only templates Meta has approved can be broadcast.
+            </p>
+          </div>
+        </div>
+        {!isLoading && !isError && templates.length > 0 && (
+          <Badge className="bg-emerald-50 text-emerald-700 ring-emerald-600/20">
+            {templates.length} available
+          </Badge>
+        )}
+      </div>
+
+      <div className="mt-3">
+        {isLoading ? (
+          <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+            {Array.from({ length: 3 }).map((_, i) => (
+              <Skeleton key={i} className="h-16 w-full rounded-xl" />
+            ))}
+          </div>
+        ) : isError ? (
+          <div className="flex flex-wrap items-center gap-2 rounded-xl border border-rose-200 bg-rose-50 px-3 py-2.5 text-xs text-rose-700">
+            <AlertCircle className="h-3.5 w-3.5 shrink-0" />
+            <span className="min-w-0 flex-1">
+              Couldn&apos;t load templates for this workspace.
+            </span>
+            <Button variant="secondary" size="sm" onClick={() => void refetch()}>
+              Retry
+            </Button>
+          </div>
+        ) : templates.length === 0 ? (
+          <p className="rounded-xl bg-slate-50 px-3 py-2.5 text-xs text-slate-500">
+            No approved templates yet. Submit a template to Meta from{" "}
+            <Link href="/settings" className="font-medium text-emerald-700 hover:underline">
+              Settings
+            </Link>{" "}
+            — approved ones appear here automatically, and campaigns can use them straight away.
+          </p>
+        ) : (
+          <>
+            <ul className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+              {templates.slice(0, TEMPLATE_PREVIEW_LIMIT).map((template) => (
+                <li
+                  key={template.id}
+                  className="min-w-0 rounded-xl bg-slate-50 px-3 py-2 ring-1 ring-inset ring-slate-200/70"
+                >
+                  <p className="flex items-center gap-1.5">
+                    <span className="truncate text-xs font-semibold text-slate-800">
+                      {template.name}
+                    </span>
+                    <span className="shrink-0 text-[10px] uppercase tracking-wide text-slate-400">
+                      {template.language}
+                    </span>
+                  </p>
+                  <p className="mt-0.5 line-clamp-2 text-[11px] leading-snug text-slate-500">
+                    {template.body}
+                  </p>
+                </li>
+              ))}
+            </ul>
+            {templates.length > TEMPLATE_PREVIEW_LIMIT && (
+              <p className="mt-2 text-xs text-slate-400">
+                +{templates.length - TEMPLATE_PREVIEW_LIMIT} more available when you create a campaign.
+              </p>
+            )}
+          </>
+        )}
+      </div>
+    </Card>
+  );
+}
+
 export default function CampaignsPage() {
   const queryClient = useQueryClient();
   const [tab, setTab] = useState<"ALL" | CampaignStatus>("ALL");
   const [open, setOpen] = useState(false);
-  const { data, isLoading, isError } = useCampaigns(tab);
+  const { data, isLoading, isError, refetch } = useCampaigns(tab);
 
   const campaigns = useMemo(() => data ?? [], [data]);
 
@@ -139,6 +237,8 @@ export default function CampaignsPage() {
         }
       />
 
+      <ApprovedTemplatesPanel />
+
       {/* Status filter tabs */}
       <div className="scrollbar-slim mb-4 flex gap-1 overflow-x-auto border-b border-slate-200">
         {TABS.map((t) => (
@@ -162,15 +262,24 @@ export default function CampaignsPage() {
           <div className="p-4">
             <SkeletonRows rows={6} />
           </div>
-        ) : isError || campaigns.length === 0 ? (
+        ) : isError ? (
+          // Failure and emptiness are different facts and get different answers: one offers a
+          // retry, the other offers the action that fills the page.
+          <EmptyState
+            icon={AlertCircle}
+            title="Couldn't load campaigns"
+            description="The campaigns service didn't respond. Your broadcasts are unaffected — this is only the list."
+            action={
+              <Button variant="secondary" onClick={() => void refetch()}>
+                Try again
+              </Button>
+            }
+          />
+        ) : campaigns.length === 0 ? (
           <EmptyState
             icon={Megaphone}
-            title={isError ? "Campaigns aren't available yet" : "No campaigns yet"}
-            description={
-              isError
-                ? "The campaigns API is still being built. Once it's live, your broadcasts and their delivery stats will show up here."
-                : "Create your first broadcast to reach a segment of contacts on WhatsApp."
-            }
+            title="No campaigns yet"
+            description="Create your first broadcast to reach your contacts on WhatsApp."
             action={
               <Button onClick={() => setOpen(true)}>
                 <Plus className="h-4 w-4" />
@@ -200,6 +309,12 @@ export default function CampaignsPage() {
                   <tr key={c.id} className="hover:bg-slate-50">
                     <td className="px-4 py-3">
                       <p className="font-medium text-slate-900">{c.name}</p>
+                      {c.template?.name && (
+                        <p className="mt-0.5 flex items-center gap-1 text-xs text-slate-500">
+                          <FileCheck2 className="h-3 w-3 text-emerald-600" />
+                          {c.template.name}
+                        </p>
+                      )}
                       {c.scheduledAt && (
                         <p className="mt-0.5 flex items-center gap-1 text-xs text-slate-500">
                           <CalendarClock className="h-3 w-3" />
@@ -279,16 +394,58 @@ export default function CampaignsPage() {
   );
 }
 
+/** What POST /api/campaigns accepts. `templateId` records which approved template was used. */
+interface CreateCampaignPayload {
+  name: string;
+  message: string;
+  templateId?: string;
+  all?: boolean;
+  scheduledAt?: string;
+}
+
 function CreateCampaignModal({ open, onClose }: { open: boolean; onClose: () => void }) {
   const queryClient = useQueryClient();
   const [name, setName] = useState("");
   const [message, setMessage] = useState("");
-  const [audience, setAudience] = useState("all");
+  const [templateId, setTemplateId] = useState("");
   const [schedule, setSchedule] = useState("");
   const [error, setError] = useState<string | null>(null);
 
+  const {
+    data: templateData,
+    isLoading: templatesLoading,
+    isError: templatesError,
+    refetch: refetchTemplates,
+  } = useApprovedTemplates();
+  const templates = templateData ?? [];
+
+  const selectedTemplate: MessageTemplateDTO | null =
+    templates.find((t) => t.id === templateId) ?? null;
+
+  /**
+   * Choosing a template takes over the message body.
+   *
+   * The body has to be the approved copy, character for character — that is what Meta signed off
+   * on, and editing it is what turns an approved broadcast into a rejected one. So the textarea
+   * becomes read-only and shows the template's body, and `templateId` travels with the campaign so
+   * the send is attributable to that approval. Clearing the selection hands the composer back.
+   */
+  const chooseTemplate = (nextId: string) => {
+    setTemplateId(nextId);
+    const template = templates.find((t) => t.id === nextId);
+    setMessage(template ? template.body : "");
+  };
+
+  const reset = () => {
+    setName("");
+    setMessage("");
+    setTemplateId("");
+    setSchedule("");
+    setError(null);
+  };
+
   const create = useMutation({
-    mutationFn: async (data: { name: string; message: string; all?: boolean; scheduledAt?: string }) => {
+    mutationFn: async (data: CreateCampaignPayload) => {
       const res = await fetch("/api/campaigns", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -300,7 +457,7 @@ function CreateCampaignModal({ open, onClose }: { open: boolean; onClose: () => 
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["campaigns"] });
-      setName(""); setMessage(""); setAudience("all"); setSchedule(""); setError(null);
+      reset();
       onClose();
     },
     onError: (err: Error) => setError(err.message),
@@ -323,7 +480,10 @@ function CreateCampaignModal({ open, onClose }: { open: boolean; onClose: () => 
           create.mutate({
             name,
             message,
-            all: audience === "all",
+            // Every campaign goes to the workspace's whole contact list; the API supports an
+            // explicit `contactIds` audience, which no screen builds yet.
+            all: true,
+            ...(templateId && { templateId }),
             ...(when && !Number.isNaN(when.getTime()) && { scheduledAt: when.toISOString() }),
           });
         }}
@@ -338,51 +498,96 @@ function CreateCampaignModal({ open, onClose }: { open: boolean; onClose: () => 
           />
         </Field>
 
+        <Field label="WhatsApp template" htmlFor="campaign-template">
+          {templatesLoading ? (
+            <Skeleton className="h-9 w-full" />
+          ) : templatesError ? (
+            <div className="flex flex-wrap items-center gap-2 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-700">
+              <AlertCircle className="h-3.5 w-3.5 shrink-0" />
+              <span className="min-w-0 flex-1">Couldn&apos;t load approved templates.</span>
+              <Button type="button" variant="secondary" size="sm" onClick={() => void refetchTemplates()}>
+                Retry
+              </Button>
+            </div>
+          ) : (
+            <select
+              id="campaign-template"
+              value={templateId}
+              onChange={(e) => chooseTemplate(e.target.value)}
+              className={selectClass}
+            >
+              <option value="">
+                {templates.length === 0
+                  ? "No approved templates — write a custom message"
+                  : "Custom message (no template)"}
+              </option>
+              {templates.map((template) => (
+                <option key={template.id} value={template.id}>
+                  {template.name} · {template.category} · {template.language}
+                </option>
+              ))}
+            </select>
+          )}
+          <p className="mt-1.5 flex items-start gap-1.5 text-xs text-slate-500">
+            <FileCheck2 className="mt-px h-3.5 w-3.5 shrink-0 text-slate-400" />
+            <span>
+              {templates.length === 0
+                ? "Only templates Meta has approved can be listed here. Submit one to broadcast within Meta's rules."
+                : "Approved templates only. Meta rejects a business-initiated broadcast that isn't one."}
+            </span>
+          </p>
+        </Field>
+
         <Field label="Message" htmlFor="campaign-message" required>
           <textarea
             id="campaign-message"
             value={message}
             onChange={(e) => setMessage(e.target.value)}
+            readOnly={Boolean(selectedTemplate)}
             rows={5}
-            className={cn(inputClass, "resize-y")}
+            className={cn(
+              inputClass,
+              "resize-y",
+              selectedTemplate && "bg-slate-50 text-slate-600",
+            )}
             placeholder={"Hi {{name}}, we're running 30% off this week…"}
           />
-          <p className="mt-1.5 flex items-start gap-1.5 text-xs text-slate-500">
-            <Info className="mt-px h-3.5 w-3.5 shrink-0 text-slate-400" />
-            <span>
-              Use{" "}
-              <code className="rounded bg-slate-100 px-1 py-0.5 font-mono text-[11px] text-slate-700">
-                {"{{name}}"}
-              </code>{" "}
-              to personalise each message. Other variables:{" "}
-              <code className="rounded bg-slate-100 px-1 py-0.5 font-mono text-[11px] text-slate-700">
-                {"{{company}}"}
-              </code>{" "}
-              <code className="rounded bg-slate-100 px-1 py-0.5 font-mono text-[11px] text-slate-700">
-                {"{{phone}}"}
-              </code>
-            </span>
-          </p>
+          {selectedTemplate ? (
+            <p className="mt-1.5 flex items-start gap-1.5 text-xs text-slate-500">
+              <Info className="mt-px h-3.5 w-3.5 shrink-0 text-slate-400" />
+              <span>
+                This is the approved body of{" "}
+                <strong className="font-medium text-slate-700">{selectedTemplate.name}</strong> and
+                cannot be edited.
+                {(selectedTemplate.variables?.length ?? 0) > 0 && (
+                  <> Variables: {selectedTemplate.variables.map((v) => `{{${v}}}`).join(", ")}.</>
+                )}
+              </span>
+            </p>
+          ) : (
+            <p className="mt-1.5 flex items-start gap-1.5 text-xs text-slate-500">
+              <Info className="mt-px h-3.5 w-3.5 shrink-0 text-slate-400" />
+              <span>
+                Use{" "}
+                <code className="rounded bg-slate-100 px-1 py-0.5 font-mono text-[11px] text-slate-700">
+                  {"{{name}}"}
+                </code>{" "}
+                to personalise each message. Other variables:{" "}
+                <code className="rounded bg-slate-100 px-1 py-0.5 font-mono text-[11px] text-slate-700">
+                  {"{{company}}"}
+                </code>{" "}
+                <code className="rounded bg-slate-100 px-1 py-0.5 font-mono text-[11px] text-slate-700">
+                  {"{{phone}}"}
+                </code>
+              </span>
+            </p>
+          )}
         </Field>
 
-        <Field label="Audience" htmlFor="campaign-audience">
-          <select
-            id="campaign-audience"
-            value={audience}
-            onChange={(e) => setAudience(e.target.value)}
-            className={inputClass}
-          >
-            {AUDIENCES.map((a) => (
-              <option key={a.value} value={a.value}>
-                {a.label}
-              </option>
-            ))}
-          </select>
-          <p className="mt-1.5 flex items-center gap-1.5 text-xs text-slate-500">
-            <Users className="h-3.5 w-3.5 text-slate-400" />
-            Segment builder coming soon — for now the whole segment is used.
-          </p>
-        </Field>
+        <div className="flex items-center gap-1.5 rounded-lg bg-slate-50 px-3 py-2 text-xs text-slate-600">
+          <Users className="h-3.5 w-3.5 shrink-0 text-slate-400" />
+          Sends to every contact in this workspace.
+        </div>
 
         <Field label="Schedule" htmlFor="campaign-schedule">
           <input
@@ -404,7 +609,11 @@ function CreateCampaignModal({ open, onClose }: { open: boolean; onClose: () => 
             Cancel
           </Button>
           <Button type="submit" disabled={!name.trim() || !message.trim() || create.isPending}>
-            {create.isPending ? "Creating…" : "Create Campaign"}
+            {create.isPending ? (
+              <><Loader2 className="h-4 w-4 animate-spin" /> Creating…</>
+            ) : (
+              "Create Campaign"
+            )}
           </Button>
         </div>
       </form>

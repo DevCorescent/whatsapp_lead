@@ -1,3 +1,5 @@
+"use client";
+
 // ============================================================================
 // OWNER  : Gauransh
 // MODULE : React Query Hooks — Inbox
@@ -5,6 +7,8 @@
 // HOOKS
 // useConversations(filters)  - GET   /api/conversations
 // useConversation(id)        - GET   /api/conversations/[id]
+// useCreateConversation()    - POST  /api/conversations
+// useStartConversation()     - POST  /api/conversations, then open it in the inbox
 // useSendMessage()           - POST  /api/messages
 // useUpdateConversation()    - PATCH /api/conversations/[id]
 // useResolveConversation()   - PATCH /api/conversations/[id] { status: "RESOLVED" }
@@ -19,6 +23,7 @@
 // Any narrower invalidation would refresh the thread and leave the list showing a stale preview, or
 // the reverse.
 
+import { useRouter } from "next/navigation";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import type { Message } from "@prisma/client";
 
@@ -105,6 +110,79 @@ export function useConversation(id: string) {
     enabled: !!id,
     refetchInterval: 15000, // poll for new messages
   });
+}
+
+/** What POST /api/conversations answers with: the thread, and whether it had to be created. */
+export interface StartedConversation {
+  id: string;
+  created: boolean;
+}
+
+/**
+ * Open the conversation with a saved contact, creating it only if there isn't one.
+ *
+ * The route is idempotent, so this is safe to call from anywhere a contact is shown — the contacts
+ * table, the contact detail page, the inbox's "New conversation" picker — without any of them
+ * having to know whether a thread already exists. That is the whole point: every caller asks the
+ * same question ("give me the thread with this contact") and the server owns the answer, which is
+ * what stops two entry points from racing into two threads for one contact.
+ *
+ * Invalidating the `["conversations"]` prefix is what makes the new thread appear in the inbox list
+ * without a reload; `["contacts"]` follows because the contact rows carry a conversation count.
+ */
+export function useCreateConversation() {
+  const queryClient = useQueryClient();
+
+  return useMutation<StartedConversation, Error, { contactId: string }>({
+    mutationFn: async ({ contactId }) => {
+      const res = await fetch("/api/conversations", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ contactId }),
+      });
+
+      const payload = (await res.json().catch(() => ({}))) as {
+        success?: boolean;
+        data?: { id?: string };
+        created?: boolean;
+        error?: string;
+      };
+
+      if (!res.ok || !payload.success || !payload.data?.id) {
+        throw new Error(payload.error ?? "Failed to start conversation");
+      }
+
+      return { id: payload.data.id, created: Boolean(payload.created) };
+    },
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ["conversations"] });
+      void queryClient.invalidateQueries({ queryKey: ["contacts"] });
+    },
+  });
+}
+
+/**
+ * "Message this contact": resolve the thread, then land the user in it.
+ *
+ * The navigation is part of the action rather than left to each caller, because the destination is
+ * not a page — it is a specific thread on a page, and every caller would otherwise have to know how
+ * the inbox encodes a selected conversation in its URL. Keeping that knowledge in one hook means
+ * the query parameter is spelled once.
+ *
+ * The mutation object is returned alongside `start` so callers can disable their button while the
+ * request is in flight and show the server's own error if it fails.
+ */
+export function useStartConversation() {
+  const router = useRouter();
+  const mutation = useCreateConversation();
+
+  const start = async (contactId: string) => {
+    const conversation = await mutation.mutateAsync({ contactId });
+    router.push(`/inbox?conversation=${conversation.id}`);
+    return conversation;
+  };
+
+  return { start, ...mutation };
 }
 
 /**

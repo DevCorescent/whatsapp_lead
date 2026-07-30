@@ -8,10 +8,11 @@
 // PATCH  - Reassign a conversation or move it through the status lifecycle
 //
 // ACCESS
-// GET    - Authenticated. Scoped to session.user.tenantId; a conversation owned by
-//          another workspace answers 404, exactly as a non-existent one does.
-// PATCH  - Authenticated. Same scoping. Only `status` and `assigneeId` are writable;
-//          any other field in the body is rejected rather than ignored.
+// GET    - Authenticated. Scoped to the caller's tenant *and* active business; a
+//          conversation owned by another workspace answers 404, exactly as a
+//          non-existent one does.
+// PATCH  - Authenticated. Same scoping. Only `status`, `assigneeId` and `isAiActive`
+//          are writable; any other field in the body is rejected rather than ignored.
 // ============================================================================
 //
 // The thread view is the read counterpart to the webhook's ingestion path and to POST /api/messages:
@@ -20,7 +21,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { ConversationStatus } from "@prisma/client";
 import { z } from "zod";
-import { auth } from "@/lib/auth";
+import { getBusinessScope } from "@/lib/business";
 import { prisma } from "@/lib/prisma";
 
 /**
@@ -77,34 +78,84 @@ const updateConversationSchema = z
 type UpdateConversationInput = z.infer<typeof updateConversationSchema>;
 
 /**
- * Resolve a conversation while enforcing tenant isolation.
+ * The columns the thread view renders.
+ *
+ * The contact projection is wider than the list's on purpose: the inbox merges this payload *over*
+ * the list row it already holds, so any contact field missing here is not merely absent from the
+ * panel — it replaces the value the list had. That is why the contact panel showed a name and
+ * phone number and nothing else: email, company, avatar, tags and the lead were never selected,
+ * so the merge overwrote them with undefined. `assignedTo` is included for the same reason — the
+ * panel's assignee control reads the relation, not just the id.
+ */
+const CONVERSATION_DETAIL_SELECT = {
+  id: true,
+  status: true,
+  assignedToId: true,
+  // The inbox header's AI auto-reply switch reads this. Without it the field arrives
+  // undefined, the switch renders off however the row is actually set, and the setting
+  // looks like it failed to save.
+  isAiActive: true,
+  unreadCount: true,
+  labels: true,
+  lastMessagePreview: true,
+  lastMessageAt: true,
+  createdAt: true,
+  updatedAt: true,
+  assignedTo: {
+    select: { id: true, name: true, avatar: true },
+  },
+  contact: {
+    select: {
+      id: true,
+      name: true,
+      phone: true,
+      email: true,
+      company: true,
+      avatarUrl: true,
+      tags: { select: { tag: { select: { id: true, name: true, color: true } } } },
+      leads: {
+        orderBy: { createdAt: "desc" as const },
+        take: 1,
+        select: {
+          id: true,
+          title: true,
+          score: true,
+          scoreLabel: true,
+          value: true,
+          currency: true,
+          stage: { select: { id: true, name: true, color: true } },
+        },
+      },
+    },
+  },
+} as const;
+
+/**
+ * Resolve a conversation while enforcing tenant *and* workspace isolation.
  *
  * `findFirst`, never `findUnique`. `id` is a cuid and unique on its own, so `findUnique({ id })`
  * would happily return another workspace's conversation — uniqueness identifies a row, it does not
- * authorise access to it. Folding `tenantId` into the predicate means a foreign conversation is
- * indistinguishable from one that does not exist, which is the only answer that leaks nothing: a
- * distinct 403 would confirm the row is real and tell the caller they had found something.
+ * authorise access to it. Folding the ownership predicates into the query means a foreign
+ * conversation is indistinguishable from one that does not exist, which is the only answer that
+ * leaks nothing: a distinct 403 would confirm the row is real and tell the caller they had found
+ * something.
+ *
+ * `businessId` is part of that predicate, not just `tenantId`. GET /api/conversations lists one
+ * business's threads, so this route answering for any thread in the tenant is the seam where the
+ * two disagree — and the inbox's `?conversation=<id>` deep link is exactly what walks through it:
+ * a link bookmarked in one workspace, followed after switching to another, loaded the first
+ * workspace's thread into the second workspace's inbox. Scoping both ends the same way turns that
+ * into the 404 the inbox already knows how to recover from (it clears the selection and shows the
+ * list) instead of a cross-workspace read.
  */
-async function resolveConversation(tenantId: string, conversationId: string) {
+async function resolveConversation(
+  tenantId: string,
+  businessId: string,
+  conversationId: string
+) {
   return prisma.conversation.findFirst({
-    where: { id: conversationId, tenantId },
-    select: {
-      id: true,
-      status: true,
-      assignedToId: true,
-      // The inbox header's AI auto-reply switch reads this. Without it the field arrives
-      // undefined, the switch renders off however the row is actually set, and the setting
-      // looks like it failed to save.
-      isAiActive: true,
-      unreadCount: true,
-      lastMessagePreview: true,
-      lastMessageAt: true,
-      createdAt: true,
-      updatedAt: true,
-      contact: {
-        select: { id: true, name: true, phone: true },
-      },
-    },
+    where: { id: conversationId, tenantId, businessId },
+    select: CONVERSATION_DETAIL_SELECT,
   });
 }
 
@@ -201,20 +252,10 @@ async function updateConversation(
       assignedToId: input.assigneeId,
       isAiActive: input.isAiActive,
     },
-    select: {
-      id: true,
-      status: true,
-      assignedToId: true,
-      isAiActive: true,
-      unreadCount: true,
-      lastMessagePreview: true,
-      lastMessageAt: true,
-      createdAt: true,
-      updatedAt: true,
-      contact: {
-        select: { id: true, name: true, phone: true },
-      },
-    },
+    // The same projection the GET returns: the client merges both responses into one cached
+    // conversation, so a narrower shape here would blank out fields the thread view had already
+    // loaded the moment anything was reassigned or resolved.
+    select: CONVERSATION_DETAIL_SELECT,
   });
 }
 
@@ -229,15 +270,18 @@ export async function GET(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
-  const session = await auth();
-  if (!session?.user) {
+  // getBusinessScope rather than auth(): the thread belongs to one workspace, which lives in the
+  // current_business cookie and is re-validated against the tenant on every call — the same
+  // resolution GET /api/conversations uses to build the list this thread was selected from.
+  const scope = await getBusinessScope();
+  if (!scope) {
     return NextResponse.json(
       { success: false, error: "Unauthorized" },
       { status: 401 }
     );
   }
 
-  const { tenantId } = session.user;
+  const { tenantId, businessId } = scope;
 
   try {
     const { id } = await params;
@@ -255,7 +299,7 @@ export async function GET(
       );
     }
 
-    const conversation = await resolveConversation(tenantId, id);
+    const conversation = await resolveConversation(tenantId, businessId, id);
     if (!conversation) {
       return NextResponse.json(
         { success: false, error: "Conversation not found" },
@@ -294,15 +338,18 @@ export async function PATCH(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
-  const session = await auth();
-  if (!session?.user) {
+  // Same scope as the GET above. A thread this workspace cannot read is not one it may reassign or
+  // resolve either, and resolving the two differently is how an id from another workspace becomes
+  // writable through a link that will not even render.
+  const scope = await getBusinessScope();
+  if (!scope) {
     return NextResponse.json(
       { success: false, error: "Unauthorized" },
       { status: 401 }
     );
   }
 
-  const { tenantId } = session.user;
+  const { tenantId, businessId } = scope;
 
   try {
     const { id } = await params;
@@ -315,7 +362,7 @@ export async function PATCH(
       );
     }
 
-    const conversation = await resolveConversation(tenantId, id);
+    const conversation = await resolveConversation(tenantId, businessId, id);
     if (!conversation) {
       return NextResponse.json(
         { success: false, error: "Conversation not found" },

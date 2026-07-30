@@ -1,22 +1,22 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState } from "react";
 import { useMutation } from "@tanstack/react-query";
 import { Bot, CheckCircle2, MessageSquare, Rocket, X } from "lucide-react";
 import { Button, Field, inputClass } from "@/components/ui";
+import { useBusinesses, useUpdateBusiness } from "@/hooks/useBusinesses";
 import { cn } from "@/lib/utils";
 
 const STORAGE_KEY = (tenantId: string) => `onboarded_v1_${tenantId}`;
 
 function useOnboardingVisible(tenantId: string) {
-  const [visible, setVisible] = useState(false);
-
-  useEffect(() => {
-    // Only show if never completed and user is on a real browser
-    if (typeof window === "undefined") return;
-    const done = localStorage.getItem(STORAGE_KEY(tenantId));
-    if (!done) setVisible(true);
-  }, [tenantId]);
+  // Read once, during the first render, rather than from an effect. The wizard is loaded with
+  // `ssr: false`, so `localStorage` is available by the time this runs — and deciding in an effect
+  // meant a tenant who had already finished setup got a frame of the wizard before it vanished.
+  const [visible, setVisible] = useState(() => {
+    if (typeof window === "undefined") return false;
+    return !localStorage.getItem(STORAGE_KEY(tenantId));
+  });
 
   const dismiss = () => {
     localStorage.setItem(STORAGE_KEY(tenantId), "1");
@@ -45,26 +45,42 @@ export function OnboardingWizard({ tenantId, tenantName }: { tenantId: string; t
   const [aiEnabled, setAiEnabled] = useState(false);
   const [autoReply, setAutoReply] = useState(false);
 
+  const { data: businessesData } = useBusinesses();
+  const updateBusiness = useUpdateBusiness();
+
+  // The workspace being onboarded. A signed-in user always resolves to one server-side, so the
+  // fallback to the first row only matters while the list is still loading.
+  const businessId = businessesData?.currentBusinessId ?? businessesData?.data?.[0]?.id ?? null;
+
+  /**
+   * Save what the wizard collected against the *active workspace*.
+   *
+   * The WhatsApp credentials go to the business, not to the tenant: they are what Meta routes
+   * inbound messages by, and a tenant with more than one number cannot share one set. The AI flags
+   * go through /api/settings/ai, which is workspace-scoped for the same reason.
+   *
+   * Sequential rather than concurrent — if the credentials fail to save there is no point enabling
+   * an assistant that has no number to reply on, and the error is surfaced instead of swallowed.
+   */
   const saveSettings = useMutation({
     mutationFn: async () => {
-      const promises = [];
-      if (waPhoneNumberId || waApiKey) {
-        promises.push(
-          fetch("/api/settings", {
-            method: "PATCH",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ waPhoneNumberId, waApiKey }),
-          })
-        );
+      if ((waPhoneNumberId.trim() || waApiKey.trim()) && businessId) {
+        await updateBusiness.mutateAsync({
+          id: businessId,
+          ...(waPhoneNumberId.trim() && { whatsappPhoneNumberId: waPhoneNumberId.trim() }),
+          ...(waApiKey.trim() && { whatsappAccessToken: waApiKey.trim() }),
+        });
       }
-      promises.push(
-        fetch("/api/settings/ai", {
-          method: "PATCH",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ aiEnabled, autoReply }),
-        })
-      );
-      await Promise.all(promises);
+
+      const res = await fetch("/api/settings/ai", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ aiEnabled, autoReply }),
+      });
+      if (!res.ok) {
+        const json = await res.json().catch(() => ({}));
+        throw new Error((json as { error?: string }).error ?? "Could not save your AI settings");
+      }
     },
     onSuccess: () => {
       setStep("done");
@@ -119,7 +135,7 @@ export function OnboardingWizard({ tenantId, tenantName }: { tenantId: string; t
             <div className="space-y-3">
               <div className="rounded-xl border border-slate-100 bg-slate-50 p-4 text-sm text-slate-600">
                 <p className="font-semibold text-slate-800">Hi there! 👋</p>
-                <p className="mt-1">You're setting up <strong>{tenantName ?? "your workspace"}</strong>. We'll help you:</p>
+                <p className="mt-1">You&apos;re setting up <strong>{tenantName ?? "your workspace"}</strong>. We&apos;ll help you:</p>
                 <ul className="mt-2 space-y-1 list-none">
                   <li className="flex items-center gap-2"><CheckCircle2 className="h-4 w-4 text-emerald-500 shrink-0" />Connect your WhatsApp Business number</li>
                   <li className="flex items-center gap-2"><CheckCircle2 className="h-4 w-4 text-emerald-500 shrink-0" />Enable AI auto-replies</li>
@@ -163,6 +179,12 @@ export function OnboardingWizard({ tenantId, tenantName }: { tenantId: string; t
                   <span className="block text-sm text-slate-500">AI replies immediately when a new message arrives.</span>
                 </span>
               </label>
+
+              {saveSettings.isError && (
+                <p className="rounded-lg bg-rose-50 px-3 py-2 text-xs text-rose-700">
+                  {(saveSettings.error as Error).message}
+                </p>
+              )}
             </div>
           )}
 

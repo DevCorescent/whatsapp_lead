@@ -1,6 +1,6 @@
 "use client";
 
-import { MessageSquare, Search, SearchX, WifiOff } from "lucide-react";
+import { MessageSquare, MessageSquarePlus, Search, SearchX, WifiOff } from "lucide-react";
 import type {
   ConversationStatus,
   LeadScoreLabel,
@@ -8,7 +8,7 @@ import type {
   MessageStatus,
   MessageType,
 } from "@prisma/client";
-import { Avatar, EmptyState, Skeleton } from "@/components/ui";
+import { Avatar, Button, EmptyState, Skeleton } from "@/components/ui";
 import { cn, timeAgo } from "@/lib/utils";
 
 // ─── Shared inbox types ───────────────────────────────────────────────────────
@@ -77,6 +77,8 @@ export interface InboxConversation {
   lastMessageAt?: string | Date | null;
   lastMessagePreview?: string | null;
   createdAt?: string | Date | null;
+  /** Last change of any kind — how a thread with no messages yet is still ordered. */
+  updatedAt?: string | Date | null;
   contact?: InboxContact | null;
   assignedToId?: string | null;
   assignedTo?: InboxAgent | null;
@@ -123,6 +125,7 @@ export function ConversationList({
   onSearchChange,
   tab,
   onTabChange,
+  onNewConversation,
   className,
 }: {
   conversations: InboxConversation[];
@@ -134,6 +137,8 @@ export function ConversationList({
   onSearchChange: (value: string) => void;
   tab: InboxTab;
   onTabChange: (tab: InboxTab) => void;
+  /** Opens the contact picker. Omitted when the host has no way to start a conversation. */
+  onNewConversation?: () => void;
   className?: string;
 }) {
   const hasQuery = search.trim().length > 0;
@@ -142,16 +147,29 @@ export function ConversationList({
     <div className={cn("flex min-h-0 flex-col border-r border-slate-200 bg-white", className)}>
       {/* Search */}
       <div className="shrink-0 border-b border-slate-100 p-3">
-        <div className="relative">
-          <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
-          <input
-            type="search"
-            value={search}
-            onChange={(e) => onSearchChange(e.target.value)}
-            placeholder="Search conversations"
-            aria-label="Search conversations"
-            className="w-full rounded-lg bg-slate-50 py-2 pl-9 pr-3 text-sm text-slate-900 ring-1 ring-inset ring-transparent transition placeholder:text-slate-400 focus:bg-white focus:outline-none focus:ring-2 focus:ring-emerald-500"
-          />
+        <div className="flex items-center gap-2">
+          <div className="relative min-w-0 flex-1">
+            <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+            <input
+              type="search"
+              value={search}
+              onChange={(e) => onSearchChange(e.target.value)}
+              placeholder="Search conversations"
+              aria-label="Search conversations"
+              className="w-full rounded-lg bg-slate-50 py-2 pl-9 pr-3 text-sm text-slate-900 ring-1 ring-inset ring-transparent transition placeholder:text-slate-400 focus:bg-white focus:outline-none focus:ring-2 focus:ring-emerald-500"
+            />
+          </div>
+          {onNewConversation && (
+            <button
+              type="button"
+              onClick={onNewConversation}
+              title="New conversation"
+              aria-label="New conversation"
+              className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-emerald-600 text-white shadow-sm shadow-emerald-600/25 transition hover:bg-emerald-700 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-600"
+            >
+              <MessageSquarePlus className="h-4 w-4" />
+            </button>
+          )}
         </div>
 
         {/* Filter tabs. Five of these have to survive a 320px column, so the
@@ -215,7 +233,15 @@ export function ConversationList({
             <EmptyState
               icon={MessageSquare}
               title="No conversations yet"
-              description="Incoming WhatsApp messages will appear here."
+              description="Incoming WhatsApp messages appear here — or start one with a saved contact."
+              action={
+                onNewConversation && (
+                  <Button variant="secondary" onClick={onNewConversation}>
+                    <MessageSquarePlus className="h-4 w-4" />
+                    New conversation
+                  </Button>
+                )
+              }
             />
           )
         ) : (

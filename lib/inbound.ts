@@ -29,8 +29,10 @@ import {
 } from "@prisma/client";
 import type { Contact, Conversation, Message } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
-import { ensureDefaultBusiness, resolveWhatsAppCreds } from "@/lib/business";
-import { decryptSecret } from "@/lib/crypto";
+import { ensureDefaultBusiness, resolveAiConfig, resolveWhatsAppCreds } from "@/lib/business";
+// The find-or-create rule is shared with POST /api/conversations and lives in its own module so
+// that route does not have to import this file's AI, vector-store and queue dependencies.
+import { findOrCreateConversation } from "@/lib/conversations";
 import { generateReply } from "@/lib/ai";
 import { retrieveContext } from "@/lib/rag";
 import { pusher, tenantChannel, PusherEvent } from "@/lib/pusher";
@@ -72,6 +74,35 @@ const META_TO_MESSAGE_TYPE: Record<string, MessageType> = {
 export type ResolvedTenant = Prisma.TenantSettingsGetPayload<{
   include: { tenant: true };
 }> & { businessId: string };
+
+/**
+ * Overlay the resolved workspace's AI configuration onto the tenant row.
+ *
+ * `ResolvedTenant` is shaped by `TenantSettings`, which is tenant-wide — one row for every
+ * WhatsApp account the tenant owns. The AI flags on it therefore cannot express "the assistant is
+ * on for this number and off for that one", and reading them directly is what made enabling AI in
+ * one workspace enable it in all of them. `resolveAiConfig` answers the same question per
+ * business, so the five fields the reply path reads are replaced with its answer here, once, at
+ * the point the tenant is resolved — rather than at each of the four call sites that consume them.
+ *
+ * The shape is unchanged on purpose: `handleAutoReply` and `dispatchAutoReply` keep reading
+ * `tenant.aiEnabled`, and neither has to know where the value came from.
+ */
+async function withWorkspaceAiConfig(tenant: ResolvedTenant): Promise<ResolvedTenant> {
+  const ai = await resolveAiConfig(tenant.businessId);
+  if (!ai) return tenant;
+
+  return {
+    ...tenant,
+    aiEnabled: ai.aiEnabled,
+    autoReply: ai.autoReply,
+    autoReplyDelay: ai.autoReplyDelay,
+    // `TenantSettings.aiModel` is non-nullable with a default; the business override is nullable,
+    // so an unset business model keeps the tenant's rather than erasing it.
+    aiModel: ai.aiModel ?? tenant.aiModel,
+    aiPersonality: ai.aiPersonality,
+  };
+}
 
 /**
  * Resolve the owning tenant for an inbound WhatsApp event.
@@ -148,7 +179,7 @@ export async function resolveTenant(phoneNumberId: string): Promise<ResolvedTena
     businessId = business?.id ?? (await ensureDefaultBusiness(settings.tenantId)).id;
   }
 
-  return { ...settings, businessId };
+  return withWorkspaceAiConfig({ ...settings, businessId });
 }
 
 /**
@@ -183,7 +214,7 @@ export async function resolveTenantById(
     );
   }
 
-  return { ...settings, businessId };
+  return withWorkspaceAiConfig({ ...settings, businessId });
 }
 
 /**
@@ -222,46 +253,6 @@ async function upsertContact(
     // A contact with no profile name is still addressable by number, so the phone
     // doubles as the display name until an agent or a later payload supplies a better one.
     create: { tenantId, businessId, phone, name: profileName || phone },
-  });
-}
-
-/**
- * Resolve the conversation an inbound message belongs to, opening one on first contact.
- *
- * A contact's messages must land in a single thread rather than fragmenting into a new
- * conversation per delivery, so an existing thread is always reused when one is present.
- * Ordering by `createdAt` desc makes the choice deterministic in the event that historical
- * data already holds more than one row for the pair — the newest thread wins.
- *
- * Only `tenantId` and `contactId` are supplied on create. Every other column the inbox relies
- * on is defaulted by the schema (`status` → OPEN, `channel` → WHATSAPP, `unreadCount` → 0);
- * restating them here would duplicate the schema's intent in application code and drift from it.
- * `lastMessageAt` and `lastMessagePreview` stay null until a message is actually persisted —
- * that is the message writer's responsibility, not this helper's.
- *
- * Caveat: `Conversation` carries no unique constraint on `(tenantId, contactId)`, so this
- * cannot be expressed as an `upsert` the way `upsertContact` can. Two Meta deliveries racing
- * for a brand-new contact can therefore both miss the read and both create a thread. The
- * schema is the only place that could close this, and changing it is out of scope.
- *
- * @param tenantId - Owning tenant, from the already-resolved TenantSettings.
- * @param contactId - Contact resolved by `upsertContact`.
- * @returns The existing or newly created Conversation.
- */
-export async function findOrCreateConversation(
-  tenantId: string,
-  businessId: string,
-  contactId: string
-): Promise<Conversation> {
-  const existing = await prisma.conversation.findFirst({
-    where: { tenantId, contactId },
-    orderBy: { createdAt: "desc" },
-  });
-
-  if (existing) return existing;
-
-  return prisma.conversation.create({
-    data: { tenantId, businessId, contactId },
   });
 }
 
@@ -468,21 +459,23 @@ async function saveInboundMessage(
  * Meta's read-receipt endpoint is cosmetic to us and fallible on their side, so a failure here is
  * logged and swallowed. Nothing downstream depends on it, and no customer message should be lost
  * because a tick did not turn blue.
+ *
+ * The credentials come from `resolveWhatsAppCreds` for the *resolved workspace*, not from the
+ * tenant row. `TenantSettings.waPhoneNumberId` is tenant-wide and names whichever number the
+ * tenant configured first; a message that arrived on a second workspace's number would have its
+ * receipt addressed to the first workspace's number, with the first workspace's token — Meta
+ * rejects that, and because this call is fire-and-forget the tick simply never turned blue with
+ * nothing to explain why. This is the same resolution `handleAutoReply` and `executeFlow` use, so
+ * the receipt now goes out on the number the message actually came in on.
  */
 async function markInboundAsRead(
   tenant: ResolvedTenant,
   waMessageId: string
 ): Promise<void> {
-  if (!tenant.waPhoneNumberId || !tenant.waApiKey) return;
-
   try {
-    const apiKey = decryptSecret(tenant.waApiKey);
-    if (!apiKey) return;
-    await markMessageAsRead(
-      tenant.waPhoneNumberId,
-      apiKey,
-      waMessageId
-    );
+    const { phoneNumberId, apiKey } = await resolveWhatsAppCreds(tenant.businessId);
+    if (!phoneNumberId || !apiKey) return;
+    await markMessageAsRead(phoneNumberId, apiKey, waMessageId);
   } catch (error) {
     console.error(
       `[WEBHOOK] Failed to mark message ${waMessageId} as read:`,
@@ -842,12 +835,20 @@ export async function handleAutoReply(
   // Identical inputs must not be paid for twice. Everything that can change the completion goes
   // into the key — the workspace, the model, the persona, the retrieved knowledge and the tail of
   // the thread — so a change to any of them misses rather than serving a reply drafted for
-  // different circumstances. tenantId is in there deliberately: without it, two workspaces sharing
-  // a persona would serve each other's cached replies to an identical greeting.
+  // different circumstances. tenantId is in there deliberately: without it, two tenants sharing a
+  // persona would serve each other's cached replies to an identical greeting.
+  //
+  // businessId is in there for the same reason one level down. Now that the persona, the model and
+  // the knowledge base are all resolved per workspace, two workspaces of one tenant are exactly the
+  // pair most likely to agree on every other component of this key — an unconfigured persona falls
+  // back to the same DEFAULT_AI_PERSONALITY, and an empty knowledge base retrieves the same empty
+  // context — so a plain "hi" to the sales number would have been answered from the reply drafted
+  // for the support number.
   const cacheKey = createHash("sha256")
     .update(
       [
         tenant.tenantId,
+        tenant.businessId,
         tenant.aiModel ?? "",
         personality,
         knowledgeContext,
@@ -1060,18 +1061,14 @@ export async function processIncomingMessage(
     contactName
   );
 
-  // Fetch conversation with flow session fields so executeFlow can resume mid-Q&A.
-  const existingConv = await prisma.conversation.findFirst({
-    where: { tenantId: tenant.tenantId, contactId: contact.id },
-    orderBy: { createdAt: "desc" },
-    select: { id: true, activeFlowId: true, activeNodeId: true, flowVars: true },
-  });
-
-  const conversation = existingConv
-    ? await prisma.conversation.findUnique({ where: { id: existingConv.id } })!
-    : await prisma.conversation.create({ data: { tenantId: tenant.tenantId, businessId: tenant.businessId, contactId: contact.id } });
-
-  if (!conversation) throw new Error("Failed to resolve conversation");
+  // The full row is returned, which already carries the flow-session columns
+  // (`activeFlowId`, `activeNodeId`, `flowVars`) that `executeFlow` needs to resume mid-Q&A —
+  // so there is no second lookup for them, and no second copy of the find-or-create rule.
+  const { conversation } = await findOrCreateConversation(
+    tenant.tenantId,
+    tenant.businessId,
+    contact.id
+  );
 
   const { message: saved, isNew } = await saveInboundMessage(
     tenant.tenantId,
@@ -1089,7 +1086,7 @@ export async function processIncomingMessage(
     // Flow execution takes priority over generic AI auto-reply.
     const flowHandled = await executeFlow(
       tenant,
-      { ...conversation, activeFlowId: existingConv?.activeFlowId ?? null, activeNodeId: existingConv?.activeNodeId ?? null, flowVars: existingConv?.flowVars ?? null },
+      conversation,
       contact,
       extractContent(message),
     );

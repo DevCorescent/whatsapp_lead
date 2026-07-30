@@ -113,10 +113,18 @@ export function useCreateBusiness() {
   });
 }
 
+/**
+ * Update one field, or all of them.
+ *
+ * `Partial<BusinessInput>` rather than the whole shape: PATCH /api/businesses/[id] treats every key
+ * as optional and an omitted one as "leave unchanged", so a caller that only edits the WhatsApp
+ * credentials — the settings screen, the onboarding wizard — should not have to resend the name to
+ * satisfy a type. Sending fewer fields is also safer: whatever it doesn't name, it cannot clobber.
+ */
 export function useUpdateBusiness() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: async ({ id, ...data }: BusinessInput & { id: string }) => {
+    mutationFn: async ({ id, ...data }: Partial<BusinessInput> & { id: string }) => {
       const res = await fetch(`/api/businesses/${id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
