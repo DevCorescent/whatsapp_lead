@@ -359,3 +359,71 @@ export async function markMessageAsRead(
     }),
   });
 }
+
+// ─── Template management (Meta Graph API) ────────────────────────────────────
+
+export interface WATemplateCreateComponent {
+  type: "HEADER" | "BODY" | "FOOTER" | "BUTTONS";
+  format?: "TEXT" | "IMAGE" | "VIDEO" | "DOCUMENT";
+  text?: string;
+  example?: {
+    header_handle?: string[];
+    body_text?: string[][];
+  };
+  buttons?: Array<{
+    type: "QUICK_REPLY" | "URL" | "PHONE_NUMBER";
+    text: string;
+    url?: string;
+    phone_number?: string;
+  }>;
+}
+
+interface WATemplateCreateResponse {
+  id: string;
+  status: string;
+  category: string;
+}
+
+export async function createMessageTemplate(
+  businessAccountId: string,
+  apiKey: string,
+  payload: {
+    name: string;
+    language: string;
+    category: string;
+    components: WATemplateCreateComponent[];
+  }
+): Promise<WATemplateCreateResponse> {
+  const res = await fetch(
+    `https://graph.facebook.com/${process.env.WHATSAPP_API_VERSION ?? "v19.0"}/${businessAccountId}/message_templates`,
+    {
+      method: "POST",
+      headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    }
+  );
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error((body as { error?: { message?: string } }).error?.message ?? "Failed to create template");
+  }
+  return res.json() as Promise<WATemplateCreateResponse>;
+}
+
+export async function getMessageTemplate(
+  businessAccountId: string,
+  apiKey: string,
+  waTemplateId: string
+): Promise<{ id: string; name: string; status: string; rejection_reason?: string }> {
+  const res = await fetch(
+    `https://graph.facebook.com/${process.env.WHATSAPP_API_VERSION ?? "v19.0"}/${waTemplateId}?fields=id,name,status,rejection_reason`,
+    {
+      headers: { Authorization: `Bearer ${apiKey}` },
+    }
+  );
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error((body as { error?: { message?: string } }).error?.message ?? "Failed to fetch template");
+  }
+  void businessAccountId;
+  return res.json();
+}

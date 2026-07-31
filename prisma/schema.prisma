@@ -76,9 +76,12 @@ enum CampaignStatus {
   DRAFT
   SCHEDULED
   RUNNING
+  PROCESSING
   COMPLETED
+  SENT
   FAILED
   PAUSED
+  CANCELLED
 }
 
 enum TicketStatus {
@@ -217,6 +220,7 @@ model TenantSettings {
   smtpUser             String?
   smtpPass             String?
   smtpFrom             String?
+  onboardingCompleted  Boolean  @default(false)
   createdAt            DateTime @default(now())
   updatedAt            DateTime @updatedAt
 
@@ -520,10 +524,12 @@ model MessageTemplate {
   footer        String?
   buttons       Json?
   variables     String[]
-  waTemplateId  String?
-  status        String   @default("PENDING")
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
+  waTemplateId    String?
+  status          String   @default("PENDING")
+  rejectionReason String?
+  lastSyncedAt    DateTime?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
 
   businessId String
   business   Business   @relation(fields: [businessId], references: [id], onDelete: Cascade)
@@ -553,6 +559,7 @@ model Campaign {
   repliedCount   Int            @default(0)
   clickedCount   Int            @default(0)
   failedCount    Int            @default(0)
+  lastError      String?
   filters        Json?
   metadata       Json?
   createdAt      DateTime       @default(now())
