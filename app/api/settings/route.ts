@@ -8,6 +8,7 @@ const patchSchema = z.object({
   waPhoneNumberId: z.string().optional(),
   waBusinessAccountId: z.string().optional(),
   waApiKey: z.string().optional(),
+  waAppSecret: z.string().optional(),
   waWebhookVerifyToken: z.string().optional(),
   timezone: z.string().optional(),
   businessHoursStart: z.string().optional(),

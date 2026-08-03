@@ -23,6 +23,7 @@ type SettingsData = {
   waPhoneNumberId?: string;
   waBusinessAccountId?: string;
   waApiKey?: string;
+  waAppSecret?: string;
   waWebhookVerifyToken?: string;
 };
 
@@ -48,8 +49,10 @@ export function WhatsAppTab() {
   const [phoneNumberId, setPhoneNumberId] = useState("");
   const [businessAccountId, setBusinessAccountId] = useState("");
   const [apiKey, setApiKey] = useState("");
+  const [appSecret, setAppSecret] = useState("");
   const [verifyToken, setVerifyToken] = useState("");
   const [showKey, setShowKey] = useState(false);
+  const [showSecret, setShowSecret] = useState(false);
   const [copied, setCopied] = useState(false);
   const [saved, setSaved] = useState(false);
   const [testing, setTesting] = useState(false);
@@ -60,6 +63,7 @@ export function WhatsAppTab() {
       setPhoneNumberId(data.waPhoneNumberId ?? "");
       setBusinessAccountId(data.waBusinessAccountId ?? "");
       setApiKey(data.waApiKey ?? "");
+      setAppSecret(data.waAppSecret ?? "");
       setVerifyToken(data.waWebhookVerifyToken ?? "");
       setTestResult(null);
     }
@@ -107,6 +111,7 @@ export function WhatsAppTab() {
           waPhoneNumberId: phoneNumberId || undefined,
           waBusinessAccountId: businessAccountId || undefined,
           waApiKey: apiKey || undefined,
+          waAppSecret: appSecret || undefined,
           waWebhookVerifyToken: verifyToken || undefined,
         }),
       });
@@ -246,6 +251,30 @@ export function WhatsAppTab() {
               </button>
             </div>
             <p className="mt-1.5 text-xs text-slate-500">Stored encrypted. Never shown to agents.</p>
+          </Field>
+
+          <Field label="App Secret" htmlFor="wa-app-secret">
+            <div className="relative">
+              <input
+                id="wa-app-secret"
+                type={showSecret ? "text" : "password"}
+                value={appSecret}
+                onChange={(e) => setAppSecret(e.target.value)}
+                className={cn(inputClass, "pr-10 font-mono text-xs")}
+                placeholder="32-char hex from Meta App → Settings → Basic"
+              />
+              <button
+                type="button"
+                onClick={() => setShowSecret((s) => !s)}
+                aria-label={showSecret ? "Hide App Secret" : "Show App Secret"}
+                className="absolute right-2 top-1/2 -translate-y-1/2 rounded p-1.5 text-slate-400 hover:bg-slate-100 hover:text-slate-600"
+              >
+                {showSecret ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+              </button>
+            </div>
+            <p className="mt-1.5 text-xs text-slate-500">
+              Used to verify incoming webhooks from Meta. Find it in Meta Developers → your app → Settings → Basic → App Secret.
+            </p>
           </Field>
 
           <Field label="Webhook URL" htmlFor="wa-webhook">

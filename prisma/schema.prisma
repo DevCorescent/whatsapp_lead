@@ -162,6 +162,7 @@ model Business {
   whatsappBusinessId    String?
   whatsappAccessToken   String?
   whatsappVerifyToken   String?
+  whatsappAppSecret     String?
   status                BusinessStatus @default(ACTIVE)
   logo                  String?
   timezone              String         @default("Asia/Kolkata")
@@ -220,6 +221,7 @@ model TenantSettings {
   smtpUser             String?
   smtpPass             String?
   smtpFrom             String?
+  waAppSecret          String?
   onboardingCompleted  Boolean  @default(false)
   createdAt            DateTime @default(now())
   updatedAt            DateTime @updatedAt

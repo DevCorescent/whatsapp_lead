@@ -40,6 +40,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { MessageStatus } from "@prisma/client";
 import type { Message } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
+import { decryptSecret } from "@/lib/crypto";
 import { cachedResolveTenant } from "@/lib/cache";
 import { publishInboundMessage } from "@/lib/queue";
 import {
@@ -91,16 +92,53 @@ const SIGNATURE_PREFIX = "sha256=";
  * @param signatureHeader - Value of `X-Hub-Signature-256`, or null when absent.
  * @returns True only if the header is present, well-formed, and matches the computed digest.
  */
+/**
+ * Extract the phone_number_id from a raw webhook body string without a full parse.
+ * Used to look up the per-tenant app secret before signature verification.
+ */
+function extractPhoneNumberId(rawBody: string): string | null {
+  try {
+    const p = JSON.parse(rawBody) as WAWebhookPayload;
+    return p?.entry?.[0]?.changes?.[0]?.value?.metadata?.phone_number_id ?? null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Look up the App Secret for the business that owns this phone number.
+ * Checks the Business table first, then TenantSettings, then falls back to the
+ * global WHATSAPP_APP_SECRET env var. Returns null when nothing is configured.
+ */
+async function resolveAppSecret(phoneNumberId: string | null): Promise<string | null> {
+  if (phoneNumberId) {
+    const business = await prisma.business.findFirst({
+      where: { whatsappPhoneNumberId: phoneNumberId },
+      select: { whatsappAppSecret: true },
+    });
+    if (business?.whatsappAppSecret) {
+      return decryptSecret(business.whatsappAppSecret);
+    }
+
+    const settings = await prisma.tenantSettings.findFirst({
+      where: { waPhoneNumberId: phoneNumberId },
+      select: { waAppSecret: true },
+    });
+    if (settings?.waAppSecret) {
+      return decryptSecret(settings.waAppSecret);
+    }
+  }
+
+  return process.env.WHATSAPP_APP_SECRET ?? null;
+}
+
 function verifySignature(
   rawBody: string,
-  signatureHeader: string | null
+  signatureHeader: string | null,
+  appSecret: string | null,
 ): boolean {
-  const appSecret = process.env.WHATSAPP_APP_SECRET;
-
   if (!appSecret) {
-    console.error(
-      "[WEBHOOK] WHATSAPP_APP_SECRET is not configured — rejecting request"
-    );
+    console.error("[WEBHOOK] No app secret found — neither in DB nor in WHATSAPP_APP_SECRET env var");
     return false;
   }
 
@@ -114,13 +152,11 @@ function verifySignature(
     .update(rawBody, "utf8")
     .digest();
 
-  // Log first 8 chars of each so you can spot a mismatch without exposing the full secret.
   console.log("[WEBHOOK] HMAC check", {
     receivedPrefix: received.toString("hex").slice(0, 8),
     expectedPrefix: expected.toString("hex").slice(0, 8),
-    appSecretLength: appSecret.length,
-    appSecretPrefix: appSecret.slice(0, 4),
-    bodyLength: rawBody.length,
+    secretLength: appSecret.length,
+    source: "db-or-env",
   });
 
   if (received.length !== expected.length) return false;
@@ -544,18 +580,22 @@ export async function POST(req: NextRequest) {
   const signature = req.headers.get(SIGNATURE_HEADER);
   const rawBody = await req.text();
 
+  const phoneNumberId = extractPhoneNumberId(rawBody);
+  const appSecret = await resolveAppSecret(phoneNumberId);
+
   console.log("[WEBHOOK] POST received", {
     hasSignature: !!signature,
     bodyLength: rawBody.length,
-    appSecretConfigured: !!process.env.WHATSAPP_APP_SECRET,
+    phoneNumberId,
+    appSecretSource: appSecret ? (process.env.WHATSAPP_APP_SECRET === appSecret ? "env" : "db") : "missing",
     qstashTokenConfigured: !!process.env.QSTASH_TOKEN,
     skipQueue: process.env.SKIP_QUEUE === "true",
-    appUrl: process.env.NEXT_PUBLIC_APP_URL ?? "(fallback hardcoded)",
   });
 
-  if (!verifySignature(rawBody, signature)) {
+  if (!verifySignature(rawBody, signature, appSecret)) {
     console.warn("[WEBHOOK] Rejected: signature invalid", {
-      appSecretMissing: !process.env.WHATSAPP_APP_SECRET,
+      phoneNumberId,
+      appSecretFound: !!appSecret,
       signaturePresent: !!signature,
     });
     return new NextResponse("Forbidden", { status: 403 });
