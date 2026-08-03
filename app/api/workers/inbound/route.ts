@@ -39,7 +39,14 @@ export async function POST(req: NextRequest) {
 
   const job = (await req.json()) as InboundMessageJob;
 
-  console.log("[WORKER INBOUND] Processing job", { waMessageId: job.waMessageId, from: job.from, tenantId: job.tenantId });
+  console.log("[WORKER INBOUND] Processing job", {
+    waMessageId: job.waMessageId,
+    from: job.from,
+    tenantId: job.tenantId,
+    businessId: job.businessId,
+    phoneNumberId: job.phoneNumberId,
+    type: job.type,
+  });
 
   try {
     // The webhook already resolved which workspace this number belongs to and put the ids on
@@ -49,9 +56,16 @@ export async function POST(req: NextRequest) {
     // 2. The ingestion spine, unchanged: contact → conversation → message, then the reactions
     //    (read receipt, broadcast, campaign credit, flow engine, and the AI reply which
     //    `dispatchAutoReply` publishes on to /api/workers/ai-reply rather than running here).
-    await processIncomingMessage(tenant, job.rawMessage, job.contactName);
+    const result = await processIncomingMessage(tenant, job.rawMessage, job.contactName);
 
-    console.log("[WORKER INBOUND] Message processed successfully", { waMessageId: job.waMessageId });
+    console.log("[WORKER INBOUND] Message processed successfully", {
+      waMessageId: job.waMessageId,
+      tenantId: job.tenantId,
+      businessId: job.businessId,
+      contactId: result.contact.id,
+      conversationId: result.conversation.id,
+      messageId: result.message.id,
+    });
   } catch (error) {
     console.error(
       `[WORKER INBOUND] Failed to process message ${job.waMessageId}:`,

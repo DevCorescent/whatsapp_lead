@@ -345,10 +345,32 @@ async function dispatchInboundMessage(
   contactName?: string
 ): Promise<void> {
   if (process.env.SKIP_QUEUE === "true") {
+    console.log("[WEBHOOK] SKIP_QUEUE enabled; processing inbound inline", {
+      waMessageId: message.id,
+      from: message.from,
+      tenantId: identity.tenantId,
+      businessId: identity.businessId,
+      phoneNumberId: identity.phoneNumberId,
+      type: message.type,
+    });
     const tenant = await resolveTenantById(identity.tenantId, identity.businessId);
     await processIncomingMessage(tenant, message, contactName);
+    console.log("[WEBHOOK] Inline inbound processing finished", {
+      waMessageId: message.id,
+      tenantId: identity.tenantId,
+      businessId: identity.businessId,
+    });
     return;
   }
+
+  console.log("[WEBHOOK] Queueing inbound message", {
+    waMessageId: message.id,
+    from: message.from,
+    tenantId: identity.tenantId,
+    businessId: identity.businessId,
+    phoneNumberId: identity.phoneNumberId,
+    type: message.type,
+  });
 
   await publishInboundMessage({
     tenantId: identity.tenantId,
@@ -362,15 +384,35 @@ async function dispatchInboundMessage(
     timestamp: message.timestamp,
     rawMessage: message,
   });
+
+  console.log("[WEBHOOK] Inbound message queued", {
+    waMessageId: message.id,
+    tenantId: identity.tenantId,
+    businessId: identity.businessId,
+  });
 }
 
 async function processChange(change: WAChange): Promise<void> {
   const { metadata, contacts, messages, statuses } = change.value;
 
   // Nothing actionable in this change — a field update we do not subscribe to.
-  if (!messages?.length && !statuses?.length) return;
+  if (!messages?.length && !statuses?.length) {
+    console.log("[WEBHOOK] Ignoring non-message WhatsApp change", {
+      field: change.field,
+      phoneNumberId: metadata?.phone_number_id,
+    });
+    return;
+  }
 
   const phoneNumberId = metadata.phone_number_id;
+
+  console.log("[WEBHOOK] WhatsApp change received", {
+    field: change.field,
+    phoneNumberId,
+    messageCount: messages?.length ?? 0,
+    statusCount: statuses?.length ?? 0,
+    contactCount: contacts?.length ?? 0,
+  });
 
   // The lookup this replaces cost two to three queries on every single delivery, on Meta's clock,
   // to answer a question whose answer almost never changes. It is cached for five minutes, keyed
@@ -408,6 +450,13 @@ async function processChange(change: WAChange): Promise<void> {
   // STATUS_RANK ladder and `applyCampaignReceipt` stamps first-write-wins, which is exactly the
   // kind of ordering that QStash's at-least-once redelivery would race for no gain.
   for (const status of statuses ?? []) {
+    console.log("[WEBHOOK] Processing status receipt", {
+      waMessageId: status.id,
+      status: status.status,
+      tenantId,
+      businessId,
+      phoneNumberId,
+    });
     await processStatusUpdate(tenantId, status);
     // Disjoint from the call above: campaign sends write no Message row, so a receipt for one is
     // invisible to `processStatusUpdate` and has to be attributed through `CampaignContact`.

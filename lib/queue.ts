@@ -109,11 +109,42 @@ export interface CampaignSendJob {
  * The webhook calls this and returns 200 immediately.
  */
 export async function publishInboundMessage(job: InboundMessageJob) {
-  return qstash.publishJSON({
-    url: `${APP_URL}/api/workers/inbound`,
-    body: job,
-    retries: 3,
+  const url = `${APP_URL}/api/workers/inbound`;
+
+  console.log("[QUEUE] Publishing inbound WhatsApp job", {
+    waMessageId: job.waMessageId,
+    tenantId: job.tenantId,
+    businessId: job.businessId,
+    phoneNumberId: job.phoneNumberId,
+    from: job.from,
+    type: job.type,
+    workerUrl: url,
+    qstashConfigured: Boolean(process.env.QSTASH_TOKEN),
   });
+
+  try {
+    const result = await qstash.publishJSON({
+      url,
+      body: job,
+      retries: 3,
+    });
+
+    console.log("[QUEUE] Inbound WhatsApp job published", {
+      waMessageId: job.waMessageId,
+      qstashMessageId: result.messageId,
+    });
+
+    return result;
+  } catch (error) {
+    console.error("[QUEUE] Failed to publish inbound WhatsApp job", {
+      waMessageId: job.waMessageId,
+      tenantId: job.tenantId,
+      businessId: job.businessId,
+      workerUrl: url,
+      error,
+    });
+    throw error;
+  }
 }
 
 /**
