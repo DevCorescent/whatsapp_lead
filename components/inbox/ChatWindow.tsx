@@ -22,7 +22,7 @@ import type { MessageStatus } from "@prisma/client";
 import { Avatar, Badge, Button, EmptyState, Skeleton } from "@/components/ui";
 import { CONVERSATION_STATUS_STYLE, cn, dayLabel, formatTime } from "@/lib/utils";
 import { ATTACHMENT_ACCEPT, formatBytes } from "@/lib/attachments";
-import { useAiReply, useSetConversationAiActive } from "@/hooks/useMessages";
+import { useAiReply, useSendMessage, useSetConversationAiActive } from "@/hooks/useMessages";
 import { useQuickReplies, type QuickReply } from "@/hooks/useQuickReplies";
 import { contactName, type InboxConversation, type InboxMessage } from "./ConversationList";
 import { AttachmentDropOverlay } from "./AttachmentDropOverlay";
@@ -69,6 +69,7 @@ export function ChatWindow({
   const [draft, setDraft] = useState("");
   const [isNote, setIsNote] = useState(false);
   const [showEmoji, setShowEmoji] = useState(false);
+  const [sendError, setSendError] = useState<string | null>(null);
 
   // Quick replies expand from a "/shortcode" typed at the start of the composer. `qrDismissed`
   // exists so Escape can close the picker without also clearing what the agent has typed —
@@ -104,6 +105,7 @@ export function ChatWindow({
   const inputRef = useRef<HTMLInputElement>(null);
 
   const aiReply = useAiReply();
+  const sendMessage = useSendMessage();
   const setAiActive = useSetConversationAiActive();
 
   /**
@@ -148,25 +150,23 @@ export function ChatWindow({
   const name = contactName(conversation);
   const status = conversation.status ?? "OPEN";
 
-  function handleSend(e: React.FormEvent) {
+  async function handleSend(e: React.FormEvent) {
     e.preventDefault();
     const content = draft.trim();
-    if (!content || !conversationId) return;
+    if (!content || !conversationId || sendMessage.isPending) return;
+    setSendError(null);
 
-    // TODO [GAURANSH]: wire POST /api/messages — { conversationId, content, type, isNote }.
-    // Until then the message only lands in this local optimistic list.
-    const optimistic: InboxMessage = {
-      id: `local-${Date.now()}`,
-      type: "TEXT",
-      direction: "OUTBOUND",
-      content,
-      status: "SENT",
-      isNote,
-      isAiGenerated: false,
-      createdAt: new Date().toISOString(),
-    };
-
-    onSend(conversationId, optimistic);
+    try {
+      await sendMessage.mutateAsync({
+        conversationId,
+        content,
+        type: "TEXT",
+        isNote,
+      });
+    } catch (error) {
+      setSendError(error instanceof Error ? error.message : "Failed to send message");
+      return;
+    }
     setDraft("");
     setShowEmoji(false);
   }
@@ -393,6 +393,7 @@ export function ChatWindow({
             value={draft}
             onChange={(e) => {
               setDraft(e.target.value);
+              setSendError(null);
               setQrDismissed(false);
               setQrIndex(0);
             }}
@@ -428,16 +429,24 @@ export function ChatWindow({
 
           <Button
             type="submit"
-            disabled={!draft.trim()}
+            disabled={!draft.trim() || sendMessage.isPending}
             aria-label="Send message"
             className={cn(
               "h-10 w-10 shrink-0 rounded-full p-0",
               isNote && "bg-amber-500 hover:bg-amber-600",
             )}
           >
-            <Send className="h-4 w-4" />
+            {sendMessage.isPending ? (
+              <Clock className="h-4 w-4 animate-pulse" />
+            ) : (
+              <Send className="h-4 w-4" />
+            )}
           </Button>
         </form>
+
+        {sendError && (
+          <p className="mt-2 text-xs font-medium text-rose-600">{sendError}</p>
+        )}
       </div>
 
       {/* Review step for dropped / picked / pasted files. Renders only when files are staged. */}
