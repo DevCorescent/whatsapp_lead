@@ -38,13 +38,29 @@ const receiver = new Receiver({
  * rotation does not reject in-flight jobs.
  */
 export async function verifyQStashSignature(req: NextRequest): Promise<boolean> {
+  const currentKeySet = Boolean(process.env.QSTASH_CURRENT_SIGNING_KEY);
+  const nextKeySet = Boolean(process.env.QSTASH_NEXT_SIGNING_KEY);
+
+  if (!currentKeySet || !nextKeySet) {
+    console.error("[QSTASH-VERIFY] Signing keys not configured", {
+      QSTASH_CURRENT_SIGNING_KEY: currentKeySet,
+      QSTASH_NEXT_SIGNING_KEY: nextKeySet,
+    });
+    return false;
+  }
+
   try {
     const signature = req.headers.get("upstash-signature");
-    if (!signature) return false;
+    if (!signature) {
+      console.warn("[QSTASH-VERIFY] Missing upstash-signature header — rejecting");
+      return false;
+    }
     const body = await req.clone().text();
     await receiver.verify({ signature, body });
+    console.log("[QSTASH-VERIFY] Signature valid");
     return true;
-  } catch {
+  } catch (error) {
+    console.error("[QSTASH-VERIFY] Signature verification failed", { error: String(error) });
     return false;
   }
 }

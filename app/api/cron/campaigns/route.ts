@@ -2,51 +2,56 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { publishCampaignSend } from "@/lib/queue";
 
-// Vercel Cron calls this every minute. It finds SCHEDULED campaigns whose scheduledAt has passed
-// and publishes one job per pending recipient.
-//
-// This route triggers a campaign; it does not send it. Sending belongs to
-// /api/workers/campaign-send, which is the single path a campaign message can take — the same one
-// an immediate campaign from /api/campaigns uses. The inline loop that used to live here was a
-// second, parallel implementation of sending, with its own credential handling, its own one-attempt
-// failure semantics and its own counters, none of which matched the worker's.
 export async function GET(req: NextRequest) {
-  // Protect the cron endpoint from public access
+  console.log("[CRON CAMPAIGNS] Tick received", {
+    CRON_SECRET_SET: Boolean(process.env.CRON_SECRET),
+    QSTASH_TOKEN_SET: Boolean(process.env.QSTASH_TOKEN),
+    DATABASE_URL_SET: Boolean(process.env.DATABASE_URL),
+    APP_URL: process.env.NEXT_PUBLIC_APP_URL ?? "(not set — using hardcoded fallback)",
+  });
+
   const authHeader = req.headers.get("authorization");
   if (authHeader !== `Bearer ${process.env.CRON_SECRET}`) {
+    console.warn("[CRON CAMPAIGNS] Auth failed — wrong or missing CRON_SECRET");
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
+  console.log("[CRON CAMPAIGNS] Auth OK — querying due campaigns");
+
   const now = new Date();
 
-  const dueCampaigns = await prisma.campaign.findMany({
-    where: {
-      status: "SCHEDULED",
-      scheduledAt: { lte: now },
-    },
-    include: {
-      contacts: {
-        where: { status: "PENDING" },
-        include: { contact: { select: { phone: true } } },
+  let dueCampaigns;
+  try {
+    dueCampaigns = await prisma.campaign.findMany({
+      where: { status: "SCHEDULED", scheduledAt: { lte: now } },
+      include: {
+        contacts: {
+          where: { status: "PENDING" },
+          include: { contact: { select: { phone: true } } },
+        },
       },
-    },
-  });
+    });
+    console.log("[CRON CAMPAIGNS] DB query OK", { dueCampaignCount: dueCampaigns.length });
+  } catch (error) {
+    console.error("[CRON CAMPAIGNS] DB query failed", { error: String(error) });
+    return NextResponse.json({ error: "DB error" }, { status: 500 });
+  }
 
   if (dueCampaigns.length === 0) {
+    console.log("[CRON CAMPAIGNS] No due campaigns — done");
     return NextResponse.json({ success: true, processed: 0 });
   }
 
   let totalProcessed = 0;
 
   for (const campaign of dueCampaigns) {
-    // Mark RUNNING
+    console.log("[CRON CAMPAIGNS] Processing campaign", { campaignId: campaign.id, recipientCount: campaign.contacts.length });
+
     await prisma.campaign.update({
       where: { id: campaign.id },
       data: { status: "RUNNING", startedAt: now },
     });
 
-    // A campaign whose recipients have all already settled would have no job left to close it out,
-    // so it is completed here rather than left RUNNING forever.
     if (campaign.contacts.length === 0) {
       await prisma.campaign.update({
         where: { id: campaign.id },
@@ -61,22 +66,24 @@ export async function GET(req: NextRequest) {
         ? ((campaign.metadata as Record<string, string>).message ?? "Hello from WhatsCRM")
         : "Hello from WhatsCRM";
 
-    // Credentials are deliberately not resolved here. The worker resolves them per recipient and,
-    // when a workspace has no connected number, settles that recipient FAILED with the same reason
-    // this route used to write in bulk — reaching the same end state through one implementation
-    // instead of two.
     for (const cc of campaign.contacts) {
-      await publishCampaignSend({
-        campaignId: campaign.id,
-        recipientId: cc.id,
-        phone: cc.contact?.phone ?? cc.phone,
-        message,
-        businessId: campaign.businessId,
-      });
+      try {
+        await publishCampaignSend({
+          campaignId: campaign.id,
+          recipientId: cc.id,
+          phone: cc.contact?.phone ?? cc.phone,
+          message,
+          businessId: campaign.businessId,
+        });
+        console.log("[CRON CAMPAIGNS] Queued recipient", { recipientId: cc.id });
+      } catch (error) {
+        console.error("[CRON CAMPAIGNS] Failed to queue recipient", { recipientId: cc.id, error: String(error) });
+      }
     }
 
     totalProcessed++;
   }
 
+  console.log("[CRON CAMPAIGNS] Done", { totalProcessed });
   return NextResponse.json({ success: true, processed: totalProcessed });
 }

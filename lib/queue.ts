@@ -21,7 +21,10 @@
 import { Client } from "@upstash/qstash";
 import type { WAMessage } from "@/types";
 
-const qstash = new Client({ token: process.env.QSTASH_TOKEN! });
+if (!process.env.QSTASH_TOKEN) {
+  console.error("[QUEUE] CRITICAL: QSTASH_TOKEN is not set — all queue publishes will fail");
+}
+const qstash = new Client({ token: process.env.QSTASH_TOKEN ?? "" });
 
 /** The public URL of this deployment. Workers are called via HTTP by QStash. */
 const APP_URL =

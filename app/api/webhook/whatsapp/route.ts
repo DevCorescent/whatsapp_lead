@@ -541,6 +541,9 @@ export async function POST(req: NextRequest) {
     hasSignature: !!signature,
     bodyLength: rawBody.length,
     appSecretConfigured: !!process.env.WHATSAPP_APP_SECRET,
+    qstashTokenConfigured: !!process.env.QSTASH_TOKEN,
+    skipQueue: process.env.SKIP_QUEUE === "true",
+    appUrl: process.env.NEXT_PUBLIC_APP_URL ?? "(fallback hardcoded)",
   });
 
   if (!verifySignature(rawBody, signature)) {
