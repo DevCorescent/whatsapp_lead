@@ -114,8 +114,15 @@ function verifySignature(
     .update(rawBody, "utf8")
     .digest();
 
-  // timingSafeEqual throws on a length mismatch rather than returning false, and a malformed
-  // hex digest decodes to a short buffer — so the lengths are reconciled before comparing.
+  // Log first 8 chars of each so you can spot a mismatch without exposing the full secret.
+  console.log("[WEBHOOK] HMAC check", {
+    receivedPrefix: received.toString("hex").slice(0, 8),
+    expectedPrefix: expected.toString("hex").slice(0, 8),
+    appSecretLength: appSecret.length,
+    appSecretPrefix: appSecret.slice(0, 4),
+    bodyLength: rawBody.length,
+  });
+
   if (received.length !== expected.length) return false;
 
   return timingSafeEqual(received, expected);
