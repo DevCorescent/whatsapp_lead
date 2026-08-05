@@ -247,6 +247,8 @@ export async function resolveWhatsAppCreds(businessId: string): Promise<Resolved
       businessId,
       businessName: business.name,
       tokenSource,
+      storedLooksEncrypted: Boolean(token && token.trim().startsWith("enc:v1:")),
+      storedLength: token?.length ?? 0,
       error,
     });
     // Encrypted with a different ENCRYPTION_KEY — try tenant plaintext/encrypted fallback.
@@ -268,6 +270,27 @@ export async function resolveWhatsAppCreds(businessId: string): Promise<Resolved
         }
       }
     }
+  }
+
+  // Meta permanent/temp tokens are typically EAAG… / EAA… . Anything else is almost always a
+  // bad paste (OpenRouter key, phone number id, etc.) and yields "Cannot parse access token".
+  if (apiKey && !/^EAA[A-Za-z0-9]/.test(apiKey)) {
+    console.error("[WA CREDS] Token does not look like a Meta WhatsApp access token", {
+      businessId,
+      businessName: business.name,
+      tokenSource,
+      length: apiKey.length,
+      prefix: apiKey.slice(0, 4),
+    });
+  } else if (apiKey) {
+    console.log("[WA CREDS] Resolved WhatsApp token", {
+      businessId,
+      businessName: business.name,
+      tokenSource,
+      phoneNumberId,
+      length: apiKey.length,
+      prefix: apiKey.slice(0, 4),
+    });
   }
 
   if (!apiKey || !phoneNumberId) {

@@ -12,7 +12,7 @@ const waFields = {
   whatsappPhoneNumber: z.string().trim().max(32).optional(),
   whatsappPhoneNumberId: z.string().trim().max(64).optional(),
   whatsappBusinessId: z.string().trim().max(64).optional(),
-  whatsappAccessToken: z.string().max(2000).optional(),
+  whatsappAccessToken: z.string().max(4000).optional(),
   whatsappVerifyToken: z.string().trim().max(128).optional(),
 };
 

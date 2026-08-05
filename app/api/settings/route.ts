@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { auth } from "@/lib/auth";
 import { invalidateCredsCache, invalidateTenantCache } from "@/lib/cache";
+import { encryptSecret, sanitizeWhatsAppToken } from "@/lib/crypto";
 import { prisma } from "@/lib/prisma";
 
 const patchSchema = z.object({
@@ -62,7 +63,17 @@ export async function PATCH(req: NextRequest) {
     const parsed = patchSchema.safeParse(body);
     if (!parsed.success) return NextResponse.json({ success: false, error: parsed.error.issues[0].message }, { status: 400 });
 
-    const data = parsed.data;
+    const data = { ...parsed.data };
+
+    // Encrypt WhatsApp secrets the same way Businesses does — plaintext in TenantSettings
+    // was a common source of "works in UI, 401 on send" when mixed with enc:v1: business tokens.
+    if (data.waApiKey !== undefined) {
+      const cleaned = sanitizeWhatsAppToken(data.waApiKey);
+      data.waApiKey = cleaned ? encryptSecret(cleaned) : data.waApiKey;
+    }
+    if (data.waAppSecret !== undefined && data.waAppSecret) {
+      data.waAppSecret = encryptSecret(data.waAppSecret.trim());
+    }
 
     // Read before the write. The upsert replaces the number in place, and it is the entry cached
     // under the OLD number that would go on routing inbound messages to this tenant — once the

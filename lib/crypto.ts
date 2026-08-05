@@ -41,7 +41,40 @@ function getKey(): Buffer | null {
 
 /** True when a value carries our encryption envelope (rather than being plaintext). */
 export function isEncrypted(value: string): boolean {
-  return value.startsWith(ENVELOPE_PREFIX);
+  return value.trimStart().startsWith(ENVELOPE_PREFIX);
+}
+
+/**
+ * Clean a WhatsApp access token before encrypt/store or before calling Meta.
+ *
+ * Copy-paste from Meta / .env often leaves wrapping quotes, a `Bearer ` prefix, or newlines.
+ * Sending any of those (or our `enc:v1:` envelope) produces Meta's
+ * "Invalid OAuth access token - Cannot parse access token".
+ */
+export function sanitizeWhatsAppToken(raw: string | null | undefined): string | null {
+  if (raw == null) return null;
+  let t = raw.trim();
+  if (!t) return null;
+
+  // .env / JSON style quotes
+  if (
+    (t.startsWith('"') && t.endsWith('"') && t.length > 1) ||
+    (t.startsWith("'") && t.endsWith("'") && t.length > 1)
+  ) {
+    t = t.slice(1, -1).trim();
+  }
+
+  // We already set Authorization: Bearer <token>
+  if (/^bearer\s+/i.test(t)) {
+    t = t.replace(/^bearer\s+/i, "").trim();
+  }
+
+  // Never send ciphertext to Meta
+  if (t.startsWith(ENVELOPE_PREFIX)) return null;
+
+  // Tokens are single tokens — strip accidental whitespace/newlines from paste
+  t = t.replace(/\s+/g, "");
+  return t || null;
 }
 
 /**
@@ -50,13 +83,14 @@ export function isEncrypted(value: string): boolean {
  * to save settings. An empty string is returned as-is — there is nothing to protect.
  */
 export function encryptSecret(plaintext: string): string {
-  if (!plaintext) return plaintext;
+  const cleaned = sanitizeWhatsAppToken(plaintext) ?? plaintext.trim();
+  if (!cleaned) return cleaned;
   const key = getKey();
-  if (!key) return plaintext;
+  if (!key) return cleaned;
 
   const iv = randomBytes(IV_LENGTH);
   const cipher = createCipheriv(ALGORITHM, key, iv);
-  const ciphertext = Buffer.concat([cipher.update(plaintext, "utf8"), cipher.final()]);
+  const ciphertext = Buffer.concat([cipher.update(cleaned, "utf8"), cipher.final()]);
   const tag = cipher.getAuthTag();
 
   return (
@@ -76,7 +110,8 @@ export function encryptSecret(plaintext: string): string {
  */
 export function decryptSecret(value: string | null | undefined): string | null {
   if (value == null || value === "") return value ?? null;
-  if (!isEncrypted(value)) return value;
+  const trimmed = value.trim();
+  if (!isEncrypted(trimmed)) return sanitizeWhatsAppToken(trimmed);
 
   const key = getKey();
   if (!key) {
@@ -85,7 +120,7 @@ export function decryptSecret(value: string | null | undefined): string | null {
     );
   }
 
-  const [ivB64, tagB64, dataB64] = value.slice(ENVELOPE_PREFIX.length).split(":");
+  const [ivB64, tagB64, dataB64] = trimmed.slice(ENVELOPE_PREFIX.length).split(":");
   if (!ivB64 || !tagB64 || !dataB64) {
     throw new Error("Malformed encrypted secret envelope.");
   }
@@ -96,7 +131,7 @@ export function decryptSecret(value: string | null | undefined): string | null {
     decipher.update(Buffer.from(dataB64, "base64")),
     decipher.final(),
   ]);
-  return plaintext.toString("utf8");
+  return sanitizeWhatsAppToken(plaintext.toString("utf8"));
 }
 
 /** Whether a stored secret is present, without revealing it — for masked API responses. */
