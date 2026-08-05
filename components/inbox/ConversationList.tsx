@@ -215,7 +215,7 @@ export function ConversationList({
             <EmptyState
               icon={MessageSquare}
               title="No conversations yet"
-              description="Incoming WhatsApp messages will appear here."
+              description="Incoming WhatsApp messages will appear here. If you already texted in, switch business in the sidebar — each inbox is separate."
             />
           )
         ) : (

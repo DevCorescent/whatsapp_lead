@@ -203,6 +203,43 @@ export async function resolveTenantById(
 }
 
 /**
+ * Effective auto-reply config for a business.
+ *
+ * AI Settings writes TenantSettings; the Businesses page writes Business.aiEnabled /
+ * autoReply. Inbound used to read only TenantSettings, so turning AI on in Businesses
+ * did nothing. Business flags win when set; otherwise we fall back to the tenant row.
+ */
+async function resolveAutoReplyConfig(tenant: ResolvedTenant) {
+  const business = await prisma.business.findUnique({
+    where: { id: tenant.businessId },
+    select: {
+      aiEnabled: true,
+      autoReply: true,
+      autoReplyDelay: true,
+      aiModel: true,
+      aiPersonality: true,
+      aiSystemPrompt: true,
+      name: true,
+    },
+  });
+
+  const aiEnabled = Boolean(business?.aiEnabled || tenant.aiEnabled);
+  const autoReply = Boolean(business?.autoReply || tenant.autoReply);
+
+  return {
+    aiEnabled,
+    autoReply,
+    autoReplyDelay: business?.autoReplyDelay ?? tenant.autoReplyDelay ?? 0,
+    aiModel: business?.aiModel || tenant.aiModel,
+    aiPersonality:
+      business?.aiSystemPrompt?.trim() ||
+      business?.aiPersonality?.trim() ||
+      tenant.aiPersonality,
+    businessName: business?.name ?? null,
+  };
+}
+
+/**
  * Resolve the WhatsApp sender to a Contact row, creating it on first contact.
  *
  * The webhook is the only inbound producer in the system, so an unknown sender must become a
@@ -831,7 +868,20 @@ export async function handleAutoReply(
   contact: Contact,
   applyDelay = true
 ): Promise<void> {
-  if (!tenant.aiEnabled || !tenant.autoReply) return;
+  const cfg = await resolveAutoReplyConfig(tenant);
+
+  if (!cfg.aiEnabled || !cfg.autoReply) {
+    console.log("[INBOUND] Skipping AI reply — AI/auto-reply off", {
+      tenantId: tenant.tenantId,
+      businessId: tenant.businessId,
+      businessName: cfg.businessName,
+      tenantAiEnabled: tenant.aiEnabled,
+      tenantAutoReply: tenant.autoReply,
+      effectiveAiEnabled: cfg.aiEnabled,
+      effectiveAutoReply: cfg.autoReply,
+    });
+    return;
+  }
 
   const creds = await resolveWhatsAppCreds(tenant.businessId);
   if (!creds.phoneNumberId || !creds.apiKey) {
@@ -847,13 +897,18 @@ export async function handleAutoReply(
   );
 
   // Nothing to reply to — a thread whose only messages are media or notes gives the model no turn.
-  if (!history.length) return;
+  if (!history.length) {
+    console.log("[INBOUND] Skipping AI reply — no text history", {
+      conversationId: conversation.id,
+    });
+    return;
+  }
 
   // RAG: ground the reply in the tenant's knowledge base, scoped to what the customer just asked.
   const lastCustomerMsg = [...history].reverse().find((m) => m.role === "user")?.content ?? "";
   const knowledgeContext = await retrieveContext(tenant.tenantId, tenant.businessId, lastCustomerMsg);
 
-  const personality = tenant.aiPersonality?.trim() || DEFAULT_AI_PERSONALITY;
+  const personality = cfg.aiPersonality?.trim() || DEFAULT_AI_PERSONALITY;
 
   // Identical inputs must not be paid for twice. Everything that can change the completion goes
   // into the key — the workspace, the model, the persona, the retrieved knowledge and the tail of
@@ -864,19 +919,24 @@ export async function handleAutoReply(
     .update(
       [
         tenant.tenantId,
-        tenant.aiModel ?? "",
+        cfg.aiModel ?? "",
         personality,
         knowledgeContext,
         JSON.stringify(history.slice(-3)),
-      ].join(" ")
+      ].join("\0")
     )
     .digest("hex");
 
   let reply: string;
   try {
+    console.log("[INBOUND] Generating AI reply", {
+      conversationId: conversation.id,
+      businessId: tenant.businessId,
+      model: cfg.aiModel,
+    });
     reply = (
       await cachedAiReply(cacheKey, () =>
-        generateReply(history, personality, knowledgeContext, tenant.aiModel)
+        generateReply(history, personality, knowledgeContext, cfg.aiModel)
       )
     ).trim();
   } catch (error) {
@@ -890,7 +950,12 @@ export async function handleAutoReply(
   // An empty completion is the model declining to answer, not an error. Sending a blank WhatsApp
   // message would be rejected by Meta anyway, and a whitespace-only one is worse: it looks like the
   // business replied with nothing.
-  if (!reply) return;
+  if (!reply) {
+    console.warn("[INBOUND] AI returned empty reply — not sending", {
+      conversationId: conversation.id,
+    });
+    return;
+  }
 
   // Honor the configurable reply delay (in seconds). A zero or missing value sends immediately.
   //
@@ -898,7 +963,7 @@ export async function handleAutoReply(
   // delivered by QStash with `delay` set to this same value, so sleeping again here would double
   // it. Sleeping in the worker is also what a queue exists to avoid — a long autoReplyDelay would
   // hold the function open past its timeout, fail the job, and have QStash redeliver it.
-  const delayMs = applyDelay ? (tenant.autoReplyDelay ?? 0) * 1000 : 0;
+  const delayMs = applyDelay ? cfg.autoReplyDelay * 1000 : 0;
   if (delayMs > 0) await new Promise<void>((resolve) => setTimeout(resolve, delayMs));
 
   let waMessageId: string | null;
@@ -928,6 +993,11 @@ export async function handleAutoReply(
   );
 
   await broadcastMessage(tenant.tenantId, outbound);
+  console.log("[INBOUND] AI reply sent", {
+    conversationId: conversation.id,
+    waMessageId,
+    businessId: tenant.businessId,
+  });
 }
 
 /**
@@ -956,12 +1026,30 @@ async function dispatchAutoReply(
   contact: Contact,
   waMessageId: string
 ): Promise<void> {
-  if (!tenant.aiEnabled || !tenant.autoReply) return;
+  const cfg = await resolveAutoReplyConfig(tenant);
+
+  if (!cfg.aiEnabled || !cfg.autoReply) {
+    console.log("[INBOUND] Not queueing AI reply — AI/auto-reply off", {
+      tenantId: tenant.tenantId,
+      businessId: tenant.businessId,
+      businessName: cfg.businessName,
+      effectiveAiEnabled: cfg.aiEnabled,
+      effectiveAutoReply: cfg.autoReply,
+    });
+    return;
+  }
 
   if (process.env.SKIP_QUEUE === "true") {
     await handleAutoReply(tenant, conversation, contact);
     return;
   }
+
+  console.log("[INBOUND] Queueing AI reply job", {
+    conversationId: conversation.id,
+    businessId: tenant.businessId,
+    delaySeconds: cfg.autoReplyDelay,
+    waMessageId,
+  });
 
   await publishAiReply(
     {
@@ -973,7 +1061,7 @@ async function dispatchAutoReply(
       // genuine new turn, so it cannot reply twice to the same customer message.
       waMessageId,
     },
-    tenant.autoReplyDelay ?? 0
+    cfg.autoReplyDelay
   );
 }
 
@@ -1069,51 +1157,86 @@ export async function processIncomingMessage(
   message: WAMessage,
   contactName?: string
 ): Promise<InboundMessageResult> {
+  // Stick to the business that already owns this phone's thread. Routing can flip between a
+  // legacy default business and the WhatsApp-connected one across deliveries; creating a second
+  // contact under the new businessId makes the inbox the agent is watching look like it was wiped.
+  const priorContact = await prisma.contact.findFirst({
+    where: { tenantId: tenant.tenantId, phone: message.from },
+    orderBy: { updatedAt: "desc" },
+    select: { id: true, businessId: true },
+  });
+
+  const businessId = priorContact?.businessId ?? tenant.businessId;
+  if (priorContact && priorContact.businessId !== tenant.businessId) {
+    console.warn("[INBOUND] Keeping conversation on existing business (routing differed)", {
+      phone: message.from,
+      routedBusinessId: tenant.businessId,
+      existingBusinessId: priorContact.businessId,
+      waMessageId: message.id,
+    });
+  }
+
+  const scopedTenant: ResolvedTenant = { ...tenant, businessId };
+  const autoCfg = await resolveAutoReplyConfig(scopedTenant);
+
   const contact = await upsertContact(
-    tenant.tenantId,
-    tenant.businessId,
+    scopedTenant.tenantId,
+    businessId,
     message.from,
     contactName
   );
 
   // Fetch conversation with flow session fields so executeFlow can resume mid-Q&A.
   const existingConv = await prisma.conversation.findFirst({
-    where: { tenantId: tenant.tenantId, contactId: contact.id },
+    where: { tenantId: scopedTenant.tenantId, businessId, contactId: contact.id },
     orderBy: { createdAt: "desc" },
     select: { id: true, activeFlowId: true, activeNodeId: true, flowVars: true },
   });
 
   const conversation = existingConv
     ? await prisma.conversation.findUnique({ where: { id: existingConv.id } })!
-    : await prisma.conversation.create({ data: { tenantId: tenant.tenantId, businessId: tenant.businessId, contactId: contact.id } });
+    : await prisma.conversation.create({
+        data: {
+          tenantId: scopedTenant.tenantId,
+          businessId,
+          contactId: contact.id,
+          // Match the inbox AI toggle to workspace auto-reply so new threads reply by default.
+          isAiActive: autoCfg.aiEnabled && autoCfg.autoReply,
+        },
+      });
 
   if (!conversation) throw new Error("Failed to resolve conversation");
 
   const { message: saved, isNew } = await saveInboundMessage(
-    tenant.tenantId,
+    scopedTenant.tenantId,
     conversation.id,
     message
   );
 
   if (isNew) {
-    await markInboundAsRead(tenant, message.id);
-    await broadcastMessage(tenant.tenantId, saved);
+    await markInboundAsRead(scopedTenant, message.id);
+    await broadcastMessage(scopedTenant.tenantId, saved);
 
     // Guarded by `isNew`, so a redelivered inbound message cannot credit the same reply twice.
-    await creditCampaignReply(tenant.tenantId, contact.phone);
+    await creditCampaignReply(scopedTenant.tenantId, contact.phone);
 
     // Flow execution takes priority over generic AI auto-reply.
     const flowHandled = await executeFlow(
-      tenant,
-      { ...conversation, activeFlowId: existingConv?.activeFlowId ?? null, activeNodeId: existingConv?.activeNodeId ?? null, flowVars: existingConv?.flowVars ?? null },
+      scopedTenant,
+      {
+        ...conversation,
+        activeFlowId: existingConv?.activeFlowId ?? null,
+        activeNodeId: existingConv?.activeNodeId ?? null,
+        flowVars: existingConv?.flowVars ?? null,
+      },
       contact,
       extractContent(message),
     );
     if (!flowHandled) {
-      await dispatchAutoReply(tenant, conversation, contact, message.id);
+      await dispatchAutoReply(scopedTenant, conversation, contact, message.id);
     }
   }
 
-  return { tenant, contact, conversation, message: saved };
+  return { tenant: scopedTenant, contact, conversation, message: saved };
 }
 

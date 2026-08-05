@@ -81,12 +81,21 @@ export default function InboxPage() {
     return undefined;
   }, [tab, userId]);
 
-  const { data: listData, isLoading: listLoading, isError: listError } = useConversations(filters);
+  const {
+    data: listData,
+    isLoading: listLoading,
+    isError: listError,
+  } = useConversations(filters);
   const {
     data: detailData,
     isLoading: detailLoading,
     isError: detailError,
   } = useConversation(selectedId ?? "");
+
+  // Only show the full-panel skeleton on the *first* load. A Pusher-driven refetch must not
+  // blank the list/thread — that is what made the inbox look wiped after a new WhatsApp text.
+  const listBusy = listLoading && !listData;
+  const detailBusy = Boolean(selectedId) && detailLoading && !detailData;
 
   const all = useMemo(() => toArray<InboxConversation>(listData), [listData]);
 
@@ -150,8 +159,8 @@ export default function InboxPage() {
         conversations={conversations}
         selectedId={selectedId}
         onSelect={setSelectedId}
-        isLoading={listLoading}
-        isError={listError}
+        isLoading={listBusy}
+        isError={listError && !listData}
         search={search}
         onSearchChange={setSearch}
         tab={tab}
@@ -166,8 +175,8 @@ export default function InboxPage() {
         messages={messages}
         localMessages={selectedId ? (outbox[selectedId] ?? EMPTY) : EMPTY}
         onSend={handleSend}
-        isLoading={Boolean(selectedId) && detailLoading}
-        isError={detailError}
+        isLoading={detailBusy}
+        isError={detailError && !detailData}
         onBack={() => setSelectedId(null)}
         className={cn("min-w-0 flex-1", selectedId ? "flex" : "hidden md:flex")}
       />
@@ -176,7 +185,7 @@ export default function InboxPage() {
         key={`panel-${selectedId ?? "empty"}`}
         conversation={selected}
         agents={agents}
-        isLoading={Boolean(selectedId) && detailLoading}
+        isLoading={detailBusy}
         className="hidden w-72 shrink-0 xl:flex"
       />
     </div>

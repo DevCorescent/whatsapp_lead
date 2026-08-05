@@ -134,7 +134,12 @@ export async function GET(req: NextRequest) {
 
     const conversations = await listConversations(tenantId, businessId, parsed.data);
 
-    return NextResponse.json({ success: true, data: conversations });
+    return NextResponse.json({
+      success: true,
+      data: conversations,
+      // Helps the client show "wrong business" empty states — inbox is business-scoped.
+      businessId,
+    });
   } catch (error) {
     // The caller learns only that the read failed. Prisma's errors carry query shapes and column
     // names, which describe our schema to anyone able to provoke one.

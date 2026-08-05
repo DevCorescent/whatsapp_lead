@@ -90,6 +90,9 @@ export function useConversations(filters?: ConversationFilters) {
       if (!res.ok) throw new Error("Failed to fetch conversations");
       return res.json();
     },
+    // Keep the last list visible while Pusher/poll refetch runs — otherwise a slow or empty
+    // refetch after an inbound message makes the inbox look wiped.
+    placeholderData: (previous) => previous,
     refetchInterval: 30000, // poll every 30s as fallback when Pusher not wired
   });
 }
@@ -103,6 +106,7 @@ export function useConversation(id: string) {
       return res.json();
     },
     enabled: !!id,
+    placeholderData: (previous) => previous,
     refetchInterval: 15000, // poll for new messages
   });
 }
