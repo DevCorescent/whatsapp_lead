@@ -78,6 +78,15 @@ export function sanitizeWhatsAppToken(raw: string | null | undefined): string | 
 }
 
 /**
+ * Meta Graph API user / system-user tokens start with `EAA` and are long.
+ * Placeholders like "Demo", business names, OpenRouter keys, etc. must never be sent.
+ */
+export function isMetaAccessToken(value: string | null | undefined): boolean {
+  if (!value) return false;
+  return /^EAA[A-Za-z0-9]{20,}$/.test(value);
+}
+
+/**
  * Encrypt a secret for storage. Returns the value unchanged when no key is
  * configured, so an unconfigured deployment stores plaintext rather than failing
  * to save settings. An empty string is returned as-is — there is nothing to protect.

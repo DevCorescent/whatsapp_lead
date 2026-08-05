@@ -22,7 +22,7 @@ import { cookies } from "next/headers";
 import type { Business } from "@prisma/client";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
-import { decryptSecret } from "@/lib/crypto";
+import { decryptSecret, isMetaAccessToken } from "@/lib/crypto";
 
 /** Cookie that remembers the business the user last switched to. */
 export const CURRENT_BUSINESS_COOKIE = "current_business";
@@ -251,30 +251,11 @@ export async function resolveWhatsAppCreds(businessId: string): Promise<Resolved
       storedLength: token?.length ?? 0,
       error,
     });
-    // Encrypted with a different ENCRYPTION_KEY — try tenant plaintext/encrypted fallback.
-    if (tokenSource === "business") {
-      const settings = await prisma.tenantSettings.findUnique({
-        where: { tenantId: business.tenantId },
-        select: { waApiKey: true, waPhoneNumberId: true },
-      });
-      if (settings?.waApiKey) {
-        try {
-          apiKey = decryptSecret(settings.waApiKey);
-          tokenSource = "tenant";
-          phoneNumberId = phoneNumberId ?? settings.waPhoneNumberId ?? null;
-          console.warn("[WA CREDS] Fell back to TenantSettings WhatsApp token after business decrypt failed", {
-            businessId,
-          });
-        } catch (fallbackError) {
-          console.error("[WA CREDS] TenantSettings token also failed to decrypt:", fallbackError);
-        }
-      }
-    }
   }
 
-  // Meta permanent/temp tokens are typically EAAG… / EAA… . Anything else is almost always a
-  // bad paste (OpenRouter key, phone number id, etc.) and yields "Cannot parse access token".
-  if (apiKey && !/^EAA[A-Za-z0-9]/.test(apiKey)) {
+  // Placeholder values like "Demo" were saved as the access token for this business.
+  // Never send those to Meta — try TenantSettings, otherwise clear apiKey so send is skipped.
+  if (apiKey && !isMetaAccessToken(apiKey)) {
     console.error("[WA CREDS] Token does not look like a Meta WhatsApp access token", {
       businessId,
       businessName: business.name,
@@ -282,7 +263,38 @@ export async function resolveWhatsAppCreds(businessId: string): Promise<Resolved
       length: apiKey.length,
       prefix: apiKey.slice(0, 4),
     });
-  } else if (apiKey) {
+
+    if (tokenSource === "business") {
+      const settings = await prisma.tenantSettings.findUnique({
+        where: { tenantId: business.tenantId },
+        select: { waApiKey: true, waPhoneNumberId: true, waBusinessAccountId: true },
+      });
+      if (settings?.waApiKey) {
+        try {
+          const fallback = decryptSecret(settings.waApiKey);
+          if (isMetaAccessToken(fallback)) {
+            apiKey = fallback;
+            tokenSource = "tenant";
+            phoneNumberId = phoneNumberId ?? settings.waPhoneNumberId ?? null;
+            businessAccountId = businessAccountId ?? settings.waBusinessAccountId ?? null;
+            console.warn("[WA CREDS] Fell back to TenantSettings token — business token was invalid", {
+              businessId,
+            });
+          } else {
+            apiKey = null;
+          }
+        } catch {
+          apiKey = null;
+        }
+      } else {
+        apiKey = null;
+      }
+    } else {
+      apiKey = null;
+    }
+  }
+
+  if (apiKey && isMetaAccessToken(apiKey)) {
     console.log("[WA CREDS] Resolved WhatsApp token", {
       businessId,
       businessName: business.name,
@@ -300,6 +312,7 @@ export async function resolveWhatsAppCreds(businessId: string): Promise<Resolved
       hasPhoneNumberId: Boolean(phoneNumberId),
       hasApiKey: Boolean(apiKey),
       tokenSource,
+      hint: "Paste a Meta access token (starts with EAA…) into Businesses → Access token",
     });
   }
 

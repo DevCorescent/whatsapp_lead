@@ -12,7 +12,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getBusinessScope, publicBusiness, CURRENT_BUSINESS_COOKIE } from "@/lib/business";
 import { invalidateCredsCache, invalidateTenantCache } from "@/lib/cache";
 import { prisma } from "@/lib/prisma";
-import { encryptSecret } from "@/lib/crypto";
+import { encryptSecret, isMetaAccessToken, sanitizeWhatsAppToken } from "@/lib/crypto";
 import { updateBusinessSchema } from "@/lib/validators/business";
 
 type Params = { params: Promise<{ id: string }> };
@@ -45,6 +45,20 @@ export async function PATCH(req: NextRequest, { params }: Params) {
 
   const { whatsappAccessToken, whatsappPhoneNumberId, logo, ...rest } = parsed.data;
 
+  if (whatsappAccessToken) {
+    const cleaned = sanitizeWhatsAppToken(whatsappAccessToken);
+    if (!cleaned || !isMetaAccessToken(cleaned)) {
+      return NextResponse.json(
+        {
+          success: false,
+          error:
+            "Access token must be a Meta WhatsApp token (starts with EAA…). Do not paste the business name, OpenRouter key, or phone number ID.",
+        },
+        { status: 400 },
+      );
+    }
+  }
+
   // Keep the webhook routing key 1:1 — reject a phone_number_id owned by a different business.
   if (whatsappPhoneNumberId && whatsappPhoneNumberId !== existing.whatsappPhoneNumberId) {
     const taken = await prisma.business.findUnique({
@@ -68,7 +82,7 @@ export async function PATCH(req: NextRequest, { params }: Params) {
         ...(logo !== undefined && { logo: logo || null }),
         // A new token is encrypted; an omitted/empty token leaves the stored one untouched.
         ...(whatsappAccessToken
-          ? { whatsappAccessToken: encryptSecret(whatsappAccessToken) }
+          ? { whatsappAccessToken: encryptSecret(sanitizeWhatsAppToken(whatsappAccessToken)!) }
           : {}),
       },
     });

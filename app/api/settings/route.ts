@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { auth } from "@/lib/auth";
 import { invalidateCredsCache, invalidateTenantCache } from "@/lib/cache";
-import { encryptSecret, sanitizeWhatsAppToken } from "@/lib/crypto";
+import { encryptSecret, isMetaAccessToken, sanitizeWhatsAppToken } from "@/lib/crypto";
 import { prisma } from "@/lib/prisma";
 
 const patchSchema = z.object({
@@ -69,6 +69,16 @@ export async function PATCH(req: NextRequest) {
     // was a common source of "works in UI, 401 on send" when mixed with enc:v1: business tokens.
     if (data.waApiKey !== undefined) {
       const cleaned = sanitizeWhatsAppToken(data.waApiKey);
+      if (data.waApiKey.trim() && (!cleaned || !isMetaAccessToken(cleaned))) {
+        return NextResponse.json(
+          {
+            success: false,
+            error:
+              "WhatsApp access token must be a Meta token starting with EAA…. Do not paste Demo, business name, or API keys from other services.",
+          },
+          { status: 400 },
+        );
+      }
       data.waApiKey = cleaned ? encryptSecret(cleaned) : data.waApiKey;
     }
     if (data.waAppSecret !== undefined && data.waAppSecret) {
