@@ -923,13 +923,31 @@ export async function handleAutoReply(
     return;
   }
 
-  const creds = await resolveWhatsAppCreds(tenant.businessId);
+  // Same credential resolution as POST /api/messages — conversation.businessId, not the
+  // webhook's routed tenant.businessId. Those can diverge after multi-business routing, which is
+  // why agent-typed messages succeeded while AI replies got Meta 400s.
+  const creds = await resolveWhatsAppCreds(conversation.businessId);
   if (!creds.phoneNumberId || !creds.apiKey) {
     console.warn(
-      `[INBOUND] Auto-reply enabled for tenant ${tenant.tenantId} but WhatsApp credentials are missing on business ${tenant.businessId}`
+      `[INBOUND] Auto-reply enabled but WhatsApp credentials missing on conversation business ${conversation.businessId}`,
+      {
+        tenantId: tenant.tenantId,
+        routedBusinessId: tenant.businessId,
+        conversationBusinessId: conversation.businessId,
+      }
     );
     return;
   }
+
+  console.log("[INBOUND] AI reply credentials resolved", {
+    conversationId: conversation.id,
+    conversationBusinessId: conversation.businessId,
+    routedBusinessId: tenant.businessId,
+    phoneNumberId: creds.phoneNumberId,
+    tokenPrefix: creds.apiKey.slice(0, 4),
+    tokenLength: creds.apiKey.length,
+    to: contact.phone,
+  });
 
   const history = await loadConversationHistory(
     tenant.tenantId,
@@ -1008,10 +1026,19 @@ export async function handleAutoReply(
 
   let waMessageId: string | null;
   try {
+    // Prefer the phone on the conversation's contact (exact same field manual send uses).
+    const to = contact.phone;
+    console.log("[INBOUND] Sending AI reply via WhatsApp", {
+      conversationId: conversation.id,
+      phoneNumberId: creds.phoneNumberId,
+      to,
+      replyLength: reply.length,
+      replyPreview: reply.slice(0, 100),
+    });
     const sent = await sendTextMessage(
       creds.phoneNumberId,
       creds.apiKey,
-      contact.phone,
+      to,
       reply
     );
     waMessageId = sent.messages?.[0]?.id ?? null;

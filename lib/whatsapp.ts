@@ -19,6 +19,20 @@ function normalizeWaTo(to: string): string {
   return to.replace(/\D/g, "");
 }
 
+/**
+ * Strip characters that make Meta return opaque 400s while agent-typed messages still work.
+ * Manual inbox sends are short plain text; model output often includes nulls, unpaired
+ * surrogates, or markdown fences that Cloud API rejects.
+ */
+export function sanitizeWaText(raw: string): string {
+  return raw
+    .replace(/\u0000/g, "")
+    .replace(/[\uD800-\uDFFF]/g, "") // unpaired surrogates
+    .replace(/\r\n/g, "\n")
+    .trim()
+    .slice(0, 4096);
+}
+
 function formatMetaSendError(status: number, statusText: string, to: string, raw: string): string {
   let hint = "";
   let summary = raw;
@@ -85,6 +99,11 @@ export async function sendTextMessage(
     throw new Error("WhatsApp send aborted — empty message body");
   }
 
+  const text = sanitizeWaText(body);
+  if (!text) {
+    throw new Error("WhatsApp send aborted — message empty after sanitize");
+  }
+
   const res = await fetch(`${WA_BASE_URL}/${phoneNumberId}/messages`, {
     method: "POST",
     headers: {
@@ -96,7 +115,7 @@ export async function sendTextMessage(
       recipient_type: "individual",
       to: recipient,
       type: "text",
-      text: { preview_url: false, body: body.slice(0, 4096) },
+      text: { preview_url: false, body: text },
     }),
   });
 
@@ -109,9 +128,9 @@ export async function sendTextMessage(
       status: res.status,
       phoneNumberId,
       to: recipient,
-      bodyLength: body.length,
-      bodyPreview: body.slice(0, 80),
-      meta: err.slice(0, 500),
+      bodyLength: text.length,
+      bodyPreview: text.slice(0, 120),
+      meta: err.slice(0, 800),
     });
     throw new Error(formatMetaSendError(res.status, res.statusText, recipient, err));
   }

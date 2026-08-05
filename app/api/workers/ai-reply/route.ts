@@ -26,6 +26,7 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { MessageDirection } from "@prisma/client";
+import type { Contact, Conversation } from "@prisma/client";
 import { verifyQStashSignature } from "@/lib/qstash-verify";
 import { handleAutoReply, resolveTenantById } from "@/lib/inbound";
 import { prisma } from "@/lib/prisma";
@@ -47,8 +48,8 @@ export async function POST(req: NextRequest) {
   // the exact duplicate-reply problem this queue was introduced to eliminate. So the send phase
   // never asks for a redelivery, and the setup phase always may.
   let tenant: Awaited<ReturnType<typeof resolveTenantById>>;
-  let conversation: Awaited<ReturnType<typeof prisma.conversation.findUnique>>;
-  let contact: Awaited<ReturnType<typeof prisma.contact.findUnique>>;
+  let conversation: Conversation | null = null;
+  let contact: Contact | null = null;
 
   try {
     tenant = await resolveTenantById(job.tenantId, job.businessId);
@@ -56,12 +57,27 @@ export async function POST(req: NextRequest) {
     // Both rows are read back rather than carried on the job: a queued reply can be delivered
     // seconds after the message that triggered it, and the thread may have been assigned,
     // resolved or renamed in between. The ids are the stable part, so they are what travels.
-    conversation = await prisma.conversation.findUnique({
+    //
+    // Contact is loaded via the conversation (same as POST /api/messages), not via job.businessId.
+    // Continuity routing can put the thread on a different business than the webhook originally
+    // resolved — matching on job.businessId then misses the contact or uses the wrong WhatsApp creds.
+    const row = await prisma.conversation.findUnique({
       where: { id: job.conversationId },
+      include: { contact: true },
     });
-    contact = await prisma.contact.findUnique({
-      where: { phone_businessId: { phone: job.contactPhone, businessId: job.businessId } },
-    });
+    conversation = row;
+    contact = row?.contact ?? null;
+
+    // Align tenant.businessId with the conversation so handleAutoReply / resolveWhatsAppCreds
+    // match the manual inbox send path exactly.
+    if (conversation?.businessId && conversation.businessId !== tenant.businessId) {
+      console.warn("[WORKER AI-REPLY] job.businessId differs from conversation.businessId — using conversation", {
+        jobBusinessId: job.businessId,
+        conversationBusinessId: conversation.businessId,
+        conversationId: job.conversationId,
+      });
+      tenant = { ...tenant, businessId: conversation.businessId };
+    }
 
     // Idempotency guard. QStash delivers at-least-once independently of retries — a response we
     // sent that never reached QStash is enough to have the same job delivered twice — and a
