@@ -248,6 +248,7 @@ export async function retrieveContext(
   if (!query.trim() || !process.env.QDRANT_URL) return undefined;
 
   try {
+    await ensureCollection();
     const vector = await embedQuery(query);
     const results = await qdrant().search(KB_COLLECTION, {
       vector,

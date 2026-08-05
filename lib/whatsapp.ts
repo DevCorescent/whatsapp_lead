@@ -42,8 +42,13 @@ export async function sendTextMessage(
     // here would throw a SyntaxError *inside the error handler*, destroying the real failure and
     // replacing it with a parse error — precisely when the real failure matters most.
     const err = await res.text();
+    let hint = "";
+    if (res.status === 401) {
+      hint =
+        " — Meta rejected the access token. Re-paste a fresh token from Meta Developer → WhatsApp → API Setup into Businesses (or Settings) for this phone number.";
+    }
     throw new Error(
-      `WhatsApp API error (${res.status} ${res.statusText}) sending text to ${to}: ${err}`
+      `WhatsApp API error (${res.status} ${res.statusText}) sending text to ${to}: ${err}${hint}`
     );
   }
 

@@ -205,6 +205,7 @@ export async function resolveWhatsAppCreds(businessId: string): Promise<Resolved
     where: { id: businessId },
     select: {
       tenantId: true,
+      name: true,
       whatsappPhoneNumberId: true,
       whatsappBusinessId: true,
       whatsappAccessToken: true,
@@ -217,6 +218,7 @@ export async function resolveWhatsAppCreds(businessId: string): Promise<Resolved
   let businessAccountId = business.whatsappBusinessId;
   let token = business.whatsappAccessToken;
   let verifyToken = business.whatsappVerifyToken;
+  let tokenSource: "business" | "tenant" | "none" = token ? "business" : "none";
 
   if (!phoneNumberId || !businessAccountId || !token) {
     const settings = await prisma.tenantSettings.findUnique({
@@ -230,7 +232,10 @@ export async function resolveWhatsAppCreds(businessId: string): Promise<Resolved
     });
     phoneNumberId = phoneNumberId ?? settings?.waPhoneNumberId ?? null;
     businessAccountId = businessAccountId ?? settings?.waBusinessAccountId ?? null;
-    token = token ?? settings?.waApiKey ?? null;
+    if (!token && settings?.waApiKey) {
+      token = settings.waApiKey;
+      tokenSource = "tenant";
+    }
     verifyToken = verifyToken ?? settings?.waWebhookVerifyToken ?? null;
   }
 
@@ -238,7 +243,41 @@ export async function resolveWhatsAppCreds(businessId: string): Promise<Resolved
   try {
     apiKey = decryptSecret(token);
   } catch (error) {
-    console.error("[WA CREDS] Failed to decrypt WhatsApp token:", error);
+    console.error("[WA CREDS] Failed to decrypt WhatsApp token:", {
+      businessId,
+      businessName: business.name,
+      tokenSource,
+      error,
+    });
+    // Encrypted with a different ENCRYPTION_KEY — try tenant plaintext/encrypted fallback.
+    if (tokenSource === "business") {
+      const settings = await prisma.tenantSettings.findUnique({
+        where: { tenantId: business.tenantId },
+        select: { waApiKey: true, waPhoneNumberId: true },
+      });
+      if (settings?.waApiKey) {
+        try {
+          apiKey = decryptSecret(settings.waApiKey);
+          tokenSource = "tenant";
+          phoneNumberId = phoneNumberId ?? settings.waPhoneNumberId ?? null;
+          console.warn("[WA CREDS] Fell back to TenantSettings WhatsApp token after business decrypt failed", {
+            businessId,
+          });
+        } catch (fallbackError) {
+          console.error("[WA CREDS] TenantSettings token also failed to decrypt:", fallbackError);
+        }
+      }
+    }
+  }
+
+  if (!apiKey || !phoneNumberId) {
+    console.warn("[WA CREDS] Incomplete WhatsApp credentials", {
+      businessId,
+      businessName: business.name,
+      hasPhoneNumberId: Boolean(phoneNumberId),
+      hasApiKey: Boolean(apiKey),
+      tokenSource,
+    });
   }
 
   return { phoneNumberId, businessAccountId, apiKey, verifyToken };

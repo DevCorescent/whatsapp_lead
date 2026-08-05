@@ -131,26 +131,33 @@ export async function ensureCollection(): Promise<void> {
 async function createCollectionIfMissing(): Promise<void> {
   const c = qdrant();
   const { collections } = await c.getCollections();
-  if (collections.some((col) => col.name === KB_COLLECTION)) return;
+  const exists = collections.some((col) => col.name === KB_COLLECTION);
 
-  await c.createCollection(KB_COLLECTION, {
-    vectors: { size: VECTOR_SIZE, distance: "Cosine" },
-  });
-  // Indexing the tenant filter keeps per-tenant search fast as data grows, and
-  // Qdrant Cloud *requires* an index to filter on a field at all.
-  await c.createPayloadIndex(KB_COLLECTION, {
-    field_name: "tenantId",
-    field_schema: "keyword",
-  });
-  await c.createPayloadIndex(KB_COLLECTION, {
-    field_name: "docId",
-    field_schema: "keyword",
-  });
-  // Retrieval filters on tenantId AND businessId together, and Qdrant Cloud requires an index on
-  // a field before it can be filtered on at all — without this the business filter would error
-  // rather than narrow.
-  await c.createPayloadIndex(KB_COLLECTION, {
-    field_name: "businessId",
-    field_schema: "keyword",
-  });
+  if (!exists) {
+    await c.createCollection(KB_COLLECTION, {
+      vectors: { size: VECTOR_SIZE, distance: "Cosine" },
+    });
+  }
+
+  // Always ensure payload indexes — the collection may have been created before
+  // businessId filtering existed. Qdrant Cloud rejects filters on unindexed fields
+  // with 400 ("Index required but not found for businessId").
+  await ensurePayloadIndexes(c);
+}
+
+async function ensurePayloadIndexes(c: QdrantRestClient): Promise<void> {
+  for (const field_name of ["tenantId", "docId", "businessId"] as const) {
+    try {
+      await c.createPayloadIndex(KB_COLLECTION, {
+        field_name,
+        field_schema: "keyword",
+      });
+    } catch (error) {
+      // Already exists — Qdrant returns an error; that is success for us.
+      const msg = error instanceof Error ? error.message : String(error);
+      if (!/already|exists|duplicate/i.test(msg)) {
+        console.warn(`[QDRANT] Payload index "${field_name}" ensure failed:`, msg);
+      }
+    }
+  }
 }
