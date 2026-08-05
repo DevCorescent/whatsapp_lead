@@ -695,16 +695,35 @@ async function executeFlow(
   if (!isResuming) {
     if (!inboundText) return false;
     const normalised = inboundText.toLowerCase().trim();
+    // Tokenise so keyword "hi" does not steal "hello" / "this" via String.includes.
+    const tokens = normalised.split(/[^a-z0-9]+/).filter(Boolean);
 
     const activeFlows = await prisma.chatbotFlow.findMany({
-      where: { tenantId: tenant.tenantId, isActive: true },
+      where: {
+        tenantId: tenant.tenantId,
+        businessId: tenant.businessId,
+        isActive: true,
+      },
       select: { id: true, keywords: true, nodes: true, edges: true },
     });
 
     const matched = activeFlows.find((f) =>
-      f.keywords.some((kw) => normalised.includes(kw.toLowerCase())),
+      f.keywords.some((kw) => {
+        const k = kw.toLowerCase().trim();
+        if (!k) return false;
+        if (normalised === k) return true;
+        // Multi-word keywords must appear as a whole phrase; single words as whole tokens.
+        if (k.includes(" ")) return normalised.includes(k);
+        return tokens.includes(k);
+      }),
     );
     if (!matched) return false;
+
+    console.log("[INBOUND] Chatbot flow matched", {
+      flowId: matched.id,
+      text: inboundText,
+      conversationId: conversation.id,
+    });
 
     flowId = matched.id;
     fromNodeId = undefined;
@@ -731,10 +750,12 @@ async function executeFlow(
   });
 
   // Send every message action to the customer.
+  let sentCount = 0;
   for (const action of result.actions) {
     if ((action.type === "message" || action.type === "ai") && action.text) {
       try {
         await sendTextMessage(flowCreds.phoneNumberId, flowCreds.apiKey, contact.phone, action.text);
+        sentCount += 1;
       } catch (err) {
         console.error("[FLOW] Failed to send message:", err);
       }
@@ -751,17 +772,30 @@ async function executeFlow(
         flowVars: result.variables as Prisma.InputJsonValue,
       },
     });
-  } else {
-    await prisma.conversation.update({
-      where: { id: conversation.id },
-      data: { activeFlowId: null, activeNodeId: null, flowVars: Prisma.JsonNull },
-    });
+    return true;
+  }
 
-    // Handoff: assign to a human, disable AI active flag.
-    if (result.handoff) {
-      const handoff = result.actions.find((a) => a.type === "handoff")?.handoff;
-      await assignConversationToAgent(conversation, handoff);
-    }
+  await prisma.conversation.update({
+    where: { id: conversation.id },
+    data: { activeFlowId: null, activeNodeId: null, flowVars: Prisma.JsonNull },
+  });
+
+  // Handoff: assign to a human, disable AI active flag.
+  if (result.handoff) {
+    const handoff = result.actions.find((a) => a.type === "handoff")?.handoff;
+    await assignConversationToAgent(conversation, handoff);
+    return true;
+  }
+
+  // Only claim the turn if the customer saw something. An empty/broken flow must not
+  // block the AI auto-reply path — that is why "hi"/"hello" produced no reply at all.
+  if (sentCount === 0) {
+    console.warn("[INBOUND] Flow matched but sent nothing — falling through to AI", {
+      flowId: flow.id,
+      conversationId: conversation.id,
+      status: result.status,
+    });
+    return false;
   }
 
   return true;
@@ -870,13 +904,19 @@ export async function handleAutoReply(
 ): Promise<void> {
   const cfg = await resolveAutoReplyConfig(tenant);
 
-  if (!cfg.aiEnabled || !cfg.autoReply) {
-    console.log("[INBOUND] Skipping AI reply — AI/auto-reply off", {
+  const live = await prisma.conversation.findUnique({
+    where: { id: conversation.id },
+    select: { isAiActive: true },
+  });
+  const threadOn = live?.isAiActive === true;
+  const workspaceOn = cfg.aiEnabled && cfg.autoReply;
+
+  if (!threadOn && !workspaceOn) {
+    console.log("[INBOUND] Skipping AI reply — AI off on thread and workspace", {
       tenantId: tenant.tenantId,
       businessId: tenant.businessId,
       businessName: cfg.businessName,
-      tenantAiEnabled: tenant.aiEnabled,
-      tenantAutoReply: tenant.autoReply,
+      isAiActive: live?.isAiActive ?? null,
       effectiveAiEnabled: cfg.aiEnabled,
       effectiveAutoReply: cfg.autoReply,
     });
@@ -1028,13 +1068,26 @@ async function dispatchAutoReply(
 ): Promise<void> {
   const cfg = await resolveAutoReplyConfig(tenant);
 
-  if (!cfg.aiEnabled || !cfg.autoReply) {
-    console.log("[INBOUND] Not queueing AI reply — AI/auto-reply off", {
+  // Re-read the thread toggle — agents flip it in the inbox after the conversation row
+  // was loaded, and that switch is what your screenshot shows as ON.
+  const live = await prisma.conversation.findUnique({
+    where: { id: conversation.id },
+    select: { isAiActive: true },
+  });
+  const threadOn = live?.isAiActive === true;
+  const workspaceOn = cfg.aiEnabled && cfg.autoReply;
+
+  // Honour either the inbox "AI Auto-Reply" toggle OR workspace AI Settings / Business flags.
+  // Keys alone are not enough — without one of these, we never publish /api/workers/ai-reply.
+  if (!threadOn && !workspaceOn) {
+    console.log("[INBOUND] Not queueing AI reply — AI off on thread and workspace", {
       tenantId: tenant.tenantId,
       businessId: tenant.businessId,
       businessName: cfg.businessName,
+      isAiActive: live?.isAiActive ?? null,
       effectiveAiEnabled: cfg.aiEnabled,
       effectiveAutoReply: cfg.autoReply,
+      conversationId: conversation.id,
     });
     return;
   }
@@ -1049,6 +1102,7 @@ async function dispatchAutoReply(
     businessId: tenant.businessId,
     delaySeconds: cfg.autoReplyDelay,
     waMessageId,
+    reason: threadOn ? "thread_toggle" : "workspace_flags",
   });
 
   await publishAiReply(
