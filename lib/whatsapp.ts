@@ -14,7 +14,62 @@
 
 const WA_BASE_URL = `https://graph.facebook.com/${process.env.WHATSAPP_API_VERSION ?? "v19.0"}`;
 
-// TODO [GAURANSH]: Implement below
+/** Digits-only E.164 without '+'. Meta accepts this form for Cloud API `to`. */
+function normalizeWaTo(to: string): string {
+  return to.replace(/\D/g, "");
+}
+
+function formatMetaSendError(status: number, statusText: string, to: string, raw: string): string {
+  let hint = "";
+  let summary = raw;
+
+  try {
+    const parsed = JSON.parse(raw) as {
+      error?: {
+        message?: string;
+        code?: number;
+        error_subcode?: number;
+        error_data?: { details?: string };
+        type?: string;
+      };
+    };
+    const e = parsed.error;
+    if (e) {
+      summary = [
+        e.message,
+        e.code != null ? `code=${e.code}` : null,
+        e.error_subcode != null ? `subcode=${e.error_subcode}` : null,
+        e.error_data?.details ? `details=${e.error_data.details}` : null,
+      ]
+        .filter(Boolean)
+        .join(" | ");
+
+      // Common Cloud API failures — surface a fix instead of a opaque 400.
+      if (e.code === 190 || status === 401) {
+        hint =
+          " — Access token invalid. Paste a fresh EAA… token from Meta → WhatsApp → API Setup into Businesses (same workspace that owns this number).";
+      } else if (e.code === 100) {
+        hint =
+          " — Invalid parameter (often wrong Phone Number ID for this token, or bad recipient). Confirm Phone Number ID matches the token's WhatsApp account.";
+      } else if (e.code === 131030) {
+        hint =
+          " — Recipient not in the allowed list. In Meta → WhatsApp → API Setup, add this customer number under 'To' test numbers (or go live).";
+      } else if (e.code === 131047 || e.error_subcode === 131047) {
+        hint =
+          " — Outside the 24-hour customer care window. Customer must message you first, or send an approved template.";
+      } else if (e.code === 131026) {
+        hint = " — Message undeliverable (invalid/blocked WhatsApp number).";
+      } else if (status === 400) {
+        hint =
+          " — Meta rejected the send. Check Phone Number ID + token pair, and that this number can message the recipient.";
+      }
+    }
+  } catch {
+    // Non-JSON body (HTML gateway error) — keep raw text.
+  }
+
+  return `WhatsApp API error (${status} ${statusText}) sending text to ${to}: ${summary}${hint}`;
+}
 
 export async function sendTextMessage(
   phoneNumberId: string,
@@ -22,6 +77,14 @@ export async function sendTextMessage(
   to: string,
   body: string
 ) {
+  const recipient = normalizeWaTo(to);
+  if (!recipient) {
+    throw new Error(`WhatsApp send aborted — empty recipient (raw="${to}")`);
+  }
+  if (!body.trim()) {
+    throw new Error("WhatsApp send aborted — empty message body");
+  }
+
   const res = await fetch(`${WA_BASE_URL}/${phoneNumberId}/messages`, {
     method: "POST",
     headers: {
@@ -31,9 +94,9 @@ export async function sendTextMessage(
     body: JSON.stringify({
       messaging_product: "whatsapp",
       recipient_type: "individual",
-      to,
+      to: recipient,
       type: "text",
-      text: { preview_url: false, body },
+      text: { preview_url: false, body: body.slice(0, 4096) },
     }),
   });
 
@@ -42,14 +105,15 @@ export async function sendTextMessage(
     // here would throw a SyntaxError *inside the error handler*, destroying the real failure and
     // replacing it with a parse error — precisely when the real failure matters most.
     const err = await res.text();
-    let hint = "";
-    if (res.status === 401) {
-      hint =
-        " — Meta rejected the access token. Re-paste a fresh token from Meta Developer → WhatsApp → API Setup into Businesses (or Settings) for this phone number.";
-    }
-    throw new Error(
-      `WhatsApp API error (${res.status} ${res.statusText}) sending text to ${to}: ${err}${hint}`
-    );
+    console.error("[WA SEND] Meta rejected text message", {
+      status: res.status,
+      phoneNumberId,
+      to: recipient,
+      bodyLength: body.length,
+      bodyPreview: body.slice(0, 80),
+      meta: err.slice(0, 500),
+    });
+    throw new Error(formatMetaSendError(res.status, res.statusText, recipient, err));
   }
 
   return res.json() as Promise<WASendMessageResponse>;

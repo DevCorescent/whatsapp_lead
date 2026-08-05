@@ -275,10 +275,13 @@ export async function resolveWhatsAppCreds(businessId: string): Promise<Resolved
           if (isMetaAccessToken(fallback)) {
             apiKey = fallback;
             tokenSource = "tenant";
-            phoneNumberId = phoneNumberId ?? settings.waPhoneNumberId ?? null;
-            businessAccountId = businessAccountId ?? settings.waBusinessAccountId ?? null;
+            // Keep token + phone number id as one pair from TenantSettings.
+            // Mixing a tenant token with a stale business phoneNumberId causes Meta 400s.
+            phoneNumberId = settings.waPhoneNumberId ?? phoneNumberId;
+            businessAccountId = settings.waBusinessAccountId ?? businessAccountId;
             console.warn("[WA CREDS] Fell back to TenantSettings token — business token was invalid", {
               businessId,
+              phoneNumberId,
             });
           } else {
             apiKey = null;

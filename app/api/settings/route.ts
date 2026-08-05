@@ -123,6 +123,44 @@ export async function PATCH(req: NextRequest) {
           await invalidateTenantCache(settings.waPhoneNumberId);
         }
 
+        // Keep the Business row that owns this phone number in sync. Inbound resolves by
+        // businessId; a stale placeholder token like "Demo" on the business caused 401/400
+        // even when Settings had a valid EAA… token.
+        if (settings.waPhoneNumberId && (data.waApiKey || data.waPhoneNumberId || data.waBusinessAccountId)) {
+          const byPhone = await prisma.business.findFirst({
+            where: { tenantId, whatsappPhoneNumberId: settings.waPhoneNumberId },
+            select: { id: true },
+          });
+          const target =
+            byPhone ??
+            (await prisma.business.findFirst({
+              where: { tenantId },
+              orderBy: { createdAt: "asc" },
+              select: { id: true },
+            }));
+
+          if (target) {
+            await prisma.business.update({
+              where: { id: target.id },
+              data: {
+                whatsappPhoneNumberId: settings.waPhoneNumberId,
+                ...(settings.waBusinessAccountId && {
+                  whatsappBusinessId: settings.waBusinessAccountId,
+                }),
+                ...(settings.waApiKey && { whatsappAccessToken: settings.waApiKey }),
+                ...(settings.waWebhookVerifyToken && {
+                  whatsappVerifyToken: settings.waWebhookVerifyToken,
+                }),
+              },
+            });
+            await invalidateCredsCache(target.id);
+            console.log("[SETTINGS] Synced WhatsApp creds onto business", {
+              businessId: target.id,
+              phoneNumberId: settings.waPhoneNumberId,
+            });
+          }
+        }
+
         // TenantSettings is the fallback credential source in resolveWhatsAppCreds: any business
         // that has not set its own number or token reads these values. A change here can therefore
         // stale the cached credentials of every business in the tenant, not just one, so all of
