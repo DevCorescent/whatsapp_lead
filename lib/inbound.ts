@@ -92,27 +92,39 @@ export type ResolvedTenant = Prisma.TenantSettingsGetPayload<{
  * @throws {Error} If no tenant has this number configured, or the resolved tenant is inactive.
  */
 export async function resolveTenant(phoneNumberId: string): Promise<ResolvedTenant> {
-  // Primary path: TenantSettings (legacy, single-business)
-  let settings = await prisma.tenantSettings.findFirst({
+  // Prefer the Business that owns this Meta phone_number_id. That is what the inbox is scoped
+  // to — routing via TenantSettings first and then falling back to the tenant's *oldest*
+  // business is what made messages land in one workspace while the agent watched another.
+  const ownedBusiness = await prisma.business.findFirst({
+    where: { whatsappPhoneNumberId: phoneNumberId, tenant: { isActive: true } },
+    select: { id: true, tenantId: true },
+  });
+
+  if (ownedBusiness) {
+    const settings = await prisma.tenantSettings.findUnique({
+      where: { tenantId: ownedBusiness.tenantId },
+      include: { tenant: true },
+    });
+    if (!settings) {
+      throw new Error(
+        `No settings configured for tenant "${ownedBusiness.tenantId}" (business ${ownedBusiness.id})`
+      );
+    }
+    if (!settings.tenant.isActive) {
+      throw new Error(
+        `Tenant inactive: "${settings.tenant.slug}" (${settings.tenantId})`
+      );
+    }
+    return { ...settings, businessId: ownedBusiness.id };
+  }
+
+  // Legacy path: WhatsApp was configured on TenantSettings only, before multi-business.
+  // No Business row claims this number yet — resolve a real business and attach the number
+  // so the next delivery (and the business switcher) agree on where the inbox lives.
+  const settings = await prisma.tenantSettings.findFirst({
     where: { waPhoneNumberId: phoneNumberId },
     include: { tenant: true },
   });
-  let businessId: string | null = null;
-
-  // Fallback path: Business table (multi-business)
-  if (!settings) {
-    const business = await prisma.business.findFirst({
-      where: { whatsappPhoneNumberId: phoneNumberId, tenant: { isActive: true } },
-      select: { id: true, tenantId: true },
-    });
-    if (business) {
-      businessId = business.id;
-      settings = await prisma.tenantSettings.findUnique({
-        where: { tenantId: business.tenantId },
-        include: { tenant: true },
-      });
-    }
-  }
 
   if (!settings) {
     throw new Error(
@@ -120,35 +132,39 @@ export async function resolveTenant(phoneNumberId: string): Promise<ResolvedTena
     );
   }
 
-  // A suspended or deleted workspace must not accumulate new conversations, contacts or
-  // AI spend, even though Meta will keep delivering to a number that is still subscribed.
   if (!settings.tenant.isActive) {
     throw new Error(
       `Tenant inactive: "${settings.tenant.slug}" (${settings.tenantId})`
     );
   }
 
-  // If not already set from the Business fallback, resolve businessId now.
-  //
-  // A tenant that configured WhatsApp through Settings (the original single-number path) has
-  // `TenantSettings.waPhoneNumberId` set while no Business carries the same id — the two fields are
-  // written by different modules and were never kept in sync. That tenant lands here, and the
-  // businessId resolved for it is written onto every Contact and Conversation the webhook creates,
-  // both of which carry a foreign key to `businesses.id`. A synthesised id therefore does not
-  // degrade gracefully: it fails the constraint and the inbound message is dropped outright.
-  //
-  // `ensureDefaultBusiness` is the migration path that already exists for this exact shape — it
-  // returns the tenant's oldest business, or seeds one from those very TenantSettings — so the
-  // fallback resolves to a row that exists instead of to an id that cannot.
-  if (!businessId) {
-    const business = await prisma.business.findFirst({
-      where: { whatsappPhoneNumberId: phoneNumberId, tenant: { isActive: true } },
-      select: { id: true },
-    });
-    businessId = business?.id ?? (await ensureDefaultBusiness(settings.tenantId)).id;
+  const defaultBusiness = await ensureDefaultBusiness(settings.tenantId);
+
+  // Claim the number on the default business when it has none. Skip if it already carries a
+  // different number — overwriting would steal routing from that workspace.
+  if (!defaultBusiness.whatsappPhoneNumberId) {
+    try {
+      await prisma.business.update({
+        where: { id: defaultBusiness.id },
+        data: { whatsappPhoneNumberId: phoneNumberId },
+      });
+      console.log("[INBOUND] Synced WhatsApp phone_number_id onto default business", {
+        businessId: defaultBusiness.id,
+        phoneNumberId,
+        tenantId: settings.tenantId,
+      });
+    } catch (error) {
+      // Unique race with another business claiming the same id — fall through; routing still
+      // uses defaultBusiness.id for this delivery, and the next resolve will pick the winner.
+      console.warn("[INBOUND] Could not sync phone_number_id onto default business", {
+        businessId: defaultBusiness.id,
+        phoneNumberId,
+        error: String(error),
+      });
+    }
   }
 
-  return { ...settings, businessId };
+  return { ...settings, businessId: defaultBusiness.id };
 }
 
 /**

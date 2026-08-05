@@ -24,8 +24,14 @@
 // costs a few queries and sends nothing.
 
 import { NextRequest, NextResponse } from "next/server";
+import { prisma } from "@/lib/prisma";
+import { invalidateTenantCache } from "@/lib/cache";
 import { verifyQStashSignature } from "@/lib/qstash-verify";
-import { processIncomingMessage, resolveTenantById } from "@/lib/inbound";
+import {
+  processIncomingMessage,
+  resolveTenant,
+  resolveTenantById,
+} from "@/lib/inbound";
 import type { InboundMessageJob } from "@/lib/queue";
 
 export async function POST(req: NextRequest) {
@@ -49,9 +55,28 @@ export async function POST(req: NextRequest) {
   });
 
   try {
-    // The webhook already resolved which workspace this number belongs to and put the ids on
-    // the job, so the phone-number lookup and its Business fallback are not repeated here.
-    const tenant = await resolveTenantById(job.tenantId, job.businessId);
+    // Stale jobs (and old synthesised `biz_${tenantId}` ids) can name a business that no longer
+    // exists. Re-resolve from the Meta phone_number_id rather than FK-failing the contact write.
+    let businessId = job.businessId;
+    const businessExists = await prisma.business.findUnique({
+      where: { id: businessId },
+      select: { id: true, name: true },
+    });
+
+    let tenant;
+    if (!businessExists) {
+      console.warn("[WORKER INBOUND] businessId missing — re-resolving from phoneNumberId", {
+        waMessageId: job.waMessageId,
+        badBusinessId: job.businessId,
+        phoneNumberId: job.phoneNumberId,
+        tenantId: job.tenantId,
+      });
+      await invalidateTenantCache(job.phoneNumberId);
+      tenant = await resolveTenant(job.phoneNumberId);
+      businessId = tenant.businessId;
+    } else {
+      tenant = await resolveTenantById(job.tenantId, businessId);
+    }
 
     // 2. The ingestion spine, unchanged: contact → conversation → message, then the reactions
     //    (read receipt, broadcast, campaign credit, flow engine, and the AI reply which
@@ -61,7 +86,8 @@ export async function POST(req: NextRequest) {
     console.log("[WORKER INBOUND] Message processed successfully", {
       waMessageId: job.waMessageId,
       tenantId: job.tenantId,
-      businessId: job.businessId,
+      businessId,
+      businessName: businessExists?.name ?? null,
       contactId: result.contact.id,
       conversationId: result.conversation.id,
       messageId: result.message.id,
