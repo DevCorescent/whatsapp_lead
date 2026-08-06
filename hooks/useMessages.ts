@@ -77,6 +77,8 @@ interface UpdateConversationInput {
   assigneeId?: string | null;
   /** Per-conversation AI auto-reply switch, stored on the conversation itself. */
   isAiActive?: boolean;
+  /** Pass 0 to mark the conversation as fully read. Only 0 is accepted by the API. */
+  unreadCount?: 0;
 }
 
 export function useConversations(filters?: ConversationFilters) {
@@ -282,6 +284,68 @@ export function useResolveConversation() {
       void queryClient.invalidateQueries({ queryKey: ["conversations"] });
     },
   });
+}
+
+/**
+ * Zero the unread count for a conversation when it is opened.
+ *
+ * Patches both shapes of cached conversation (list array and single detail) optimistically so
+ * the badge disappears instantly, then persists to the server. Errors are silently swallowed —
+ * a failed reset is cosmetic; the actual messages were still delivered.
+ */
+export function useMarkConversationRead() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: (conversationId: string) =>
+      request<{ id: string }>(`/api/conversations/${conversationId}`, {
+        method: "PATCH",
+        body: JSON.stringify({ unreadCount: 0 }),
+      }),
+
+    onMutate: async (conversationId) => {
+      await queryClient.cancelQueries({ queryKey: ["conversations"] });
+
+      const snapshot = queryClient.getQueriesData({ queryKey: ["conversations"] });
+
+      queryClient.setQueriesData({ queryKey: ["conversations"] }, (old: unknown) =>
+        patchCachedUnreadCount(old, conversationId)
+      );
+
+      return { snapshot };
+    },
+
+    onError: (_error, _variables, context) => {
+      for (const [key, data] of context?.snapshot ?? []) {
+        queryClient.setQueryData(key, data);
+      }
+    },
+  });
+}
+
+/** Zero `unreadCount` for one conversation across both list and detail cache shapes. */
+function patchCachedUnreadCount(payload: unknown, id: string): unknown {
+  if (!payload || typeof payload !== "object") return payload;
+
+  const envelope = payload as { data?: unknown };
+  const inner = envelope.data;
+
+  if (Array.isArray(inner)) {
+    return {
+      ...envelope,
+      data: inner.map((row) =>
+        row && typeof row === "object" && (row as { id?: string }).id === id
+          ? { ...row, unreadCount: 0 }
+          : row
+      ),
+    };
+  }
+
+  if (inner && typeof inner === "object" && (inner as { id?: string }).id === id) {
+    return { ...envelope, data: { ...inner, unreadCount: 0 } };
+  }
+
+  return payload;
 }
 
 export function useAiReply() {

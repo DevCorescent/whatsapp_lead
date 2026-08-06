@@ -15,6 +15,7 @@
 
 import { randomUUID } from "node:crypto";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
+import os from "node:os";
 import path from "node:path";
 
 /**
@@ -25,9 +26,12 @@ import path from "node:path";
  * on purpose — assets are served through an authenticated route, never as static
  * files, so tenant scoping cannot be bypassed by guessing a path.
  */
+// On Vercel (and any read-only serverless runtime), process.cwd() is /var/task which
+// cannot be written to. Fall back to the OS temp directory so uploads do not hard-fail.
+// For a durable production setup set MEDIA_UPLOAD_DIR to a network-attached volume path.
 const BASE_DIR = process.env.MEDIA_UPLOAD_DIR
   ? path.resolve(process.env.MEDIA_UPLOAD_DIR)
-  : path.join(process.cwd(), "uploads");
+  : path.join(os.tmpdir(), "whatscrm-uploads");
 
 /** cuid/uuid-shaped ids and simple extensions only — nothing that can traverse. */
 const SEGMENT_RE = /^[a-zA-Z0-9_-]+$/;

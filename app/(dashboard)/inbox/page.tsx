@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import PusherClient from "pusher-js";
 import { useQueryClient } from "@tanstack/react-query";
 import { useSession } from "next-auth/react";
-import { useConversation, useConversations } from "@/hooks/useMessages";
+import { useConversation, useConversations, useMarkConversationRead } from "@/hooks/useMessages";
 import { ChatWindow } from "@/components/inbox/ChatWindow";
 import { ContactPanel } from "@/components/inbox/ContactPanel";
 import {
@@ -39,6 +39,7 @@ export default function InboxPage() {
   const tenantId = session?.user?.tenantId;
 
   const queryClient = useQueryClient();
+  const { mutate: markConversationRead } = useMarkConversationRead();
 
   // Pusher real-time subscription: invalidate conversations when a new message arrives.
   // Falls back to the 30s poll in useConversations when Pusher is not configured.
@@ -64,6 +65,11 @@ export default function InboxPage() {
   const [tab, setTab] = useState<InboxTab>("all");
   const [search, setSearch] = useState("");
   const [selectedId, setSelectedId] = useState<string | null>(null);
+
+  const handleSelect = useCallback((id: string) => {
+    setSelectedId(id);
+    markConversationRead(id);
+  }, [markConversationRead]);
   /** Optimistically "sent" messages, per conversation, until POST /api/messages exists. */
   const [outbox, setOutbox] = useState<Record<string, InboxMessage[]>>({});
 
@@ -158,7 +164,7 @@ export default function InboxPage() {
       <ConversationList
         conversations={conversations}
         selectedId={selectedId}
-        onSelect={setSelectedId}
+        onSelect={handleSelect}
         isLoading={listBusy}
         isError={listError && !listData}
         search={search}

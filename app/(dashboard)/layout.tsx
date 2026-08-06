@@ -42,7 +42,7 @@ export default async function DashboardLayout({ children }: { children: ReactNod
         }}
       />
 
-      <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
+      <div className="flex min-w-0 flex-1 flex-col">
         <Topbar tenantName={session.user.tenantName} />
         <main className="scrollbar-slim flex-1 overflow-auto p-4 lg:p-6">{children}</main>
       </div>

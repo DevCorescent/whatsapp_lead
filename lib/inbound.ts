@@ -911,8 +911,8 @@ export async function handleAutoReply(
   const threadOn = live?.isAiActive === true;
   const workspaceOn = cfg.aiEnabled && cfg.autoReply;
 
-  if (!threadOn && !workspaceOn) {
-    console.log("[INBOUND] Skipping AI reply — AI off on thread and workspace", {
+  if (!workspaceOn || !threadOn) {
+    console.log("[INBOUND] Skipping AI reply — workspace AI off or per-thread toggle disabled", {
       tenantId: tenant.tenantId,
       businessId: tenant.businessId,
       businessName: cfg.businessName,
@@ -1104,10 +1104,10 @@ async function dispatchAutoReply(
   const threadOn = live?.isAiActive === true;
   const workspaceOn = cfg.aiEnabled && cfg.autoReply;
 
-  // Honour either the inbox "AI Auto-Reply" toggle OR workspace AI Settings / Business flags.
-  // Keys alone are not enough — without one of these, we never publish /api/workers/ai-reply.
-  if (!threadOn && !workspaceOn) {
-    console.log("[INBOUND] Not queueing AI reply — AI off on thread and workspace", {
+  // Both conditions must be true: workspace AI is the master switch, per-thread toggle is the
+  // per-conversation override. Either off means no reply.
+  if (!workspaceOn || !threadOn) {
+    console.log("[INBOUND] Not queueing AI reply — workspace AI off or per-thread toggle disabled", {
       tenantId: tenant.tenantId,
       businessId: tenant.businessId,
       businessName: cfg.businessName,

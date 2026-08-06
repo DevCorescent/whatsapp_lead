@@ -65,16 +65,19 @@ const updateConversationSchema = z
     status: z.nativeEnum(ConversationStatus).optional(),
     assigneeId: z.string().min(1).nullable().optional(),
     isAiActive: z.boolean().optional(),
+    unreadCount: z.literal(0).optional(),
   })
   .refine(
     (data) =>
       data.status !== undefined ||
       data.assigneeId !== undefined ||
-      data.isAiActive !== undefined,
-    { message: "Provide at least one of: status, assigneeId, isAiActive" }
+      data.isAiActive !== undefined ||
+      data.unreadCount !== undefined,
+    { message: "Provide at least one of: status, assigneeId, isAiActive, unreadCount" }
   );
 
 type UpdateConversationInput = z.infer<typeof updateConversationSchema>;
+
 
 /**
  * Resolve a conversation while enforcing tenant isolation.
@@ -200,6 +203,7 @@ async function updateConversation(
       status: input.status,
       assignedToId: input.assigneeId,
       isAiActive: input.isAiActive,
+      unreadCount: input.unreadCount,
     },
     select: {
       id: true,

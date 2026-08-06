@@ -40,6 +40,7 @@ function useNotifications() {
 
 function NotificationBell() {
   const [open, setOpen] = useState(false);
+  const [lastOpenedAt, setLastOpenedAt] = useState<number | null>(null);
   const ref = useRef<HTMLDivElement>(null);
   const qc = useQueryClient();
   const { data: notifications = [] } = useNotifications();
@@ -54,12 +55,23 @@ function NotificationBell() {
     return () => document.removeEventListener("mousedown", handler);
   }, [open]);
 
-  const unread = Math.min(notifications.length, 9);
+  // Count only notifications newer than the last time the panel was opened.
+  const unread = Math.min(
+    lastOpenedAt === null
+      ? notifications.length
+      : notifications.filter((n) => new Date(n.createdAt).getTime() > lastOpenedAt).length,
+    9
+  );
 
   return (
     <div className="relative" ref={ref}>
       <button
-        onClick={() => { setOpen((v) => !v); qc.invalidateQueries({ queryKey: ["notifications"] }); }}
+        onClick={() => {
+          const opening = !open;
+          setOpen(opening);
+          if (opening) setLastOpenedAt(Date.now());
+          void qc.invalidateQueries({ queryKey: ["notifications"] });
+        }}
         className="relative rounded-lg p-2 text-slate-500 transition hover:bg-slate-100 hover:text-slate-700"
         aria-label="Notifications"
         aria-haspopup="true"

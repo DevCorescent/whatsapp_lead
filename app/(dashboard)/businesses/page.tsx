@@ -328,15 +328,21 @@ export default function BusinessesPage() {
             <p className="mb-3 flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-slate-500">
               <Sparkles className="h-3.5 w-3.5" /> AI chatbot
             </p>
-            <div className="space-y-3">
-              <div className="flex items-center justify-between">
-                <span className="text-sm text-slate-700">Enable AI for this business</span>
-                <Toggle checked={!!form.aiEnabled} onChange={(v) => set("aiEnabled", v)} />
-              </div>
-              <div className="flex items-center justify-between">
-                <span className="text-sm text-slate-700">Auto-reply to inbound messages</span>
-                <Toggle checked={!!form.autoReply} onChange={(v) => set("autoReply", v)} />
-              </div>
+            <div className="space-y-1">
+              <label className="flex cursor-pointer items-center justify-between gap-4 rounded-lg px-3 py-2.5 hover:bg-white/70">
+                <div>
+                  <span className="text-sm font-medium text-slate-700">Enable AI</span>
+                  <p className="text-xs text-slate-500">Allow AI to process conversations for this business.</p>
+                </div>
+                <Toggle checked={!!form.aiEnabled} onChange={(v) => set("aiEnabled", v)} label="Enable AI for this business" />
+              </label>
+              <label className="flex cursor-pointer items-center justify-between gap-4 rounded-lg px-3 py-2.5 hover:bg-white/70">
+                <div>
+                  <span className="text-sm font-medium text-slate-700">Auto-reply</span>
+                  <p className="text-xs text-slate-500">Automatically reply to new inbound messages.</p>
+                </div>
+                <Toggle checked={!!form.autoReply} onChange={(v) => set("autoReply", v)} label="Auto-reply to inbound messages" />
+              </label>
               <Field label="Model" htmlFor="b-model">
                 <input
                   id="b-model"
