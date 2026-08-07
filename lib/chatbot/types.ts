@@ -11,16 +11,21 @@
 export type NodeKind =
   | "start"
   | "message"
+  | "template"
   | "question"
   | "condition"
   | "api"
   | "delay"
+  | "set_variable"
   | "handoff"
   | "ai"
   | "end";
 
+export type TriggerType = "KEYWORD" | "INBOUND" | "FIRST_MESSAGE";
+
 export interface StartNodeData {
   label?: string;
+  triggerType?: TriggerType;
 }
 
 export interface MessageNodeData {
@@ -42,7 +47,13 @@ export interface QuestionNodeData {
   validation?: QuestionValidation;
 }
 
-export type ConditionOperator = "eq" | "neq" | "contains" | "gt" | "lt" | "exists";
+export type ConditionOperator =
+  | "eq" | "neq"
+  | "contains" | "notContains"
+  | "startsWith" | "endsWith"
+  | "gt" | "lt"
+  | "exists" | "notExists"
+  | "regex";
 
 export interface ConditionRoute {
   id: string;
@@ -83,6 +94,25 @@ export interface DelayNodeData {
   seconds?: number;
 }
 
+export interface TemplateNodeData {
+  label?: string;
+  /** Must match the approved template name in Meta Business Manager. */
+  templateName?: string;
+  /** BCP-47 language code, e.g. "en", "hi", "ar". */
+  language?: string;
+  /** Optional variable for the header component's {{1}} placeholder. */
+  headerVar?: string;
+  /** Ordered body component variables: index 0 → {{1}}, index 1 → {{2}}, … */
+  bodyVars?: string[];
+}
+
+export interface SetVariableNodeData {
+  label?: string;
+  variable?: string;
+  /** Literal text or {{otherVar}} reference. */
+  value?: string;
+}
+
 export interface HandoffNodeData {
   label?: string;
   team?: string;
@@ -90,6 +120,8 @@ export interface HandoffNodeData {
   /** Kept for existing saved flows created before team/queue fields existed. */
   department?: string;
   note?: string;
+  priority?: "LOW" | "MEDIUM" | "HIGH" | "URGENT";
+  urgency?: boolean;
 }
 
 export interface AiNodeData {
@@ -108,10 +140,12 @@ export interface EndNodeData {
 export interface NodeDataMap {
   start: StartNodeData;
   message: MessageNodeData;
+  template: TemplateNodeData;
   question: QuestionNodeData;
   condition: ConditionNodeData;
   api: ApiNodeData;
   delay: DelayNodeData;
+  set_variable: SetVariableNodeData;
   handoff: HandoffNodeData;
   ai: AiNodeData;
   end: EndNodeData;
@@ -166,10 +200,12 @@ export interface NodeKindMeta {
 export const NODE_KINDS: NodeKindMeta[] = [
   { kind: "start", label: "Start Trigger", hint: "Where the flow begins", accent: "bg-slate-900 text-white", chip: "bg-slate-900 text-white", creatable: false, hasInput: false, hasOutput: true },
   { kind: "message", label: "Message", hint: "Send text or media", accent: "bg-emerald-50 text-emerald-700", chip: "bg-emerald-100 text-emerald-700", creatable: true, hasInput: true, hasOutput: true },
+  { kind: "template", label: "Send Template", hint: "Send a WhatsApp approved template", accent: "bg-cyan-50 text-cyan-700", chip: "bg-cyan-100 text-cyan-700", creatable: true, hasInput: true, hasOutput: true },
   { kind: "question", label: "Question", hint: "Ask and store the reply", accent: "bg-sky-50 text-sky-700", chip: "bg-sky-100 text-sky-700", creatable: true, hasInput: true, hasOutput: true },
   { kind: "condition", label: "Condition", hint: "Branch on a variable", accent: "bg-amber-50 text-amber-800", chip: "bg-amber-100 text-amber-800", creatable: true, hasInput: true, hasOutput: true },
   { kind: "api", label: "API Call", hint: "Call an external URL", accent: "bg-violet-50 text-violet-700", chip: "bg-violet-100 text-violet-700", creatable: true, hasInput: true, hasOutput: true },
   { kind: "delay", label: "Delay", hint: "Wait before continuing", accent: "bg-orange-50 text-orange-700", chip: "bg-orange-100 text-orange-700", creatable: true, hasInput: true, hasOutput: true },
+  { kind: "set_variable", label: "Set Variable", hint: "Assign a value to a variable", accent: "bg-teal-50 text-teal-700", chip: "bg-teal-100 text-teal-700", creatable: true, hasInput: true, hasOutput: true },
   { kind: "handoff", label: "Handoff", hint: "Assign to a human agent", accent: "bg-rose-50 text-rose-700", chip: "bg-rose-100 text-rose-700", creatable: true, hasInput: true, hasOutput: true },
   { kind: "ai", label: "AI Response", hint: "Generate a reply with AI", accent: "bg-indigo-50 text-indigo-700", chip: "bg-indigo-100 text-indigo-700", creatable: true, hasInput: true, hasOutput: true },
   { kind: "end", label: "End", hint: "Terminates the flow", accent: "bg-slate-100 text-slate-600", chip: "bg-slate-200 text-slate-600", creatable: true, hasInput: true, hasOutput: false },
@@ -194,6 +230,10 @@ export function defaultNodeData<K extends NodeKind>(kind: K): NodeDataMap[K] {
       return { method: "GET", url: "", headers: [], body: "", timeout: 15, saveAs: "" } as NodeDataMap[K];
     case "delay":
       return { seconds: 3 } as NodeDataMap[K];
+    case "template":
+      return { templateName: "", language: "en", bodyVars: [], headerVar: "" } as NodeDataMap[K];
+    case "set_variable":
+      return { variable: "", value: "" } as NodeDataMap[K];
     case "handoff":
       return { team: "", queue: "", note: "" } as NodeDataMap[K];
     case "ai":

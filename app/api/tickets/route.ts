@@ -112,10 +112,14 @@ type ListTicketsFilters = z.infer<typeof listTicketsSchema>;
  */
 const createTicketSchema = z.strictObject({
   conversationId: z.string().min(1).optional(),
+  /** Resolved to the contact's most-recent un-ticketed conversation before writing. */
+  contactId: z.string().min(1).optional(),
   subject: z.string().trim().min(1, "Subject is required"),
   priority: z.nativeEnum(TicketPriority).optional(),
   assignedToId: z.string().min(1).optional(),
   department: z.string().trim().min(1).optional(),
+  details: z.string().trim().optional(),
+  slaDeadline: z.string().datetime({ offset: true }).optional(),
 });
 
 type CreateTicketInput = z.infer<typeof createTicketSchema>;
@@ -243,7 +247,7 @@ async function autoAssignAgent(tenantId: string): Promise<string | null> {
 async function createTicket(
   tenantId: string,
   businessId: string,
-  input: CreateTicketInput,
+  input: CreateTicketInput & { conversationId?: string },
   assignedToId: string | null,
   priority: TicketPriority
 ) {
@@ -255,7 +259,8 @@ async function createTicket(
       subject: input.subject,
       priority,
       department: input.department,
-      slaDeadline: slaDeadline(priority),
+      // Use caller-supplied deadline if given, otherwise derive from priority.
+      slaDeadline: input.slaDeadline ? new Date(input.slaDeadline) : slaDeadline(priority),
       ...(assignedToId && {
         assignedToId,
         status: TicketStatus.ASSIGNED,
@@ -343,9 +348,26 @@ export async function POST(req: NextRequest) {
 
     const input = parsed.data;
 
+    // Resolve contactId to the contact's most-recent conversation that doesn't already have a
+    // ticket. conversationId takes precedence if both are provided.
+    let resolvedConversationId = input.conversationId;
+    if (input.contactId && !resolvedConversationId) {
+      const conv = await prisma.conversation.findFirst({
+        where: {
+          tenantId,
+          businessId,
+          contact: { id: input.contactId },
+          ticket: null,
+        },
+        orderBy: { lastMessageAt: "desc" },
+        select: { id: true },
+      });
+      if (conv) resolvedConversationId = conv.id;
+    }
+
     if (
-      input.conversationId &&
-      !(await isTenantConversation(tenantId, input.conversationId))
+      resolvedConversationId &&
+      !(await isTenantConversation(tenantId, resolvedConversationId))
     ) {
       return NextResponse.json(
         { success: false, error: "Conversation not found" },
@@ -370,7 +392,13 @@ export async function POST(req: NextRequest) {
     // A caller-named assignee (already verified) wins; otherwise balance the load across the team.
     const assignedToId = input.assignedToId ?? (await autoAssignAgent(tenantId));
 
-    const ticket = await createTicket(tenantId, businessId, input, assignedToId, priority);
+    const ticket = await createTicket(
+      tenantId,
+      businessId,
+      { ...input, conversationId: resolvedConversationId },
+      assignedToId,
+      priority,
+    );
 
     return NextResponse.json({ success: true, data: ticket }, { status: 201 });
   } catch (error) {

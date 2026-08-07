@@ -17,7 +17,9 @@ export interface ValidationIssue {
     | "cycle"
     | "invalid_api"
     | "empty_message"
+    | "empty_template"
     | "question_no_variable"
+    | "set_variable_incomplete"
     | "duplicate_variable"
     | "condition_no_routes"
     | "dead_end"
@@ -161,6 +163,18 @@ export function validateFlow(doc: FlowDocument): ValidationResult {
       const d = node.data as { routes?: unknown[] };
       if (!Array.isArray(d.routes) || d.routes.length === 0) {
         issues.push({ code: "condition_no_routes", severity: "error", message: `Condition "${labelOf(node)}" has no routes.`, nodeId: node.id });
+      }
+    }
+    if (node.type === "template") {
+      const d = node.data as { templateName?: string };
+      if (!d.templateName?.trim()) {
+        issues.push({ code: "empty_template", severity: "error", message: `Send Template "${labelOf(node)}" needs a template name.`, nodeId: node.id });
+      }
+    }
+    if (node.type === "set_variable") {
+      const d = node.data as { variable?: string };
+      if (!d.variable?.trim()) {
+        issues.push({ code: "set_variable_incomplete", severity: "error", message: `Set Variable "${labelOf(node)}" needs a variable name.`, nodeId: node.id });
       }
     }
     if (node.type === "api") {

@@ -47,8 +47,14 @@ const CAMPAIGN_LIST_SELECT = {
   id: true,
   name: true,
   status: true,
+  scheduledAt: true,
+  totalCount: true,
   sentCount: true,
+  deliveredCount: true,
+  readCount: true,
+  repliedCount: true,
   failedCount: true,
+  templateId: true,
   createdAt: true,
   updatedAt: true,
 } satisfies Prisma.CampaignSelect;
@@ -62,7 +68,13 @@ const CAMPAIGN_LIST_SELECT = {
  */
 const createCampaignSchema = z.object({
   name: z.string().min(1, "Campaign name is required"),
-  message: z.string().min(1, "Campaign message is required"),
+  templateId: z.string().min(1, "Please select a template"),
+  /**
+   * Maps each template body variable position to a contact field.
+   * Index 0 → {{1}}, index 1 → {{2}}, etc.
+   * Accepted values: "name" | "phone" | "company" | any literal string.
+   */
+  bodyVarMapping: z.array(z.string()).default([]),
   contactIds: z.array(z.string().min(1)).optional(),
   all: z.boolean().optional(),
   scheduledAt: z.string().optional(),
@@ -70,10 +82,12 @@ const createCampaignSchema = z.object({
 
 type CreateCampaignInput = z.infer<typeof createCampaignSchema>;
 
-/** A recipient row, carrying only what the send loop addresses a message with. */
+/** A recipient row with per-contact data for template variable resolution. */
 interface CampaignRecipient {
   id: string;
   phone: string;
+  name: string | null;
+  company: string | null;
 }
 
 /**
@@ -109,10 +123,10 @@ async function listCampaigns(tenantId: string, businessId: string) {
 async function resolveContacts(
   tenantId: string,
   contactIds: string[]
-): Promise<{ id: string; phone: string }[] | null> {
+): Promise<{ id: string; phone: string; name: string | null; company: string | null }[] | null> {
   const contacts = await prisma.contact.findMany({
     where: { tenantId, id: { in: contactIds } },
-    select: { id: true, phone: true },
+    select: { id: true, phone: true, name: true, company: true },
   });
 
   if (contacts.length !== contactIds.length) return null;
@@ -147,8 +161,10 @@ async function createCampaign(
   tenantId: string,
   businessId: string,
   input: CreateCampaignInput,
-  contacts: { id: string; phone: string }[],
-  scheduledAt: Date | null
+  contacts: { id: string; phone: string; name: string | null; company: string | null }[],
+  scheduledAt: Date | null,
+  templateName: string,
+  language: string,
 ) {
   return prisma.$transaction(async (tx) => {
     const campaign = await tx.campaign.create({
@@ -156,10 +172,11 @@ async function createCampaign(
         tenantId,
         businessId,
         name: input.name,
+        templateId: input.templateId,
         status: scheduledAt ? CampaignStatus.SCHEDULED : CampaignStatus.RUNNING,
         ...(scheduledAt ? { scheduledAt } : { startedAt: new Date() }),
         totalCount: contacts.length,
-        metadata: { message: input.message },
+        metadata: { templateName, language, bodyVarMapping: input.bodyVarMapping },
       },
       select: { id: true },
     });
@@ -177,27 +194,6 @@ async function createCampaign(
 }
 
 /**
- * Load the recipient rows a campaign must work through.
- *
- * `createMany` does not return the rows it inserted, so the send loop cannot address them by primary
- * key without reading them back. This is that read — one query, selecting only the id the update will
- * key on and the phone the message will go to.
- *
- * Scoped through `campaign.tenantId` rather than by campaign id alone: `CampaignContact` carries no
- * `tenantId` of its own, so the tenant boundary here runs through its parent, and following the
- * relation is what keeps a caller-supplied campaign id from reaching another workspace's recipients.
- */
-async function loadCampaignRecipients(
-  tenantId: string,
-  campaignId: string
-): Promise<CampaignRecipient[]> {
-  return prisma.campaignContact.findMany({
-    where: { campaignId, campaign: { tenantId } },
-    select: { id: true, phone: true },
-  });
-}
-
-/**
  * Hand every recipient to the queue, one job each.
  *
  * Published sequentially rather than with `Promise.all`: this is a loop of HTTP calls to QStash, and
@@ -207,20 +203,41 @@ async function loadCampaignRecipients(
  * The message text is resolved once, here, and travels on each job. Nothing is re-read at send time,
  * so a retry of any recipient sends byte-identical text to the first attempt.
  */
+const CONTACT_FIELD: Record<string, (r: CampaignRecipient) => string> = {
+  name: (r) => r.name ?? "",
+  phone: (r) => r.phone,
+  company: (r) => r.company ?? "",
+};
+
 async function publishCampaign(
   campaignId: string,
   businessId: string,
-  message: string,
-  recipients: CampaignRecipient[]
+  templateName: string,
+  language: string,
+  bodyVarMapping: string[],
+  recipients: CampaignRecipient[],
+  scheduledAt?: Date | null,
 ): Promise<void> {
   for (const recipient of recipients) {
-    await publishCampaignSend({
-      campaignId,
-      recipientId: recipient.id,
-      phone: recipient.phone,
-      message,
-      businessId,
-    });
+    const bodyParams = bodyVarMapping.map((field) =>
+      CONTACT_FIELD[field] ? CONTACT_FIELD[field](recipient) : field,
+    );
+    // Plain-text fallback: body params joined for logging/preview.
+    const message = bodyParams.join(" / ") || templateName;
+
+    await publishCampaignSend(
+      {
+        campaignId,
+        recipientId: recipient.id,
+        phone: recipient.phone,
+        message,
+        businessId,
+        templateName,
+        language,
+        bodyParams: bodyParams.length ? bodyParams : undefined,
+      },
+      scheduledAt ?? undefined,
+    );
   }
 }
 
@@ -318,6 +335,24 @@ export async function POST(req: NextRequest) {
       );
     }
 
+    // Verify the template belongs to this tenant and is approved.
+    const template = await prisma.messageTemplate.findFirst({
+      where: { id: input.templateId, tenantId },
+      select: { id: true, name: true, language: true, status: true },
+    });
+    if (!template) {
+      return NextResponse.json(
+        { success: false, error: "Template not found" },
+        { status: 404 },
+      );
+    }
+    if (template.status !== "APPROVED") {
+      return NextResponse.json(
+        { success: false, error: "Only APPROVED templates can be used for broadcasts" },
+        { status: 422 },
+      );
+    }
+
     const creds = await resolveWhatsAppCreds(businessId);
     if (!creds.phoneNumberId || !creds.apiKey) {
       return NextResponse.json(
@@ -345,7 +380,25 @@ export async function POST(req: NextRequest) {
       if (parsedDate.getTime() > Date.now()) scheduledAt = parsedDate;
     }
 
-    const campaign = await createCampaign(tenantId, businessId, input, contacts, scheduledAt);
+    const campaign = await createCampaign(
+      tenantId,
+      businessId,
+      input,
+      contacts,
+      scheduledAt,
+      template.name,
+      template.language,
+    );
+
+    await publishCampaign(
+      campaign.id,
+      businessId,
+      template.name,
+      template.language,
+      input.bodyVarMapping,
+      contacts,
+      scheduledAt,
+    );
 
     // The recipients stay PENDING and the cron picks the campaign up when it comes due.
     if (scheduledAt) {
@@ -364,20 +417,15 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const recipients = await loadCampaignRecipients(tenantId, campaign.id);
-
-    await publishCampaign(campaign.id, businessId, input.message, recipients);
-
     // The counters are zero because nothing has been sent yet, not because nothing will be. The
     // campaign is RUNNING and the worker moves `sentCount`/`failedCount` as each job lands, then
-    // marks it COMPLETED once no recipient is still in flight. This matches the shape the scheduled
-    // branch above has always returned.
+    // marks it COMPLETED once no recipient is still in flight.
     return NextResponse.json(
       {
         success: true,
         data: {
           campaignId: campaign.id,
-          total: recipients.length,
+          total: contacts.length,
           sentCount: 0,
           failedCount: 0,
         },

@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
-import { generateReply } from "@/lib/ai";
+import { generateReplyStream } from "@/lib/ai";
 import { retrieveContext } from "@/lib/rag";
 
 const schema = z.object({
@@ -54,8 +54,32 @@ export async function POST(req: NextRequest) {
     const knowledgeContext = await retrieveContext(tenantId, conversation.businessId, lastCustomerMsg);
 
     const systemPrompt = "You are a helpful WhatsApp CRM assistant. Suggest a concise, professional reply to the customer's last message.";
-    const reply = await generateReply(messages, systemPrompt, knowledgeContext, settings?.aiModel);
-    return NextResponse.json({ success: true, data: { reply } });
+    const streamIterable = await generateReplyStream(messages, systemPrompt, knowledgeContext, settings?.aiModel);
+
+    const encoder = new TextEncoder();
+    const readable = new ReadableStream({
+      async start(controller) {
+        try {
+          for await (const chunk of streamIterable) {
+            controller.enqueue(encoder.encode(`data: ${JSON.stringify({ chunk })}\n\n`));
+          }
+          controller.enqueue(encoder.encode("data: [DONE]\n\n"));
+        } catch (err) {
+          console.error("[AI REPLY STREAM]", err);
+          controller.enqueue(encoder.encode(`data: ${JSON.stringify({ error: "Stream interrupted" })}\n\n`));
+        }
+        controller.close();
+      },
+    });
+
+    return new Response(readable, {
+      headers: {
+        "Content-Type": "text/event-stream",
+        "Cache-Control": "no-cache, no-transform",
+        "X-Accel-Buffering": "no",
+        Connection: "keep-alive",
+      },
+    });
   } catch (error) {
     console.error("[AI REPLY]", error);
     return NextResponse.json({ success: false, error: "Reply generation failed" }, { status: 500 });

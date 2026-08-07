@@ -8,6 +8,8 @@ import type {
   HandoffNodeData,
   MessageNodeData,
   QuestionNodeData,
+  TemplateNodeData,
+  SetVariableNodeData,
 } from "./types";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -42,7 +44,7 @@ interface AiPrompt {
   saveAs?: string;
 }
 
-export type EngineActionType = "message" | "typing" | "delay" | "api" | "ai" | "handoff";
+export type EngineActionType = "message" | "typing" | "delay" | "api" | "ai" | "handoff" | "template";
 
 export interface EngineAction {
   type: EngineActionType;
@@ -55,6 +57,8 @@ export interface EngineAction {
   handoff?: { team?: string; queue?: string; department?: string; note?: string };
   /** API details (for preview/telemetry). */
   api?: { method?: string; url?: string; saveAs?: string };
+  /** Template details. */
+  template?: { templateName?: string; language?: string; headerVar?: string; bodyVars?: string[] };
 }
 
 export type EngineStatus = "awaiting_input" | "ended" | "dead_end" | "error";
@@ -106,21 +110,23 @@ function nextNodeId(doc: FlowDocument, nodeId: string, sourceHandle?: string): s
 function evalRoute(route: ConditionRoute, vars: FlowVariables): boolean {
   const left = (route.variable ? vars[route.variable] : "") ?? "";
   const right = route.value ?? "";
+  const lc = left.toLowerCase();
+  const rc = right.toLowerCase();
   switch (route.operator) {
-    case "eq":
-      return left === right;
-    case "neq":
-      return left !== right;
-    case "contains":
-      return left.toLowerCase().includes(right.toLowerCase());
-    case "gt":
-      return Number(left) > Number(right);
-    case "lt":
-      return Number(left) < Number(right);
-    case "exists":
-      return left.trim().length > 0;
-    default:
-      return false;
+    case "eq":         return left === right;
+    case "neq":        return left !== right;
+    case "contains":   return lc.includes(rc);
+    case "notContains": return !lc.includes(rc);
+    case "startsWith": return lc.startsWith(rc);
+    case "endsWith":   return lc.endsWith(rc);
+    case "gt":         return Number(left) > Number(right);
+    case "lt":         return Number(left) < Number(right);
+    case "exists":     return left.trim().length > 0;
+    case "notExists":  return left.trim().length === 0;
+    case "regex": {
+      try { return new RegExp(right, "i").test(left); } catch { return false; }
+    }
+    default:           return false;
   }
 }
 
@@ -169,6 +175,27 @@ export async function runFlowStep(doc: FlowDocument, opts: RunOptions = {}): Pro
           actions.push({ type: "typing", nodeId: node.id, seconds: d.typingDelay });
         }
         actions.push({ type: "message", nodeId: node.id, text: renderTemplate(d.text, variables) });
+        currentId = nextNodeId(doc, node.id);
+        break;
+      }
+      case "template": {
+        const d = node.data as TemplateNodeData;
+        actions.push({
+          type: "template",
+          nodeId: node.id,
+          template: {
+            templateName: d.templateName,
+            language: d.language ?? "en",
+            headerVar: d.headerVar ? renderTemplate(d.headerVar, variables) : undefined,
+            bodyVars: (d.bodyVars ?? []).map((v) => renderTemplate(v, variables)),
+          },
+        });
+        currentId = nextNodeId(doc, node.id);
+        break;
+      }
+      case "set_variable": {
+        const d = node.data as SetVariableNodeData;
+        if (d.variable) variables[d.variable] = renderTemplate(d.value, variables);
         currentId = nextNodeId(doc, node.id);
         break;
       }

@@ -27,7 +27,7 @@ export async function GET(req: NextRequest) {
       include: {
         contacts: {
           where: { status: "PENDING" },
-          include: { contact: { select: { phone: true } } },
+          include: { contact: { select: { phone: true, name: true, company: true } } },
         },
       },
     });
@@ -61,19 +61,42 @@ export async function GET(req: NextRequest) {
       continue;
     }
 
-    const message =
+    const meta =
       campaign.metadata && typeof campaign.metadata === "object"
-        ? ((campaign.metadata as Record<string, string>).message ?? "Hello from WhatsCRM")
-        : "Hello from WhatsCRM";
+        ? (campaign.metadata as Record<string, unknown>)
+        : {};
+    const templateName = typeof meta.templateName === "string" ? meta.templateName : undefined;
+    const language = typeof meta.language === "string" ? meta.language : "en";
+    const bodyVarMapping = Array.isArray(meta.bodyVarMapping)
+      ? (meta.bodyVarMapping as string[])
+      : [];
+
+    const CONTACT_FIELD: Record<string, (r: { phone: string; name: string | null; company: string | null }) => string> = {
+      name: (r) => r.name ?? "",
+      phone: (r) => r.phone,
+      company: (r) => r.company ?? "",
+    };
 
     for (const cc of campaign.contacts) {
       try {
+        const phone = cc.contact?.phone ?? cc.phone;
+        const contactData = {
+          phone,
+          name: cc.contact?.name ?? null,
+          company: cc.contact?.company ?? null,
+        };
+        const bodyParams = bodyVarMapping.map((field) =>
+          CONTACT_FIELD[field] ? CONTACT_FIELD[field](contactData) : field,
+        );
+        const message = bodyParams.join(" / ") || templateName || "Hello from WhatsCRM";
+
         await publishCampaignSend({
           campaignId: campaign.id,
           recipientId: cc.id,
-          phone: cc.contact?.phone ?? cc.phone,
+          phone,
           message,
           businessId: campaign.businessId,
+          ...(templateName ? { templateName, language, bodyParams: bodyParams.length ? bodyParams : undefined } : {}),
         });
         console.log("[CRON CAMPAIGNS] Queued recipient", { recipientId: cc.id });
       } catch (error) {

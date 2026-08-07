@@ -11,6 +11,8 @@ import {
   type ConditionNodeData,
   type ApiNodeData,
   type DelayNodeData,
+  type TemplateNodeData,
+  type SetVariableNodeData,
   type HandoffNodeData,
   type AiNodeData,
 } from "@/lib/chatbot/types";
@@ -69,11 +71,18 @@ function summary(text?: string, fallback = "Not configured") {
   );
 }
 
+const TRIGGER_HINT: Record<string, string> = {
+  KEYWORD: "Keyword match",
+  INBOUND: "Any inbound message",
+  FIRST_MESSAGE: "First message from contact",
+};
+
 const StartNode = memo(({ data, selected }: NodeProps) => {
-  const d = data as { label?: string };
+  const d = data as { label?: string; triggerType?: string };
+  const hint = TRIGGER_HINT[d.triggerType ?? "KEYWORD"] ?? "Keyword match";
   return (
     <NodeShell kind="start" title={d.label || "Start"} selected={selected} resizable={false}>
-      {summary("Flow entry point", "")}
+      {summary(hint, "")}
       <Handle type="source" position={Position.Right} className={handleClass} />
     </NodeShell>
   );
@@ -157,6 +166,33 @@ function NODEIconCondition() {
   return <Icon className="h-4 w-4 shrink-0" />;
 }
 
+const TemplateNode = memo(({ data, selected, width, height }: NodeProps) => {
+  const d = data as TemplateNodeData;
+  return (
+    <NodeShell kind="template" title={d.label || "Send Template"} selected={selected} width={width} height={height}>
+      {summary(d.templateName ? `${d.templateName} (${d.language ?? "en"})` : undefined, "No template set")}
+      {(d.bodyVars?.length ?? 0) > 0 && (
+        <p className="mt-1 text-[11px] text-slate-400">{d.bodyVars!.length} variable{d.bodyVars!.length > 1 ? "s" : ""}</p>
+      )}
+      <Handle type="target" position={Position.Left} className={handleClass} />
+      <Handle type="source" position={Position.Right} className={handleClass} />
+    </NodeShell>
+  );
+});
+TemplateNode.displayName = "TemplateNode";
+
+const SetVariableNode = memo(({ data, selected, width, height }: NodeProps) => {
+  const d = data as SetVariableNodeData;
+  return (
+    <NodeShell kind="set_variable" title={d.label || "Set Variable"} selected={selected} width={width} height={height}>
+      {summary(d.variable ? `{{${d.variable}}} = ${d.value || "…"}` : undefined, "Not configured")}
+      <Handle type="target" position={Position.Left} className={handleClass} />
+      <Handle type="source" position={Position.Right} className={handleClass} />
+    </NodeShell>
+  );
+});
+SetVariableNode.displayName = "SetVariableNode";
+
 const ApiNode = memo(({ data, selected, width, height }: NodeProps) => {
   const d = data as ApiNodeData;
   return (
@@ -219,10 +255,12 @@ EndNode.displayName = "EndNode";
 export const nodeTypes: NodeTypes = {
   start: StartNode,
   message: MessageNode,
+  template: TemplateNode,
   question: QuestionNode,
   condition: ConditionNode,
   api: ApiNode,
   delay: DelayNode,
+  set_variable: SetVariableNode,
   handoff: HandoffNode,
   ai: AiNode,
   end: EndNode,

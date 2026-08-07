@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import dynamic from "next/dynamic";
 import {
   AlertCircle,
   ArrowLeft,
@@ -22,14 +23,16 @@ import type { MessageStatus } from "@prisma/client";
 import { Avatar, Badge, Button, EmptyState, Skeleton } from "@/components/ui";
 import { CONVERSATION_STATUS_STYLE, cn, dayLabel, formatTime } from "@/lib/utils";
 import { ATTACHMENT_ACCEPT, formatBytes } from "@/lib/attachments";
-import { useAiReply, useSendMessage, useSetConversationAiActive } from "@/hooks/useMessages";
+import { useSendMessage, useSetConversationAiActive } from "@/hooks/useMessages";
 import { useQuickReplies, type QuickReply } from "@/hooks/useQuickReplies";
 import { contactName, type InboxConversation, type InboxMessage } from "./ConversationList";
 import { AttachmentDropOverlay } from "./AttachmentDropOverlay";
 import { AttachmentPreviewModal } from "./AttachmentPreviewModal";
 import { useAttachmentComposer } from "./useAttachmentComposer";
 
-const EMOJIS = ["👍", "🙏", "😊", "🎉", "🔥", "✅", "❤️", "😂", "🤝", "📞", "📄", "⏰", "💰", "🚀", "👀", "🙌"];
+// Lazy-load the picker so its ~400 KB data bundle only downloads when the Smile
+// button is first clicked, not on every inbox load.
+const EmojiPicker = dynamic(() => import("emoji-picker-react"), { ssr: false });
 
 // ─── Component ────────────────────────────────────────────────────────────────
 
@@ -103,8 +106,21 @@ export function ChatWindow({
   const fileRef = useRef<HTMLInputElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+  const emojiRef = useRef<HTMLDivElement>(null);
 
-  const aiReply = useAiReply();
+  // Close emoji picker on outside click
+  useEffect(() => {
+    if (!showEmoji) return;
+    const handler = (e: MouseEvent) => {
+      if (emojiRef.current && !emojiRef.current.contains(e.target as Node)) {
+        setShowEmoji(false);
+      }
+    };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, [showEmoji]);
+
+  const [isAiGenerating, setIsAiGenerating] = useState(false);
   const sendMessage = useSendMessage();
   const setAiActive = useSetConversationAiActive();
 
@@ -178,14 +194,51 @@ export function ChatWindow({
   }
 
   async function handleAiSuggest() {
-    if (!conversationId || aiReply.isPending) return;
+    if (!conversationId || isAiGenerating) return;
+    setIsAiGenerating(true);
+    setDraft("");
+
     try {
-      const res = await aiReply.mutateAsync(conversationId);
-      const reply = (res as { data?: { reply?: string } })?.data?.reply;
-      if (reply) setDraft(reply);
+      const res = await fetch("/api/ai/reply", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ conversationId }),
+      });
+
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error((err as { error?: string }).error ?? "AI reply failed");
+      }
+
+      const reader = res.body!.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split("\n");
+        buffer = lines.pop() ?? "";
+        for (const line of lines) {
+          if (!line.startsWith("data: ")) continue;
+          const payload = line.slice(6);
+          if (payload === "[DONE]") break;
+          try {
+            const parsed = JSON.parse(payload) as { chunk?: string; error?: string };
+            if (parsed.error) throw new Error(parsed.error);
+            if (parsed.chunk) setDraft((d) => d + parsed.chunk);
+          } catch {
+            // ignore malformed SSE frames
+          }
+        }
+      }
+
       inputRef.current?.focus();
     } catch (err) {
       setDraft(err instanceof Error ? `⚠️ ${err.message}` : "⚠️ AI reply failed");
+    } finally {
+      setIsAiGenerating(false);
     }
   }
 
@@ -339,23 +392,22 @@ export function ChatWindow({
             />
             <ComposerIcon
               icon={Sparkles}
-              label="AI Suggest a reply"
+              label={isAiGenerating ? "Generating…" : "AI Suggest a reply"}
               onClick={handleAiSuggest}
-              className="text-emerald-600 hover:bg-emerald-50"
+              disabled={isAiGenerating}
+              className={cn("text-emerald-600 hover:bg-emerald-50", isAiGenerating && "animate-pulse")}
             />
 
             {showEmoji && (
-              <div className="absolute bottom-11 left-0 z-10 grid w-56 grid-cols-8 gap-0.5 rounded-xl border border-slate-200 bg-white p-2 shadow-lg">
-                {EMOJIS.map((emoji) => (
-                  <button
-                    key={emoji}
-                    type="button"
-                    onClick={() => insertEmoji(emoji)}
-                    className="rounded p-1 text-base leading-none hover:bg-slate-100"
-                  >
-                    {emoji}
-                  </button>
-                ))}
+              <div ref={emojiRef} className="absolute bottom-11 left-0 z-30">
+                <EmojiPicker
+                  onEmojiClick={(e) => { insertEmoji(e.emoji); setShowEmoji(false); }}
+                  lazyLoadEmojis
+                  skinTonesDisabled
+                  searchPlaceholder="Search emoji…"
+                  height={380}
+                  width={320}
+                />
               </div>
             )}
           </div>
@@ -783,12 +835,14 @@ function ComposerIcon({
   label,
   onClick,
   active,
+  disabled,
   className,
 }: {
   icon: React.ComponentType<{ className?: string }>;
   label: string;
   onClick: () => void;
   active?: boolean;
+  disabled?: boolean;
   className?: string;
 }) {
   return (
@@ -797,10 +851,12 @@ function ComposerIcon({
       onClick={onClick}
       title={label}
       aria-label={label}
+      disabled={disabled}
       className={cn(
         "rounded-full p-2 text-slate-500 transition hover:bg-slate-100 hover:text-slate-700",
         "focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-600",
         active && "bg-slate-100 text-slate-700",
+        disabled && "cursor-not-allowed opacity-50",
         className,
       )}
     >

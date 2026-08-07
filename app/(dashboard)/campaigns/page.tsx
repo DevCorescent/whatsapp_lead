@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Megaphone,
@@ -11,7 +11,10 @@ import {
   Trash2,
   Users,
   CalendarClock,
+  Loader2,
   Info,
+  AlertCircle,
+  Eye,
 } from "lucide-react";
 import type { Campaign, CampaignStatus } from "@prisma/client";
 import {
@@ -27,6 +30,20 @@ import {
 } from "@/components/ui";
 import { cn, formatCompact, formatDate } from "@/lib/utils";
 
+// ─── Types ────────────────────────────────────────────────────────────────────
+
+interface TemplateRow {
+  id: string;
+  name: string;
+  category: string;
+  language: string;
+  status: string;
+  body: string;
+  footer?: string | null;
+  variables: string[];
+}
+
+// ─── Constants ────────────────────────────────────────────────────────────────
 
 const STATUS_STYLE: Record<CampaignStatus, string> = {
   DRAFT: "bg-slate-100 text-slate-600 ring-slate-500/20",
@@ -58,6 +75,14 @@ const AUDIENCES = [
   { value: "score:hot", label: "Lead score — Hot" },
 ];
 
+const CONTACT_FIELD_OPTIONS = [
+  { value: "name", label: "Contact Name" },
+  { value: "phone", label: "Contact Phone" },
+  { value: "company", label: "Contact Company" },
+];
+
+// ─── Hooks ────────────────────────────────────────────────────────────────────
+
 function useCampaigns(status: "ALL" | CampaignStatus) {
   return useQuery<Campaign[]>({
     queryKey: ["campaigns", status],
@@ -72,7 +97,28 @@ function useCampaigns(status: "ALL" | CampaignStatus) {
   });
 }
 
-/** Thin delivery-rate meter shown under the Delivered column. */
+function useTemplates(enabled: boolean) {
+  return useQuery<TemplateRow[]>({
+    queryKey: ["templates"],
+    queryFn: async () => {
+      const res = await fetch("/api/templates");
+      if (!res.ok) return [];
+      const json = await res.json();
+      return Array.isArray(json) ? json : (json.data ?? []);
+    },
+    enabled,
+    staleTime: 60_000,
+  });
+}
+
+// ─── Helpers ──────────────────────────────────────────────────────────────────
+
+function detectBodyVarSlots(body: string): number {
+  const matches = [...body.matchAll(/\{\{(\d+)\}\}/g)];
+  const nums = matches.map((m) => parseInt(m[1], 10));
+  return nums.length > 0 ? Math.max(...nums) : 0;
+}
+
 function RateBar({ value, total }: { value: number; total: number }) {
   const pct = total > 0 ? Math.round((value / total) * 100) : 0;
   return (
@@ -94,46 +140,73 @@ function RateBar({ value, total }: { value: number; total: number }) {
   );
 }
 
+// ─── Page ─────────────────────────────────────────────────────────────────────
+
 export default function CampaignsPage() {
   const queryClient = useQueryClient();
   const [tab, setTab] = useState<"ALL" | CampaignStatus>("ALL");
   const [open, setOpen] = useState(false);
-  const { data, isLoading, isError } = useCampaigns(tab);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
 
+  const { data, isLoading, isError } = useCampaigns(tab);
   const campaigns = useMemo(() => data ?? [], [data]);
 
   const invalidate = () => queryClient.invalidateQueries({ queryKey: ["campaigns"] });
 
-  const toggleStatus = async (id: string, current: CampaignStatus) => {
-    const status = current === "RUNNING" ? "PAUSED" : "RUNNING";
-    await fetch(`/api/campaigns/${id}`, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ status }),
-    });
-    invalidate();
-  };
+  // ── Mutations ──
 
-  const deleteCampaign = async (id: string, name: string, status: CampaignStatus) => {
-    if (status === "RUNNING") {
-      alert("Pause the campaign before deleting it.");
-      return;
-    }
-    if (!confirm(`Delete campaign "${name}"? This cannot be undone.`)) return;
-    await fetch(`/api/campaigns/${id}`, { method: "DELETE" });
-    invalidate();
-  };
+  const toggleMutation = useMutation({
+    mutationFn: async ({ id, current }: { id: string; current: CampaignStatus }) => {
+      const status = current === "RUNNING" ? "PAUSED" : "RUNNING";
+      const res = await fetch(`/api/campaigns/${id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ status }),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error((err as { error?: string }).error ?? "Failed to update campaign");
+      }
+      return res.json();
+    },
+    onSuccess: () => invalidate(),
+  });
 
-  const duplicateCampaign = async (id: string) => {
-    const res = await fetch(`/api/campaigns/${id}/duplicate`, { method: "POST" });
-    if (res.ok) invalidate();
-  };
+  const duplicateMutation = useMutation({
+    mutationFn: async (id: string) => {
+      const res = await fetch(`/api/campaigns/${id}/duplicate`, { method: "POST" });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error((err as { error?: string }).error ?? "Failed to duplicate");
+      }
+      return res.json();
+    },
+    onSuccess: () => invalidate(),
+  });
+
+  const deleteMutation = useMutation({
+    mutationFn: async (id: string) => {
+      const res = await fetch(`/api/campaigns/${id}`, { method: "DELETE" });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error((err as { error?: string }).error ?? "Failed to delete campaign");
+      }
+      return res.json();
+    },
+    onSuccess: () => { invalidate(); setDeletingId(null); },
+  });
+
+  // Per-row pending helpers
+  const isToggling = (id: string) =>
+    toggleMutation.isPending && (toggleMutation.variables as { id: string } | undefined)?.id === id;
+  const isDuplicating = (id: string) =>
+    duplicateMutation.isPending && duplicateMutation.variables === id;
 
   return (
     <div>
       <PageHeader
         title="Campaigns"
-        description="Broadcast WhatsApp messages to a segment and track delivery in real time."
+        description="Broadcast WhatsApp templates to a segment and track delivery in real time."
         action={
           <Button onClick={() => setOpen(true)}>
             <Plus className="h-4 w-4" />
@@ -172,7 +245,7 @@ export default function CampaignsPage() {
             description={
               isError
                 ? "The campaigns API is still being built. Once it's live, your broadcasts and their delivery stats will show up here."
-                : "Create your first broadcast to reach a segment of contacts on WhatsApp."
+                : "Create your first broadcast to reach contacts on WhatsApp using an approved message template."
             }
             action={
               <Button onClick={() => setOpen(true)}>
@@ -199,78 +272,89 @@ export default function CampaignsPage() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
-                {campaigns.map((c) => (
-                  <tr key={c.id} className="hover:bg-slate-50">
-                    <td className="px-4 py-3">
-                      <p className="font-medium text-slate-900">{c.name}</p>
-                      {c.scheduledAt && (
-                        <p className="mt-0.5 flex items-center gap-1 text-xs text-slate-500">
-                          <CalendarClock className="h-3 w-3" />
-                          {formatDate(c.scheduledAt)}
-                        </p>
-                      )}
-                    </td>
-                    <td className="px-4 py-3">
-                      <Badge className={STATUS_STYLE[c.status]}>{c.status}</Badge>
-                    </td>
-                    <td className="px-4 py-3 tabular-nums text-slate-700">
-                      {formatCompact(c.totalCount)}
-                    </td>
-                    <td className="px-4 py-3">
-                      <RateBar value={c.sentCount} total={c.totalCount} />
-                    </td>
-                    <td className="px-4 py-3">
-                      <RateBar value={c.deliveredCount} total={c.totalCount} />
-                    </td>
-                    <td className="px-4 py-3">
-                      <RateBar value={c.readCount} total={c.totalCount} />
-                    </td>
-                    <td className="px-4 py-3 tabular-nums text-slate-700">
-                      {formatCompact(c.repliedCount)}
-                    </td>
-                    <td className="px-4 py-3 tabular-nums text-rose-600">
-                      {formatCompact(c.failedCount)}
-                    </td>
-                    <td className="px-4 py-3 whitespace-nowrap text-slate-500">
-                      {formatDate(c.createdAt)}
-                    </td>
-                    <td className="px-4 py-3">
-                      <div className="flex items-center justify-end gap-1">
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          aria-label={c.status === "RUNNING" ? "Pause campaign" : "Launch campaign"}
-                          onClick={() => toggleStatus(c.id, c.status)}
-                          disabled={c.status === "COMPLETED" || c.status === "FAILED"}
-                        >
-                          {c.status === "RUNNING" ? (
-                            <Pause className="h-4 w-4" />
-                          ) : (
-                            <Play className="h-4 w-4" />
-                          )}
-                        </Button>
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          aria-label="Duplicate campaign"
-                          onClick={() => duplicateCampaign(c.id)}
-                        >
-                          <Copy className="h-4 w-4" />
-                        </Button>
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          aria-label="Delete campaign"
-                          className="text-rose-600 hover:bg-rose-50"
-                          onClick={() => deleteCampaign(c.id, c.name, c.status)}
-                          disabled={c.status === "RUNNING"}
-                        >
-                          <Trash2 className="h-4 w-4" />
-                        </Button>
-                      </div>
-                    </td>
-                  </tr>
-                ))}
+                {campaigns.map((c) => {
+                  const toggling = isToggling(c.id);
+                  const duplicating = isDuplicating(c.id);
+                  return (
+                    <tr key={c.id} className="hover:bg-slate-50">
+                      <td className="px-4 py-3">
+                        <p className="font-medium text-slate-900">{c.name}</p>
+                        {c.scheduledAt && (
+                          <p className="mt-0.5 flex items-center gap-1 text-xs text-slate-500">
+                            <CalendarClock className="h-3 w-3" />
+                            {formatDate(c.scheduledAt)}
+                          </p>
+                        )}
+                      </td>
+                      <td className="px-4 py-3">
+                        <Badge className={STATUS_STYLE[c.status]}>{c.status}</Badge>
+                      </td>
+                      <td className="px-4 py-3 tabular-nums text-slate-700">
+                        {formatCompact(c.totalCount)}
+                      </td>
+                      <td className="px-4 py-3">
+                        <RateBar value={c.sentCount} total={c.totalCount} />
+                      </td>
+                      <td className="px-4 py-3">
+                        <RateBar value={c.deliveredCount ?? 0} total={c.totalCount} />
+                      </td>
+                      <td className="px-4 py-3">
+                        <RateBar value={c.readCount ?? 0} total={c.totalCount} />
+                      </td>
+                      <td className="px-4 py-3 tabular-nums text-slate-700">
+                        {formatCompact(c.repliedCount ?? 0)}
+                      </td>
+                      <td className="px-4 py-3 tabular-nums text-rose-600">
+                        {formatCompact(c.failedCount)}
+                      </td>
+                      <td className="px-4 py-3 whitespace-nowrap text-slate-500">
+                        {formatDate(c.createdAt)}
+                      </td>
+                      <td className="px-4 py-3">
+                        <div className="flex items-center justify-end gap-1">
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            aria-label={c.status === "RUNNING" ? "Pause campaign" : "Launch campaign"}
+                            onClick={() => toggleMutation.mutate({ id: c.id, current: c.status })}
+                            disabled={toggling || c.status === "COMPLETED" || c.status === "FAILED" || c.status === "CANCELLED"}
+                          >
+                            {toggling ? (
+                              <Loader2 className="h-4 w-4 animate-spin" />
+                            ) : c.status === "RUNNING" ? (
+                              <Pause className="h-4 w-4" />
+                            ) : (
+                              <Play className="h-4 w-4" />
+                            )}
+                          </Button>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            aria-label="Duplicate campaign"
+                            onClick={() => duplicateMutation.mutate(c.id)}
+                            disabled={duplicating}
+                          >
+                            {duplicating ? (
+                              <Loader2 className="h-4 w-4 animate-spin" />
+                            ) : (
+                              <Copy className="h-4 w-4" />
+                            )}
+                          </Button>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            aria-label="Delete campaign"
+                            className="text-rose-600 hover:bg-rose-50"
+                            onClick={() => setDeletingId(c.id)}
+                            disabled={c.status === "RUNNING"}
+                          >
+                            <Trash2 className="h-4 w-4" />
+                          </Button>
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>
@@ -278,20 +362,84 @@ export default function CampaignsPage() {
       </Card>
 
       <CreateCampaignModal open={open} onClose={() => setOpen(false)} />
+
+      {/* Delete confirmation — proper modal, not browser confirm() */}
+      <Modal
+        open={!!deletingId}
+        onClose={() => !deleteMutation.isPending && setDeletingId(null)}
+        title="Delete campaign?"
+        description="This permanently removes the campaign and all its recipient records. This cannot be undone."
+      >
+        {deleteMutation.isError && (
+          <p className="mb-3 flex items-center gap-1.5 rounded-lg bg-rose-50 px-3 py-2 text-sm text-rose-700">
+            <AlertCircle className="h-4 w-4 shrink-0" />
+            {(deleteMutation.error as Error).message}
+          </p>
+        )}
+        <div className="flex justify-end gap-2 pt-2">
+          <Button
+            variant="secondary"
+            onClick={() => setDeletingId(null)}
+            disabled={deleteMutation.isPending}
+          >
+            Cancel
+          </Button>
+          <Button
+            variant="danger"
+            disabled={deleteMutation.isPending}
+            onClick={() => deletingId && deleteMutation.mutate(deletingId)}
+          >
+            {deleteMutation.isPending ? (
+              <>
+                <Loader2 className="h-4 w-4 animate-spin" />
+                Deleting…
+              </>
+            ) : (
+              "Delete campaign"
+            )}
+          </Button>
+        </div>
+      </Modal>
     </div>
   );
 }
 
+// ─── Create Campaign Modal ─────────────────────────────────────────────────────
+
 function CreateCampaignModal({ open, onClose }: { open: boolean; onClose: () => void }) {
   const queryClient = useQueryClient();
+
   const [name, setName] = useState("");
-  const [message, setMessage] = useState("");
+  const [templateId, setTemplateId] = useState("");
+  const [bodyVarMapping, setBodyVarMapping] = useState<string[]>([]);
   const [audience, setAudience] = useState("all");
   const [schedule, setSchedule] = useState("");
+  const [showPreview, setShowPreview] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  const { data: templatesData, isLoading: tplLoading } = useTemplates(open);
+  const allTemplates = templatesData ?? [];
+  const approvedTemplates = allTemplates.filter((t) => t.status === "APPROVED");
+  const selectedTemplate = approvedTemplates.find((t) => t.id === templateId) ?? null;
+
+  const varSlotCount = useMemo(
+    () => (selectedTemplate ? detectBodyVarSlots(selectedTemplate.body) : 0),
+    [selectedTemplate],
+  );
+
+  // Reset variable mapping whenever the selected template or slot count changes.
+  useEffect(() => {
+    setBodyVarMapping(Array.from({ length: varSlotCount }, () => "name"));
+  }, [varSlotCount]);
+
   const create = useMutation({
-    mutationFn: async (data: { name: string; message: string; all?: boolean; scheduledAt?: string }) => {
+    mutationFn: async (data: {
+      name: string;
+      templateId: string;
+      bodyVarMapping: string[];
+      all?: boolean;
+      scheduledAt?: string;
+    }) => {
       const res = await fetch("/api/campaigns", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -303,34 +451,52 @@ function CreateCampaignModal({ open, onClose }: { open: boolean; onClose: () => 
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["campaigns"] });
-      setName(""); setMessage(""); setAudience("all"); setSchedule(""); setError(null);
+      resetForm();
       onClose();
     },
     onError: (err: Error) => setError(err.message),
   });
 
+  function resetForm() {
+    setName("");
+    setTemplateId("");
+    setBodyVarMapping([]);
+    setAudience("all");
+    setSchedule("");
+    setShowPreview(false);
+    setError(null);
+  }
+
+  function handleClose() {
+    if (create.isPending) return;
+    resetForm();
+    onClose();
+  }
+
+  function submit(e: React.FormEvent) {
+    e.preventDefault();
+    setError(null);
+    const when = schedule ? new Date(schedule) : null;
+    create.mutate({
+      name,
+      templateId,
+      bodyVarMapping,
+      all: audience === "all",
+      ...(when && !Number.isNaN(when.getTime()) && { scheduledAt: when.toISOString() }),
+    });
+  }
+
+  const canSubmit = name.trim() && templateId && !create.isPending;
+
   return (
     <Modal
       open={open}
-      onClose={onClose}
+      onClose={handleClose}
       title="Create Campaign"
-      description="Draft a broadcast now — you can schedule it or send it immediately."
+      description="Pick an approved WhatsApp template, map contact fields to its variables, then schedule or send immediately."
     >
-      <form
-        className="space-y-4"
-        onSubmit={(e) => {
-          e.preventDefault();
-          // `datetime-local` yields a wall-clock string with no zone; the API compares against a
-          // real instant, so it is converted here rather than shipped ambiguous.
-          const when = schedule ? new Date(schedule) : null;
-          create.mutate({
-            name,
-            message,
-            all: audience === "all",
-            ...(when && !Number.isNaN(when.getTime()) && { scheduledAt: when.toISOString() }),
-          });
-        }}
-      >
+      <form className="space-y-4" onSubmit={submit}>
+        {/* Campaign name */}
         <Field label="Campaign name" htmlFor="campaign-name" required>
           <input
             id="campaign-name"
@@ -341,33 +507,109 @@ function CreateCampaignModal({ open, onClose }: { open: boolean; onClose: () => 
           />
         </Field>
 
-        <Field label="Message" htmlFor="campaign-message" required>
-          <textarea
-            id="campaign-message"
-            value={message}
-            onChange={(e) => setMessage(e.target.value)}
-            rows={5}
-            className={cn(inputClass, "resize-y")}
-            placeholder={"Hi {{name}}, we're running 30% off this week…"}
-          />
-          <p className="mt-1.5 flex items-start gap-1.5 text-xs text-slate-500">
-            <Info className="mt-px h-3.5 w-3.5 shrink-0 text-slate-400" />
-            <span>
-              Use{" "}
-              <code className="rounded bg-slate-100 px-1 py-0.5 font-mono text-[11px] text-slate-700">
-                {"{{name}}"}
-              </code>{" "}
-              to personalise each message. Other variables:{" "}
-              <code className="rounded bg-slate-100 px-1 py-0.5 font-mono text-[11px] text-slate-700">
-                {"{{company}}"}
-              </code>{" "}
-              <code className="rounded bg-slate-100 px-1 py-0.5 font-mono text-[11px] text-slate-700">
-                {"{{phone}}"}
-              </code>
-            </span>
-          </p>
-        </Field>
+        {/* Template picker */}
+        <div>
+          <label className="mb-1.5 block text-sm font-medium text-slate-700" htmlFor="campaign-tpl">
+            Template <span className="text-rose-500">*</span>
+          </label>
+          {tplLoading ? (
+            <div className={cn(inputClass, "flex items-center gap-2 text-slate-400")}>
+              <Loader2 className="h-4 w-4 animate-spin" />
+              Loading templates…
+            </div>
+          ) : approvedTemplates.length === 0 ? (
+            <div className="flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2.5">
+              <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-amber-600" />
+              <div className="text-xs text-amber-800">
+                No approved templates found. WhatsApp only allows broadcast campaigns via pre-approved
+                message templates.{" "}
+                <a href="/templates" className="underline hover:text-amber-900">
+                  Create and submit a template →
+                </a>
+              </div>
+            </div>
+          ) : (
+            <select
+              id="campaign-tpl"
+              value={templateId}
+              onChange={(e) => { setTemplateId(e.target.value); setShowPreview(false); }}
+              className={inputClass}
+            >
+              <option value="">— Select a template —</option>
+              {approvedTemplates.map((t) => (
+                <option key={t.id} value={t.id}>
+                  [{t.category}] {t.name} ({t.language})
+                </option>
+              ))}
+            </select>
+          )}
+        </div>
 
+        {/* Template preview toggle */}
+        {selectedTemplate && (
+          <div className="space-y-2">
+            <button
+              type="button"
+              className="flex items-center gap-1.5 text-xs font-medium text-emerald-700 hover:text-emerald-900"
+              onClick={() => setShowPreview((v) => !v)}
+            >
+              <Eye className="h-3.5 w-3.5" />
+              {showPreview ? "Hide preview" : "Preview template"}
+            </button>
+            {showPreview && (
+              <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
+                <p className="mb-1 text-[11px] font-medium uppercase tracking-wide text-slate-400">
+                  Body
+                </p>
+                <p className="whitespace-pre-wrap text-sm text-slate-700">{selectedTemplate.body}</p>
+                {selectedTemplate.footer && (
+                  <p className="mt-2 text-xs text-slate-400">{selectedTemplate.footer}</p>
+                )}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Variable mapping */}
+        {varSlotCount > 0 && (
+          <div>
+            <span className="mb-1.5 block text-sm font-medium text-slate-700">
+              Variable mapping
+            </span>
+            <div className="space-y-2">
+              {Array.from({ length: varSlotCount }, (_, i) => (
+                <div key={i} className="flex items-center gap-3">
+                  <span className="w-8 shrink-0 font-mono text-[11px] text-slate-500">
+                    {`{{${i + 1}}}`}
+                  </span>
+                  <select
+                    className={inputClass}
+                    value={bodyVarMapping[i] ?? "name"}
+                    onChange={(e) =>
+                      setBodyVarMapping((prev) => {
+                        const next = [...prev];
+                        next[i] = e.target.value;
+                        return next;
+                      })
+                    }
+                  >
+                    {CONTACT_FIELD_OPTIONS.map((f) => (
+                      <option key={f.value} value={f.value}>
+                        {f.label}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              ))}
+            </div>
+            <p className="mt-1.5 flex items-center gap-1 text-[11px] text-slate-400">
+              <Info className="h-3 w-3 shrink-0" />
+              Each placeholder is filled with the chosen contact field at send time.
+            </p>
+          </div>
+        )}
+
+        {/* Audience */}
         <Field label="Audience" htmlFor="campaign-audience">
           <select
             id="campaign-audience"
@@ -387,6 +629,7 @@ function CreateCampaignModal({ open, onClose }: { open: boolean; onClose: () => 
           </p>
         </Field>
 
+        {/* Schedule */}
         <Field label="Schedule" htmlFor="campaign-schedule">
           <input
             id="campaign-schedule"
@@ -395,19 +638,34 @@ function CreateCampaignModal({ open, onClose }: { open: boolean; onClose: () => 
             onChange={(e) => setSchedule(e.target.value)}
             className={inputClass}
           />
-          <p className="mt-1.5 text-xs text-slate-500">
-            Leave empty to send immediately.
-          </p>
+          <p className="mt-1.5 text-xs text-slate-500">Leave empty to send immediately.</p>
         </Field>
 
-        {error && <p className="rounded-lg bg-rose-50 px-3 py-2 text-xs text-rose-700">{error}</p>}
+        {error && (
+          <p className="flex items-center gap-1.5 rounded-lg bg-rose-50 px-3 py-2 text-xs text-rose-700">
+            <AlertCircle className="h-3.5 w-3.5 shrink-0" />
+            {error}
+          </p>
+        )}
 
         <div className="flex justify-end gap-2 pt-2">
-          <Button type="button" variant="secondary" onClick={onClose}>
+          <Button
+            type="button"
+            variant="secondary"
+            onClick={handleClose}
+            disabled={create.isPending}
+          >
             Cancel
           </Button>
-          <Button type="submit" disabled={!name.trim() || !message.trim() || create.isPending}>
-            {create.isPending ? "Creating…" : "Create Campaign"}
+          <Button type="submit" disabled={!canSubmit}>
+            {create.isPending ? (
+              <>
+                <Loader2 className="h-4 w-4 animate-spin" />
+                Creating…
+              </>
+            ) : (
+              "Create Campaign"
+            )}
           </Button>
         </div>
       </form>

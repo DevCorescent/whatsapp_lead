@@ -704,19 +704,37 @@ async function executeFlow(
         businessId: tenant.businessId,
         isActive: true,
       },
-      select: { id: true, keywords: true, nodes: true, edges: true },
+      select: { id: true, trigger: true, keywords: true, nodes: true, edges: true },
     });
 
-    const matched = activeFlows.find((f) =>
-      f.keywords.some((kw) => {
-        const k = kw.toLowerCase().trim();
-        if (!k) return false;
-        if (normalised === k) return true;
-        // Multi-word keywords must appear as a whole phrase; single words as whole tokens.
-        if (k.includes(" ")) return normalised.includes(k);
-        return tokens.includes(k);
-      }),
+    // Priority 1: KEYWORD — exact or phrase match.
+    let matched = activeFlows.find(
+      (f) =>
+        f.trigger === "KEYWORD" &&
+        f.keywords.some((kw) => {
+          const k = kw.toLowerCase().trim();
+          if (!k) return false;
+          if (normalised === k) return true;
+          // Multi-word keywords must appear as a whole phrase; single words as whole tokens.
+          if (k.includes(" ")) return normalised.includes(k);
+          return tokens.includes(k);
+        }),
     );
+
+    // Priority 2: FIRST_MESSAGE — only if this is the contact's first message.
+    if (!matched) {
+      const firstMsgFlow = activeFlows.find((f) => f.trigger === "FIRST_MESSAGE");
+      if (firstMsgFlow) {
+        const msgCount = await prisma.message.count({ where: { conversationId: conversation.id } });
+        if (msgCount <= 1) matched = firstMsgFlow;
+      }
+    }
+
+    // Priority 3: INBOUND — catch-all for any message that didn't match above.
+    if (!matched) {
+      matched = activeFlows.find((f) => f.trigger === "INBOUND");
+    }
+
     if (!matched) return false;
 
     console.log("[INBOUND] Chatbot flow matched", {

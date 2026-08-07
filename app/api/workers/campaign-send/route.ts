@@ -33,7 +33,7 @@ import { CampaignStatus } from "@prisma/client";
 import { verifyQStashSignature } from "@/lib/qstash-verify";
 import { cachedBusinessCreds } from "@/lib/cache";
 import { resolveWhatsAppCreds } from "@/lib/business";
-import { sendTextMessage } from "@/lib/whatsapp";
+import { sendTextMessage, sendTemplateMessage, type WATemplateComponent } from "@/lib/whatsapp";
 import { prisma } from "@/lib/prisma";
 import type { CampaignSendJob } from "@/lib/queue";
 
@@ -176,12 +176,32 @@ export async function POST(req: NextRequest) {
     // problem, and must never be mistaken for one — see the phase below.
     let sent;
     try {
-      sent = await sendTextMessage(
-        creds.phoneNumberId,
-        creds.apiKey,
-        job.phone,
-        job.message
-      );
+      if (job.templateName) {
+        // Template campaigns use the WhatsApp template API — the only channel Meta allows
+        // for proactive (outside-24-hour-window) broadcasts.
+        const components: WATemplateComponent[] = [];
+        if (job.bodyParams?.length) {
+          components.push({
+            type: "body",
+            parameters: job.bodyParams.map((text) => ({ type: "text" as const, text })),
+          });
+        }
+        sent = await sendTemplateMessage(
+          creds.phoneNumberId,
+          creds.apiKey,
+          job.phone,
+          job.templateName,
+          job.language ?? "en",
+          components.length ? components : undefined,
+        );
+      } else {
+        sent = await sendTextMessage(
+          creds.phoneNumberId,
+          creds.apiKey,
+          job.phone,
+          job.message,
+        );
+      }
     } catch (error) {
       const reason = error instanceof Error ? error.message : "Unknown error";
 

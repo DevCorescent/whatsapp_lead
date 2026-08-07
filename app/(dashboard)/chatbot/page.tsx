@@ -198,13 +198,23 @@ export default function ChatbotPage() {
               </div>
 
               <div className="mt-3 flex flex-wrap gap-1.5">
-                {(f.keywords ?? []).slice(0, 4).map((k) => (
-                  <Badge key={k} className="bg-emerald-50 text-emerald-700 ring-emerald-600/20">
-                    {k}
-                  </Badge>
-                ))}
-                {(f.keywords?.length ?? 0) === 0 && (
-                  <Badge className="bg-slate-100 text-slate-500">No keywords</Badge>
+                {f.trigger === "INBOUND" && (
+                  <Badge className="bg-blue-50 text-blue-700 ring-blue-600/20">Any inbound</Badge>
+                )}
+                {f.trigger === "FIRST_MESSAGE" && (
+                  <Badge className="bg-purple-50 text-purple-700 ring-purple-600/20">First message</Badge>
+                )}
+                {(f.trigger === "KEYWORD" || !f.trigger) && (
+                  <>
+                    {(f.keywords ?? []).slice(0, 4).map((k) => (
+                      <Badge key={k} className="bg-emerald-50 text-emerald-700 ring-emerald-600/20">
+                        {k}
+                      </Badge>
+                    ))}
+                    {(f.keywords?.length ?? 0) === 0 && (
+                      <Badge className="bg-slate-100 text-slate-500">No keywords</Badge>
+                    )}
+                  </>
                 )}
               </div>
 
@@ -294,13 +304,16 @@ function NewFlowModal({
   open: boolean;
   onClose: () => void;
   onCreated: (id: string) => void;
-  onLocalDraft: (input: { name: string; description?: string; keywords: string[] }) => void;
+  onLocalDraft: (input: { name: string; description?: string; trigger: string; keywords: string[] }) => void;
 }) {
   const create = useCreateFlow();
   const [name, setName] = useState("");
+  const [trigger, setTrigger] = useState("KEYWORD");
   const [keywords, setKeywords] = useState("");
   const [description, setDescription] = useState("");
   const [error, setError] = useState<string | null>(null);
+
+  function reset() { setName(""); setTrigger("KEYWORD"); setKeywords(""); setDescription(""); setError(null); }
 
   function submit(e: React.FormEvent) {
     e.preventDefault();
@@ -308,21 +321,15 @@ function NewFlowModal({
     const input = {
       name: name.trim(),
       description: description.trim() || undefined,
-      trigger: "KEYWORD",
-      keywords: keywords.split(",").map((k) => k.trim()).filter(Boolean),
+      trigger,
+      keywords: trigger === "KEYWORD" ? keywords.split(",").map((k) => k.trim()).filter(Boolean) : [],
       isActive: false,
     };
     create.mutate(
       input,
       {
-        onSuccess: (flow) => {
-          setName(""); setKeywords(""); setDescription(""); setError(null);
-          onCreated(flow.id);
-        },
-        onError: () => {
-          setName(""); setKeywords(""); setDescription(""); setError(null);
-          onLocalDraft(input);
-        },
+        onSuccess: (flow) => { reset(); onCreated(flow.id); },
+        onError: () => { reset(); onLocalDraft(input); },
       },
     );
   }
@@ -332,20 +339,36 @@ function NewFlowModal({
       open={open}
       onClose={onClose}
       title="New Flow"
-      description="Give the flow a trigger — then design the steps on the canvas."
+      description="Choose when this flow fires, then design the steps on the canvas."
     >
       <form className="space-y-4" onSubmit={submit}>
         <Field label="Flow name" htmlFor="flow-name" required>
           <input id="flow-name" value={name} onChange={(e) => setName(e.target.value)} className={inputClass} placeholder="Pricing enquiry bot" />
         </Field>
 
-        <Field label="Trigger keywords" htmlFor="flow-keywords">
-          <input id="flow-keywords" value={keywords} onChange={(e) => setKeywords(e.target.value)} className={inputClass} placeholder="pricing, cost, plan" />
-          <p className="mt-1.5 text-xs text-slate-500">Comma separated. Matching is case-insensitive.</p>
-        </Field>
+        <div>
+          <label className="mb-1.5 block text-sm font-medium text-slate-700" htmlFor="flow-trigger">Trigger</label>
+          <select id="flow-trigger" value={trigger} onChange={(e) => setTrigger(e.target.value)} className={inputClass}>
+            <option value="KEYWORD">Keyword match</option>
+            <option value="INBOUND">Any inbound message</option>
+            <option value="FIRST_MESSAGE">First message from contact</option>
+          </select>
+          <p className="mt-1.5 text-xs text-slate-500">
+            {trigger === "KEYWORD" && "Only fires when the customer's message contains one of the keywords below."}
+            {trigger === "INBOUND" && "Fires on any inbound message that doesn't match a keyword flow. Acts as a catch-all."}
+            {trigger === "FIRST_MESSAGE" && "Fires only when a contact sends their very first message to this business."}
+          </p>
+        </div>
+
+        {trigger === "KEYWORD" && (
+          <Field label="Keywords" htmlFor="flow-keywords">
+            <input id="flow-keywords" value={keywords} onChange={(e) => setKeywords(e.target.value)} className={inputClass} placeholder="pricing, cost, plan" />
+            <p className="mt-1.5 text-xs text-slate-500">Comma separated. Matching is case-insensitive.</p>
+          </Field>
+        )}
 
         <Field label="Description" htmlFor="flow-description">
-          <textarea id="flow-description" value={description} onChange={(e) => setDescription(e.target.value)} rows={3} className={cn(inputClass, "resize-y")} placeholder="What this flow does…" />
+          <textarea id="flow-description" value={description} onChange={(e) => setDescription(e.target.value)} rows={2} className={cn(inputClass, "resize-y")} placeholder="What this flow does…" />
         </Field>
 
         {error && <p className="rounded-lg bg-rose-50 px-3 py-2 text-sm text-rose-600">{error}</p>}

@@ -1,8 +1,8 @@
 "use client";
 
-import { useState, useSyncExternalStore } from "react";
+import { useState, useSyncExternalStore, useRef, useEffect } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Ticket as TicketIcon, Plus, AlertTriangle, Clock } from "lucide-react";
+import { Ticket as TicketIcon, Plus, AlertTriangle, Clock, X, Search } from "lucide-react";
 import type { Ticket, TicketPriority, TicketStatus } from "@prisma/client";
 import {
   Avatar,
@@ -292,19 +292,170 @@ export default function TicketsPage() {
   );
 }
 
+// ─── Contact picker ───────────────────────────────────────────────────────────
+
+type ContactOption = {
+  id: string;
+  name: string;
+  phone?: string | null;
+  avatarUrl?: string | null;
+};
+
+function ContactPicker({
+  value,
+  onChange,
+}: {
+  value: ContactOption | null;
+  onChange: (c: ContactOption | null) => void;
+}) {
+  const [query, setQuery] = useState("");
+  const [open, setOpen] = useState(false);
+  const [results, setResults] = useState<ContactOption[]>([]);
+  const [loading, setLoading] = useState(false);
+  const containerRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  // Close on outside click
+  useEffect(() => {
+    const handler = (e: MouseEvent) => {
+      if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
+        setOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, []);
+
+  // Debounced search
+  useEffect(() => {
+    if (query.trim().length < 1) { setResults([]); return; }
+    const t = setTimeout(async () => {
+      setLoading(true);
+      try {
+        const r = await fetch(`/api/contacts?search=${encodeURIComponent(query.trim())}&limit=8`);
+        const j = await r.json();
+        const items: ContactOption[] = (j.data ?? []).map((c: ContactOption) => ({
+          id: c.id,
+          name: c.name,
+          phone: c.phone,
+          avatarUrl: c.avatarUrl,
+        }));
+        setResults(items);
+        setOpen(true);
+      } catch { /* ignore */ }
+      setLoading(false);
+    }, 250);
+    return () => clearTimeout(t);
+  }, [query]);
+
+  const select = (c: ContactOption) => {
+    onChange(c);
+    setQuery("");
+    setOpen(false);
+  };
+
+  const clear = () => {
+    onChange(null);
+    setQuery("");
+    setResults([]);
+    setTimeout(() => inputRef.current?.focus(), 0);
+  };
+
+  if (value) {
+    return (
+      <div className={cn(inputClass, "flex items-center gap-2 pr-2")}>
+        <Avatar name={value.name} size="sm" />
+        <span className="min-w-0 flex-1">
+          <span className="block truncate text-sm font-medium text-slate-900">{value.name}</span>
+          {value.phone && <span className="block truncate text-xs text-slate-500">{value.phone}</span>}
+        </span>
+        <button
+          type="button"
+          onClick={clear}
+          aria-label="Clear contact"
+          className="shrink-0 rounded p-0.5 text-slate-400 hover:bg-slate-100 hover:text-slate-600"
+        >
+          <X className="h-3.5 w-3.5" />
+        </button>
+      </div>
+    );
+  }
+
+  return (
+    <div className="relative" ref={containerRef}>
+      <div className="relative">
+        <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+        <input
+          ref={inputRef}
+          id="ticket-contact"
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          onFocus={() => results.length > 0 && setOpen(true)}
+          placeholder="Search by name or phone…"
+          autoComplete="off"
+          className={cn(inputClass, "pl-9")}
+        />
+        {loading && (
+          <span className="absolute right-3 top-1/2 -translate-y-1/2 text-[10px] text-slate-400">
+            searching…
+          </span>
+        )}
+      </div>
+
+      {open && results.length > 0 && (
+        <div className="absolute left-0 right-0 top-full z-50 mt-1 overflow-hidden rounded-xl border border-slate-200 bg-white shadow-lg">
+          {results.map((c) => (
+            <button
+              key={c.id}
+              type="button"
+              onMouseDown={(e) => { e.preventDefault(); select(c); }}
+              className="flex w-full items-center gap-3 px-3 py-2.5 text-left hover:bg-slate-50"
+            >
+              <Avatar name={c.name} size="sm" />
+              <span className="min-w-0">
+                <span className="block truncate text-sm font-medium text-slate-900">{c.name}</span>
+                {c.phone && <span className="block truncate text-xs text-slate-500">{c.phone}</span>}
+              </span>
+            </button>
+          ))}
+        </div>
+      )}
+
+      {open && !loading && query.trim().length >= 1 && results.length === 0 && (
+        <div className="absolute left-0 right-0 top-full z-50 mt-1 rounded-xl border border-slate-200 bg-white px-4 py-3 shadow-lg">
+          <p className="text-sm text-slate-400">No contacts found for &ldquo;{query}&rdquo;</p>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── Modal ────────────────────────────────────────────────────────────────────
+
 function NewTicketModal({ open, onClose }: { open: boolean; onClose: () => void }) {
   const queryClient = useQueryClient();
   const [subject, setSubject] = useState("");
-  const [contact, setContact] = useState("");
-  const [contactId, setContactId] = useState("");
+  const [selectedContact, setSelectedContact] = useState<ContactOption | null>(null);
   const [priority, setPriority] = useState<TicketPriority>("MEDIUM");
   const [department, setDepartment] = useState(DEPARTMENTS[0]);
   const [sla, setSla] = useState("");
   const [details, setDetails] = useState("");
   const [error, setError] = useState<string | null>(null);
 
+  const reset = () => {
+    setSubject(""); setSelectedContact(null); setPriority("MEDIUM");
+    setDepartment(DEPARTMENTS[0]); setSla(""); setDetails(""); setError(null);
+  };
+
   const create = useMutation({
-    mutationFn: async (data: { subject: string; priority: TicketPriority; department: string; contactId?: string }) => {
+    mutationFn: async (data: {
+      subject: string;
+      priority: TicketPriority;
+      department: string;
+      slaDeadline?: string;
+      details?: string;
+      contactId?: string;
+    }) => {
       const res = await fetch("/api/tickets", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -316,8 +467,7 @@ function NewTicketModal({ open, onClose }: { open: boolean; onClose: () => void 
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["tickets"] });
-      setSubject(""); setContact(""); setContactId(""); setPriority("MEDIUM"); setDepartment(DEPARTMENTS[0]);
-      setSla(""); setDetails(""); setError(null);
+      reset();
       onClose();
     },
     onError: (err: Error) => setError(err.message),
@@ -326,7 +476,7 @@ function NewTicketModal({ open, onClose }: { open: boolean; onClose: () => void 
   return (
     <Modal
       open={open}
-      onClose={onClose}
+      onClose={() => { reset(); onClose(); }}
       title="New Ticket"
       description="Raise a support ticket and set its SLA deadline."
     >
@@ -335,7 +485,14 @@ function NewTicketModal({ open, onClose }: { open: boolean; onClose: () => void 
         onSubmit={(e) => {
           e.preventDefault();
           setError(null);
-          create.mutate({ subject, priority, department, ...(contactId && { contactId }) });
+          create.mutate({
+            subject,
+            priority,
+            department,
+            ...(sla && { slaDeadline: sla }),
+            ...(details.trim() && { details: details.trim() }),
+            ...(selectedContact && { contactId: selectedContact.id }),
+          });
         }}
       >
         <Field label="Subject" htmlFor="ticket-subject" required>
@@ -349,13 +506,7 @@ function NewTicketModal({ open, onClose }: { open: boolean; onClose: () => void 
         </Field>
 
         <Field label="Contact" htmlFor="ticket-contact" required>
-          <input
-            id="ticket-contact"
-            value={contact}
-            onChange={(e) => { setContact(e.target.value); setContactId(e.target.value); }}
-            className={inputClass}
-            placeholder="Search by name or phone…"
-          />
+          <ContactPicker value={selectedContact} onChange={setSelectedContact} />
         </Field>
 
         <div className="grid gap-4 sm:grid-cols-2">
@@ -414,10 +565,10 @@ function NewTicketModal({ open, onClose }: { open: boolean; onClose: () => void 
         {error && <p className="rounded-lg bg-rose-50 px-3 py-2 text-xs text-rose-700">{error}</p>}
 
         <div className="flex justify-end gap-2 pt-2">
-          <Button type="button" variant="secondary" onClick={onClose}>
+          <Button type="button" variant="secondary" onClick={() => { reset(); onClose(); }}>
             Cancel
           </Button>
-          <Button type="submit" disabled={!subject.trim() || create.isPending}>
+          <Button type="submit" disabled={!subject.trim() || !selectedContact || create.isPending}>
             {create.isPending ? "Creating…" : "Create Ticket"}
           </Button>
         </div>

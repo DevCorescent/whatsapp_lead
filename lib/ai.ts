@@ -113,6 +113,31 @@ export async function generateReply(
   );
 }
 
+export async function generateReplyStream(
+  conversationHistory: { role: "user" | "assistant"; content: string }[],
+  systemPrompt: string,
+  knowledgeContext?: string,
+  model?: string | null,
+): Promise<AsyncIterable<string>> {
+  const groundedPrompt = buildGroundingPrompt(knowledgeContext);
+  const systemContent = `${systemPrompt}\n\n${groundedPrompt}`;
+
+  const stream = await getClient().chat.completions.create({
+    model: resolveModel(model),
+    messages: [{ role: "system", content: systemContent }, ...conversationHistory],
+    max_tokens: 500,
+    temperature: 0.7,
+    stream: true,
+  });
+
+  return (async function* () {
+    for await (const chunk of stream) {
+      const content = chunk.choices[0]?.delta?.content ?? "";
+      if (content) yield content;
+    }
+  })();
+}
+
 export async function summarizeConversation(
   messages: { role: string; content: string }[],
   model?: string | null,

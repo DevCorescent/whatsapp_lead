@@ -89,20 +89,17 @@ export interface CampaignSendJob {
   recipientId: string;    // CampaignContact.id
   phone: string;
   /**
-   * The exact text to send, fully resolved at publish time.
-   *
-   * Templates are synced on their own daily schedule and are never read on the send path. This
-   * field is what enforces that: whatever a campaign's body is derived from is resolved once,
-   * when the campaign is created, and then travels with the job. A worker therefore performs no
-   * template lookup on the first attempt and none on any retry — every delivery of a given job
-   * sends byte-identical text, and a template that changes mid-campaign cannot make one
-   * recipient's retry disagree with their first attempt.
-   *
-   * A future daily sync changes only where this string is resolved from; the send path stays as
-   * it is and needs no knowledge of templates at all.
+   * Plain-text fallback — used when templateName is absent or as a preview in logs.
+   * Resolved once at publish time so retries are byte-identical to the first attempt.
    */
   message: string;
   businessId: string;
+  /** WhatsApp-approved template name. When present the worker calls sendTemplateMessage. */
+  templateName?: string;
+  /** BCP-47 language code for the template (e.g. "en", "hi"). Defaults to "en". */
+  language?: string;
+  /** Per-contact resolved values for body {{1}}, {{2}}, … parameters, in order. */
+  bodyParams?: string[];
 }
 
 // ─── Publishers ───────────────────────────────────────────────────────────────

@@ -17,6 +17,9 @@ import type {
   MessageNodeData,
   NodeKind,
   QuestionNodeData,
+  StartNodeData,
+  TemplateNodeData,
+  SetVariableNodeData,
 } from "@/lib/chatbot/types";
 import { NODE_ICON } from "./nodeMeta";
 
@@ -73,14 +76,17 @@ export function PropertiesPanel({
           />
         </Field>
 
+        {node.type === "start" && <StartFields data={data as StartNodeData} set={set} />}
         {node.type === "message" && <MessageFields data={data as MessageNodeData} set={set} />}
+        {node.type === "template" && <TemplateFields data={data as TemplateNodeData} set={set} />}
         {node.type === "question" && <QuestionFields data={data as QuestionNodeData} set={set} />}
         {node.type === "condition" && <ConditionFields data={data as ConditionNodeData} set={set} />}
         {node.type === "api" && <ApiFields data={data as ApiNodeData} set={set} />}
         {node.type === "delay" && <DelayFields data={data as DelayNodeData} set={set} />}
+        {node.type === "set_variable" && <SetVariableFields data={data as SetVariableNodeData} set={set} />}
         {node.type === "handoff" && <HandoffFields data={data as HandoffNodeData} set={set} />}
         {node.type === "ai" && <AiFields data={data as AiNodeData} set={set} />}
-        {(node.type === "start" || node.type === "end") && (
+        {node.type === "end" && (
           <p className="text-xs text-slate-400">This node has no extra configuration.</p>
         )}
       </div>
@@ -104,6 +110,31 @@ export function PropertiesPanel({
 }
 
 type Setter = (patch: Partial<AnyNodeData>) => void;
+
+const TRIGGER_LABELS: Record<string, string> = {
+  KEYWORD: "Keyword match — set keywords in the flow list.",
+  INBOUND: "Any inbound message — fires when no keyword flow matches.",
+  FIRST_MESSAGE: "First message — fires only on the contact's very first message.",
+};
+
+function StartFields({ data, set }: { data: StartNodeData; set: Setter }) {
+  const type = data.triggerType ?? "KEYWORD";
+  return (
+    <div className="space-y-2">
+      <span className={labelCls}>Trigger type</span>
+      <select
+        className={inputClass}
+        value={type}
+        onChange={(e) => set({ triggerType: e.target.value as StartNodeData["triggerType"] })}
+      >
+        <option value="KEYWORD">Keyword match</option>
+        <option value="INBOUND">Any inbound message</option>
+        <option value="FIRST_MESSAGE">First message from contact</option>
+      </select>
+      <p className="text-[11px] text-slate-400">{TRIGGER_LABELS[type]}</p>
+    </div>
+  );
+}
 
 function MessageFields({ data, set }: { data: MessageNodeData; set: Setter }) {
   return (
@@ -179,15 +210,32 @@ function ConditionFields({ data, set }: { data: ConditionNodeData; set: Setter }
           </div>
           <input className={cn(inputClass, "h-8 text-xs")} value={r.variable ?? ""} onChange={(e) => update(i, { variable: e.target.value.replace(/[^\w]/g, "") })} placeholder="variable" />
           <div className="flex gap-2">
-            <select className={cn(inputClass, "h-8 w-28 text-xs")} value={r.operator ?? "eq"} onChange={(e) => update(i, { operator: e.target.value as ConditionRoute["operator"] })}>
-              <option value="eq">equals</option>
-              <option value="neq">not equals</option>
-              <option value="contains">contains</option>
-              <option value="gt">greater than</option>
-              <option value="lt">less than</option>
-              <option value="exists">exists</option>
+            <select className={cn(inputClass, "h-8 w-36 text-xs")} value={r.operator ?? "eq"} onChange={(e) => update(i, { operator: e.target.value as ConditionRoute["operator"] })}>
+              <optgroup label="Text">
+                <option value="eq">equals</option>
+                <option value="neq">not equals</option>
+                <option value="contains">contains</option>
+                <option value="notContains">not contains</option>
+                <option value="startsWith">starts with</option>
+                <option value="endsWith">ends with</option>
+                <option value="regex">matches regex</option>
+              </optgroup>
+              <optgroup label="Numeric">
+                <option value="gt">greater than</option>
+                <option value="lt">less than</option>
+              </optgroup>
+              <optgroup label="Presence">
+                <option value="exists">is set (not empty)</option>
+                <option value="notExists">is empty</option>
+              </optgroup>
             </select>
-            <input className={cn(inputClass, "h-8 text-xs")} value={r.value ?? ""} onChange={(e) => update(i, { value: e.target.value })} placeholder="value" disabled={r.operator === "exists"} />
+            <input
+              className={cn(inputClass, "h-8 text-xs")}
+              value={r.value ?? ""}
+              onChange={(e) => update(i, { value: e.target.value })}
+              placeholder={r.operator === "regex" ? "^[0-9]+$" : "value"}
+              disabled={r.operator === "exists" || r.operator === "notExists"}
+            />
           </div>
         </div>
       ))}
@@ -253,17 +301,182 @@ function DelayFields({ data, set }: { data: DelayNodeData; set: Setter }) {
   );
 }
 
-function HandoffFields({ data, set }: { data: HandoffNodeData; set: Setter }) {
+const TEMPLATE_LANGUAGES = [
+  { code: "en", label: "English (en)" },
+  { code: "en_US", label: "English US (en_US)" },
+  { code: "hi", label: "Hindi (hi)" },
+  { code: "ar", label: "Arabic (ar)" },
+  { code: "ur", label: "Urdu (ur)" },
+  { code: "es", label: "Spanish (es)" },
+  { code: "pt_BR", label: "Portuguese BR (pt_BR)" },
+  { code: "fr", label: "French (fr)" },
+  { code: "de", label: "German (de)" },
+  { code: "id", label: "Indonesian (id)" },
+];
+
+function TemplateFields({ data, set }: { data: TemplateNodeData; set: Setter }) {
+  const bodyVars = data.bodyVars ?? [];
   return (
     <>
-      <Field label="Team" htmlFor="np-team">
-        <input id="np-team" className={inputClass} value={data.team ?? data.department ?? ""} onChange={(e) => set({ team: e.target.value })} placeholder="Sales" />
+      <Field label="Template name" htmlFor="np-tpl-name">
+        <input
+          id="np-tpl-name"
+          className={inputClass}
+          value={data.templateName ?? ""}
+          onChange={(e) => set({ templateName: e.target.value })}
+          placeholder="welcome_message"
+        />
+        <p className="mt-1 text-[11px] text-slate-400">Must match the approved name in Meta Business Manager.</p>
       </Field>
+      <div>
+        <span className={labelCls}>Language</span>
+        <select
+          className={inputClass}
+          value={data.language ?? "en"}
+          onChange={(e) => set({ language: e.target.value })}
+        >
+          {TEMPLATE_LANGUAGES.map((l) => (
+            <option key={l.code} value={l.code}>{l.label}</option>
+          ))}
+        </select>
+      </div>
+      <Field label="Header variable (optional)" htmlFor="np-tpl-hvar">
+        <input
+          id="np-tpl-hvar"
+          className={inputClass}
+          value={data.headerVar ?? ""}
+          onChange={(e) => set({ headerVar: e.target.value })}
+          placeholder="{{name}} or literal text"
+        />
+      </Field>
+      <div>
+        <span className={labelCls}>Body variables ({"{{1}}"}, {"{{2}}"}, …)</span>
+        <div className="mt-1.5 space-y-2">
+          {bodyVars.map((v, i) => (
+            <div key={i} className="flex items-center gap-2">
+              <span className="w-8 shrink-0 text-center text-[11px] font-medium text-slate-400">{`{{${i + 1}}}`}</span>
+              <input
+                className={cn(inputClass, "h-8 text-xs")}
+                value={v}
+                onChange={(e) => set({ bodyVars: bodyVars.map((x, j) => (j === i ? e.target.value : x)) })}
+                placeholder="{{variable}} or literal"
+              />
+              <button
+                onClick={() => set({ bodyVars: bodyVars.filter((_, j) => j !== i) })}
+                className="rounded p-1 text-slate-400 hover:bg-rose-50 hover:text-rose-600"
+              >
+                <Trash2 className="h-3.5 w-3.5" />
+              </button>
+            </div>
+          ))}
+          <Button variant="secondary" size="sm" onClick={() => set({ bodyVars: [...bodyVars, ""] })}>
+            Add variable
+          </Button>
+        </div>
+      </div>
+    </>
+  );
+}
+
+function SetVariableFields({ data, set }: { data: SetVariableNodeData; set: Setter }) {
+  return (
+    <>
+      <Field label="Variable name" htmlFor="np-setvar-name">
+        <input
+          id="np-setvar-name"
+          className={inputClass}
+          value={data.variable ?? ""}
+          onChange={(e) => set({ variable: e.target.value.replace(/[^\w]/g, "") })}
+          placeholder="myVar"
+        />
+      </Field>
+      <Field label="Value" htmlFor="np-setvar-value">
+        <input
+          id="np-setvar-value"
+          className={inputClass}
+          value={data.value ?? ""}
+          onChange={(e) => set({ value: e.target.value })}
+          placeholder="literal text or {{otherVar}}"
+        />
+        <p className="mt-1 text-[11px] text-slate-400">Use {"{{variable}}"} to reference collected answers.</p>
+      </Field>
+    </>
+  );
+}
+
+const HANDOFF_TEAMS = ["Sales", "Support", "Billing", "Technical", "Onboarding"];
+
+function HandoffFields({ data, set }: { data: HandoffNodeData; set: Setter }) {
+  const teamValue = data.team ?? data.department ?? "";
+  const isCustomTeam = teamValue !== "" && !HANDOFF_TEAMS.includes(teamValue);
+  const selectValue = isCustomTeam ? "__other__" : teamValue;
+
+  return (
+    <>
+      <div>
+        <span className={labelCls}>Department / Team</span>
+        <select
+          className={inputClass}
+          value={selectValue}
+          onChange={(e) => set({ team: e.target.value === "__other__" ? "" : e.target.value })}
+        >
+          <option value="">— select —</option>
+          {HANDOFF_TEAMS.map((t) => (
+            <option key={t} value={t}>{t}</option>
+          ))}
+          <option value="__other__">Other…</option>
+        </select>
+        {(selectValue === "__other__" || isCustomTeam) && (
+          <input
+            className={cn(inputClass, "mt-2")}
+            value={teamValue}
+            onChange={(e) => set({ team: e.target.value })}
+            placeholder="Custom team name"
+          />
+        )}
+      </div>
+      <div>
+        <span className={labelCls}>Priority</span>
+        <select
+          className={inputClass}
+          value={data.priority ?? "MEDIUM"}
+          onChange={(e) => set({ priority: e.target.value as HandoffNodeData["priority"] })}
+        >
+          <option value="LOW">Low</option>
+          <option value="MEDIUM">Medium</option>
+          <option value="HIGH">High</option>
+          <option value="URGENT">Urgent</option>
+        </select>
+      </div>
       <Field label="Queue" htmlFor="np-queue">
-        <input id="np-queue" className={inputClass} value={data.queue ?? ""} onChange={(e) => set({ queue: e.target.value })} placeholder="Priority leads" />
+        <input
+          id="np-queue"
+          className={inputClass}
+          value={data.queue ?? ""}
+          onChange={(e) => set({ queue: e.target.value })}
+          placeholder="VIP, Priority leads, General…"
+        />
       </Field>
+      <div>
+        <label className="flex cursor-pointer items-center justify-between">
+          <span className={labelCls}>Mark as urgent</span>
+          <input
+            type="checkbox"
+            checked={data.urgency ?? false}
+            onChange={(e) => set({ urgency: e.target.checked })}
+            className="h-4 w-4 rounded border-slate-300 accent-indigo-600"
+          />
+        </label>
+      </div>
       <Field label="Handoff note" htmlFor="np-note">
-        <textarea id="np-note" rows={3} className={cn(inputClass, "resize-y")} value={data.note ?? ""} onChange={(e) => set({ note: e.target.value })} placeholder="Context for the agent…" />
+        <textarea
+          id="np-note"
+          rows={3}
+          className={cn(inputClass, "resize-y")}
+          value={data.note ?? ""}
+          onChange={(e) => set({ note: e.target.value })}
+          placeholder="Context for the agent receiving this handoff…"
+        />
       </Field>
     </>
   );
