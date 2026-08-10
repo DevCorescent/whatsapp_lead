@@ -14,11 +14,22 @@ export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
 
-    // Validate access token if env var is configured
-    const requiredToken = process.env.SIGNUP_ACCESS_TOKEN;
+    // Validate access token if env var is configured.
+    // Trim both sides: Vercel env values often pick up trailing newlines or wrapping quotes
+    // ("CORESCENT-2026"), which makes a strict === fail even when the UI shows the right token.
+    const requiredToken = process.env.SIGNUP_ACCESS_TOKEN?.trim().replace(/^["']|["']$/g, "");
     if (requiredToken) {
-      const providedToken = (body as Record<string, unknown>).accessToken;
+      const providedToken =
+        typeof (body as Record<string, unknown>).accessToken === "string"
+          ? ((body as Record<string, unknown>).accessToken as string).trim()
+          : "";
       if (!providedToken || providedToken !== requiredToken) {
+        console.warn("[REGISTER] Access token mismatch", {
+          providedLength: providedToken.length,
+          requiredLength: requiredToken.length,
+          providedPrefix: providedToken.slice(0, 4),
+          requiredPrefix: requiredToken.slice(0, 4),
+        });
         return NextResponse.json(
           { success: false, error: "Invalid access token. Contact us to get access." },
           { status: 403 }
