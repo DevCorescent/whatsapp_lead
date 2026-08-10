@@ -46,6 +46,8 @@ export interface InboxContact {
   email?: string | null;
   company?: string | null;
   avatarUrl?: string | null;
+  optedOut?: boolean | null;
+  isBlocked?: boolean | null;
   /** Prisma returns the join rows (`{ tag: {...} }`); a flattened list is accepted too. */
   tags?: Array<InboxTag | { tag?: InboxTag | null }> | null;
   leads?: InboxLead[] | null;
@@ -63,6 +65,7 @@ export interface InboxMessage {
   status?: MessageStatus | null;
   isNote?: boolean | null;
   isAiGenerated?: boolean | null;
+  replyToId?: string | null;
   createdAt?: string | Date | null;
   sentBy?: InboxAgent | null;
 }

@@ -7,12 +7,14 @@ import {
   Clock,
   History,
   Loader2,
+  PenLine,
+  Plus,
   Sparkles,
   X,
 } from "lucide-react";
-import { useLead } from "@/hooks/useLeads";
+import { useLead, useUpdateLead, useQualifyLead } from "@/hooks/useLeads";
 import { useLeadStages } from "@/hooks/useLeadStages";
-import { Avatar, Badge, Button, EmptyState } from "@/components/ui";
+import { Avatar, Badge, Button, EmptyState, inputClass } from "@/components/ui";
 import {
   cn,
   daysBetween,
@@ -25,9 +27,8 @@ import type { LeadActivityItem, PipelineLead } from "./LeadCard";
 
 // ─── Detail merge (defensive) ─────────────────────────────────────────────────
 //
-// GET /api/leads/[id] is a 501 stub, so `useLead` normally errors. The drawer
-// always renders from the card we already have and treats the detail response as
-// a bonus overlay when it eventually arrives.
+// The drawer always renders from the card we already have and treats the detail
+// response as a bonus overlay when it eventually arrives.
 
 function mergeDetail(base: PipelineLead, raw: unknown): PipelineLead {
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) return base;
@@ -65,7 +66,10 @@ function activitiesOf(lead: PipelineLead): LeadActivityItem[] {
 const ACTIVITY_LABEL: Record<string, string> = {
   STAGE_CHANGED: "Stage changed",
   SCORE_UPDATED: "Score updated",
-  NOTE: "Note added",
+  NOTE: "Note",
+  CALL: "Call logged",
+  EMAIL: "Email sent",
+  MEETING: "Meeting",
   CREATED: "Lead created",
   AI_QUALIFIED: "Qualified by AI",
 };
@@ -117,6 +121,13 @@ export function LeadDrawer({
   return <LeadDrawerPanel lead={lead} onClose={onClose} onStageChange={onStageChange} />;
 }
 
+const ACTIVITY_TYPES = [
+  { value: "NOTE", label: "Note" },
+  { value: "CALL", label: "Call logged" },
+  { value: "EMAIL", label: "Email sent" },
+  { value: "MEETING", label: "Meeting" },
+] as const;
+
 function LeadDrawerPanel({
   lead,
   onClose,
@@ -126,11 +137,16 @@ function LeadDrawerPanel({
   onClose: () => void;
   onStageChange: (lead: PipelineLead, stageId: string) => void;
 }) {
-  const [qualifying, setQualifying] = useState(false);
   const [banner, setBanner] = useState<string | null>(null);
+  const [editingNotes, setEditingNotes] = useState(false);
+  const [noteDraft, setNoteDraft] = useState("");
+  const [logType, setLogType] = useState<"NOTE" | "CALL" | "EMAIL" | "MEETING">("NOTE");
+  const [logContent, setLogContent] = useState("");
+  const [showLog, setShowLog] = useState(false);
 
   const detailQuery = useLead(lead.id);
-  // Same backend-driven stage source as the board and Add Lead modal.
+  const updateLead = useUpdateLead();
+  const qualify = useQualifyLead();
   const { stages } = useLeadStages();
 
   useEffect(() => {
@@ -148,28 +164,43 @@ function LeadDrawerPanel({
   const activities = activitiesOf(full);
   const contactName = full.contact?.name ?? "Unknown contact";
 
+  function startEditNotes() {
+    setNoteDraft(full.notes ?? "");
+    setEditingNotes(true);
+  }
+
+  async function saveNotes() {
+    await updateLead.mutateAsync({ id: full.id, data: { notes: noteDraft || null } });
+    setEditingNotes(false);
+  }
+
   async function handleQualify() {
     setBanner(null);
-    setQualifying(true);
+    qualify.mutate(full.id, {
+      onError: (e) => setBanner(e.message || "AI qualification failed."),
+    });
+  }
+
+  async function submitActivityLog(e: React.FormEvent) {
+    e.preventDefault();
+    const content = logContent.trim();
+    if (!content) return;
     try {
-      // TODO [GAURANSH]: POST /api/ai/qualify — currently returns 501 Not Implemented.
-      const res = await fetch("/api/ai/qualify", {
+      const res = await fetch(`/api/leads/${full.id}/activities`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ leadId: lead!.id, contactId: lead!.contactId }),
+        body: JSON.stringify({ type: logType, content }),
       });
       if (!res.ok) {
-        setBanner(
-          res.status === 501
-            ? "AI qualification isn't wired up yet (501). BANT scoring will appear here once the endpoint ships."
-            : `Couldn't qualify this lead (HTTP ${res.status}).`,
-        );
+        const err = await res.json().catch(() => ({}));
+        setBanner((err as { error?: string }).error ?? "Failed to log activity");
         return;
       }
+      setLogContent("");
+      setShowLog(false);
+      detailQuery.refetch();
     } catch {
-      setBanner("Network error — couldn't reach the AI qualification endpoint.");
-    } finally {
-      setQualifying(false);
+      setBanner("Network error — couldn't log activity.");
     }
   }
 
@@ -295,14 +326,14 @@ function LeadDrawerPanel({
               size="sm"
               className="mt-3 w-full"
               onClick={handleQualify}
-              disabled={qualifying}
+              disabled={qualify.isPending}
             >
-              {qualifying ? (
+              {qualify.isPending ? (
                 <Loader2 className="h-4 w-4 animate-spin" />
               ) : (
                 <Sparkles className="h-4 w-4 text-emerald-600" />
               )}
-              {qualifying ? "Qualifying…" : "Qualify with AI"}
+              {qualify.isPending ? "Qualifying…" : "Qualify with AI"}
             </Button>
           </section>
 
@@ -321,18 +352,99 @@ function LeadDrawerPanel({
 
           {/* Notes */}
           <section>
-            <p className="mb-2 text-xs font-medium text-slate-500">Notes</p>
-            <p className="whitespace-pre-wrap rounded-xl bg-slate-50 p-3 text-sm text-slate-600">
-              {full.notes?.trim() || "No notes yet."}
-            </p>
+            <div className="mb-2 flex items-center justify-between">
+              <p className="text-xs font-medium text-slate-500">Notes</p>
+              {!editingNotes && (
+                <button
+                  onClick={startEditNotes}
+                  className="flex items-center gap-1 rounded-md p-1 text-xs text-slate-400 hover:bg-slate-100 hover:text-slate-600"
+                >
+                  <PenLine className="h-3 w-3" />
+                  Edit
+                </button>
+              )}
+            </div>
+            {editingNotes ? (
+              <div className="space-y-2">
+                <textarea
+                  autoFocus
+                  rows={4}
+                  value={noteDraft}
+                  onChange={(e) => setNoteDraft(e.target.value)}
+                  className={cn(inputClass, "resize-y")}
+                  placeholder="Add notes about this lead…"
+                />
+                <div className="flex gap-2">
+                  <Button
+                    size="sm"
+                    onClick={saveNotes}
+                    disabled={updateLead.isPending}
+                  >
+                    {updateLead.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Check className="h-3.5 w-3.5" />}
+                    Save
+                  </Button>
+                  <Button size="sm" variant="secondary" onClick={() => setEditingNotes(false)}>
+                    Cancel
+                  </Button>
+                </div>
+              </div>
+            ) : (
+              <p className="whitespace-pre-wrap rounded-xl bg-slate-50 p-3 text-sm text-slate-600">
+                {full.notes?.trim() || "No notes yet."}
+              </p>
+            )}
           </section>
 
           {/* Activity timeline */}
           <section>
-            <p className="mb-3 flex items-center gap-1.5 text-xs font-medium text-slate-500">
-              <History className="h-3.5 w-3.5" />
-              Activity
-            </p>
+            <div className="mb-3 flex items-center justify-between">
+              <p className="flex items-center gap-1.5 text-xs font-medium text-slate-500">
+                <History className="h-3.5 w-3.5" />
+                Activity
+              </p>
+              <button
+                onClick={() => setShowLog((v) => !v)}
+                className="flex items-center gap-1 rounded-md p-1 text-xs text-slate-400 hover:bg-slate-100 hover:text-slate-600"
+              >
+                <Plus className="h-3 w-3" />
+                Log
+              </button>
+            </div>
+
+            {showLog && (
+              <form onSubmit={submitActivityLog} className="mb-4 space-y-2 rounded-xl border border-slate-200 p-3">
+                <div className="flex gap-2">
+                  {ACTIVITY_TYPES.map((t) => (
+                    <button
+                      key={t.value}
+                      type="button"
+                      onClick={() => setLogType(t.value)}
+                      className={cn(
+                        "rounded-md px-2.5 py-1 text-xs font-medium transition",
+                        logType === t.value
+                          ? "bg-emerald-600 text-white"
+                          : "bg-slate-100 text-slate-600 hover:bg-slate-200",
+                      )}
+                    >
+                      {t.label}
+                    </button>
+                  ))}
+                </div>
+                <textarea
+                  autoFocus
+                  rows={2}
+                  value={logContent}
+                  onChange={(e) => setLogContent(e.target.value)}
+                  placeholder={logType === "CALL" ? "Summary of the call…" : logType === "EMAIL" ? "Subject or summary…" : logType === "MEETING" ? "Meeting notes…" : "Add a note…"}
+                  className={cn(inputClass, "resize-none")}
+                />
+                <div className="flex gap-2">
+                  <Button size="sm" type="submit" disabled={!logContent.trim()}>Log</Button>
+                  <Button size="sm" variant="secondary" type="button" onClick={() => { setShowLog(false); setLogContent(""); }}>Cancel</Button>
+                </div>
+              </form>
+            )}
+
             {activities.length === 0 ? (
               <EmptyState
                 icon={History}

@@ -10,20 +10,25 @@ import {
   Clock,
   FileText,
   Image as ImageIcon,
+  LayoutList,
   MapPin,
   MessageSquare,
   Paperclip,
+  Plus,
+  Reply,
   Send,
   Smile,
   Sparkles,
   StickyNote,
+  Trash2,
   X,
 } from "lucide-react";
 import type { MessageStatus } from "@prisma/client";
-import { Avatar, Badge, Button, EmptyState, Skeleton } from "@/components/ui";
+import { Avatar, Badge, Button, EmptyState, Skeleton, inputClass } from "@/components/ui";
 import { CONVERSATION_STATUS_STYLE, cn, dayLabel, formatTime } from "@/lib/utils";
 import { ATTACHMENT_ACCEPT, formatBytes } from "@/lib/attachments";
 import { useSendMessage, useSetConversationAiActive } from "@/hooks/useMessages";
+import type { InteractivePayload } from "@/lib/validators/message";
 import { useQuickReplies, type QuickReply } from "@/hooks/useQuickReplies";
 import { contactName, type InboxConversation, type InboxMessage } from "./ConversationList";
 import { AttachmentDropOverlay } from "./AttachmentDropOverlay";
@@ -73,6 +78,13 @@ export function ChatWindow({
   const [isNote, setIsNote] = useState(false);
   const [showEmoji, setShowEmoji] = useState(false);
   const [sendError, setSendError] = useState<string | null>(null);
+  const [replyTo, setReplyTo] = useState<InboxMessage | null>(null);
+  const [showInteractive, setShowInteractive] = useState(false);
+  const [interactiveType, setInteractiveType] = useState<"button" | "list">("button");
+  const [interactiveBody, setInteractiveBody] = useState("");
+  const [interactiveButtons, setInteractiveButtons] = useState<string[]>(["", ""]);
+  const [interactiveListBtn, setInteractiveListBtn] = useState("Select an option");
+  const [interactiveRows, setInteractiveRows] = useState<{title: string; description: string}[]>([{title: "", description: ""}]);
 
   // Quick replies expand from a "/shortcode" typed at the start of the composer. `qrDismissed`
   // exists so Escape can close the picker without also clearing what the agent has typed —
@@ -178,6 +190,7 @@ export function ChatWindow({
         content,
         type: "TEXT",
         isNote,
+        replyToId: replyTo?.id,
       });
     } catch (error) {
       setSendError(error instanceof Error ? error.message : "Failed to send message");
@@ -185,6 +198,56 @@ export function ChatWindow({
     }
     setDraft("");
     setShowEmoji(false);
+    setReplyTo(null);
+  }
+
+  async function handleSendInteractive() {
+    if (!conversationId || sendMessage.isPending) return;
+    setSendError(null);
+
+    const body = interactiveBody.trim();
+    if (!body) { setSendError("Body text is required"); return; }
+
+    let interactive: InteractivePayload;
+    if (interactiveType === "button") {
+      const validBtns = interactiveButtons.map((b, i) => b.trim()).filter(Boolean);
+      if (validBtns.length === 0) { setSendError("Add at least one button"); return; }
+      interactive = {
+        type: "button",
+        body: { text: body },
+        action: {
+          buttons: validBtns.map((title, i) => ({ type: "reply" as const, reply: { id: `btn_${i}`, title } })),
+        },
+      };
+    } else {
+      const validRows = interactiveRows.filter((r) => r.title.trim());
+      if (validRows.length === 0) { setSendError("Add at least one list option"); return; }
+      interactive = {
+        type: "list",
+        body: { text: body },
+        action: {
+          button: interactiveListBtn.trim() || "Select an option",
+          sections: [{ rows: validRows.map((r, i) => ({ id: `row_${i}`, title: r.title.trim(), ...(r.description.trim() ? { description: r.description.trim() } : {}) })) }],
+        },
+      };
+    }
+
+    try {
+      await sendMessage.mutateAsync({
+        conversationId,
+        type: "INTERACTIVE",
+        interactive,
+        replyToId: replyTo?.id,
+      });
+    } catch (error) {
+      setSendError(error instanceof Error ? error.message : "Failed to send interactive message");
+      return;
+    }
+    setShowInteractive(false);
+    setInteractiveBody("");
+    setInteractiveButtons(["", ""]);
+    setInteractiveRows([{ title: "", description: "" }]);
+    setReplyTo(null);
   }
 
   function insertEmoji(emoji: string) {
@@ -284,6 +347,14 @@ export function ChatWindow({
         </div>
       </header>
 
+      {/* Opted-out banner */}
+      {conversation.contact?.optedOut && (
+        <div className="flex items-center gap-2 border-b border-rose-200 bg-rose-50 px-4 py-2 text-xs font-medium text-rose-700">
+          <AlertCircle className="h-3.5 w-3.5 shrink-0" />
+          This contact has opted out (sent STOP). Messages will not be delivered. They can re-subscribe by texting START.
+        </div>
+      )}
+
       {/* Messages */}
       <div
         className="scrollbar-slim min-h-0 flex-1 overflow-y-auto px-3 py-4 lg:px-6"
@@ -315,6 +386,9 @@ export function ChatWindow({
             {timeline.map((message, i) => {
               const prev = timeline[i - 1];
               const showDay = !prev || dayLabel(prev.createdAt) !== dayLabel(message.createdAt);
+              const quotedMessage = message.replyToId
+                ? timeline.find((m) => m.id === message.replyToId) ?? null
+                : null;
               return (
                 <li key={message.id}>
                   {showDay && (
@@ -324,7 +398,11 @@ export function ChatWindow({
                       </span>
                     </div>
                   )}
-                  <MessageBubble message={message} />
+                  <MessageBubble
+                    message={message}
+                    quotedMessage={quotedMessage}
+                    onReply={conversation.contact?.optedOut ? undefined : () => setReplyTo(message)}
+                  />
                 </li>
               );
             })}
@@ -342,6 +420,117 @@ export function ChatWindow({
         onDrop={attach.dragHandlers.onDrop}
       >
         <AttachmentDropOverlay visible={attach.isDragging} />
+
+        {/* Reply-to strip */}
+        {replyTo && (
+          <div className="mb-2 flex items-center gap-2 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2">
+            <Reply className="h-3.5 w-3.5 shrink-0 text-emerald-600" />
+            <div className="min-w-0 flex-1">
+              <p className="text-[11px] font-medium text-emerald-700">
+                {replyTo.direction === "OUTBOUND" ? "Replying to yourself" : "Replying to customer"}
+              </p>
+              <p className="truncate text-xs text-slate-500">
+                {replyTo.content || (replyTo.type === "INTERACTIVE" ? "Interactive message" : `[${replyTo.type?.toLowerCase()}]`)}
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={() => setReplyTo(null)}
+              aria-label="Cancel reply"
+              className="rounded p-0.5 text-slate-400 hover:text-slate-600"
+            >
+              <X className="h-3.5 w-3.5" />
+            </button>
+          </div>
+        )}
+
+        {/* Interactive message composer */}
+        {showInteractive && (
+          <div className="mb-3 space-y-3 rounded-xl border border-emerald-200 bg-emerald-50/50 p-3">
+            <div className="flex items-center justify-between">
+              <p className="text-xs font-semibold text-emerald-800">Interactive Message</p>
+              <button type="button" onClick={() => setShowInteractive(false)} className="rounded p-0.5 text-slate-400 hover:text-slate-600">
+                <X className="h-3.5 w-3.5" />
+              </button>
+            </div>
+            <div className="flex gap-2">
+              {(["button", "list"] as const).map((t) => (
+                <button key={t} type="button" onClick={() => setInteractiveType(t)}
+                  className={cn("rounded-md px-2.5 py-1 text-xs font-medium transition capitalize",
+                    interactiveType === t ? "bg-emerald-600 text-white" : "bg-white text-slate-600 ring-1 ring-slate-200 hover:bg-slate-50"
+                  )}>{t}</button>
+              ))}
+            </div>
+            <textarea
+              rows={2}
+              value={interactiveBody}
+              onChange={(e) => setInteractiveBody(e.target.value)}
+              placeholder="Body text sent to the customer…"
+              className={cn(inputClass, "resize-none")}
+            />
+            {interactiveType === "button" ? (
+              <div className="space-y-1.5">
+                <p className="text-[11px] font-medium text-slate-500">Buttons (max 3, max 20 chars each)</p>
+                {interactiveButtons.map((btn, i) => (
+                  <div key={i} className="flex items-center gap-1.5">
+                    <input
+                      value={btn}
+                      maxLength={20}
+                      onChange={(e) => setInteractiveButtons((prev) => prev.map((b, j) => j === i ? e.target.value : b))}
+                      placeholder={`Button ${i + 1}`}
+                      className={cn(inputClass, "flex-1 py-1.5 text-sm")}
+                    />
+                    {interactiveButtons.length > 1 && (
+                      <button type="button" onClick={() => setInteractiveButtons((prev) => prev.filter((_, j) => j !== i))}
+                        className="rounded p-1 text-slate-400 hover:text-rose-500">
+                        <Trash2 className="h-3.5 w-3.5" />
+                      </button>
+                    )}
+                  </div>
+                ))}
+                {interactiveButtons.length < 3 && (
+                  <button type="button" onClick={() => setInteractiveButtons((prev) => [...prev, ""])}
+                    className="flex items-center gap-1 text-xs text-emerald-700 hover:underline">
+                    <Plus className="h-3 w-3" /> Add button
+                  </button>
+                )}
+              </div>
+            ) : (
+              <div className="space-y-1.5">
+                <p className="text-[11px] font-medium text-slate-500">Menu button label</p>
+                <input value={interactiveListBtn} maxLength={20} onChange={(e) => setInteractiveListBtn(e.target.value)}
+                  placeholder="Select an option" className={cn(inputClass, "py-1.5 text-sm")} />
+                <p className="text-[11px] font-medium text-slate-500">List options</p>
+                {interactiveRows.map((row, i) => (
+                  <div key={i} className="flex items-start gap-1.5">
+                    <div className="flex-1 space-y-1">
+                      <input value={row.title} maxLength={24} onChange={(e) => setInteractiveRows((prev) => prev.map((r, j) => j === i ? {...r, title: e.target.value} : r))}
+                        placeholder={`Option ${i + 1} title`} className={cn(inputClass, "py-1.5 text-sm")} />
+                      <input value={row.description} maxLength={72} onChange={(e) => setInteractiveRows((prev) => prev.map((r, j) => j === i ? {...r, description: e.target.value} : r))}
+                        placeholder="Description (optional)" className={cn(inputClass, "py-1.5 text-sm")} />
+                    </div>
+                    {interactiveRows.length > 1 && (
+                      <button type="button" onClick={() => setInteractiveRows((prev) => prev.filter((_, j) => j !== i))}
+                        className="mt-1 rounded p-1 text-slate-400 hover:text-rose-500">
+                        <Trash2 className="h-3.5 w-3.5" />
+                      </button>
+                    )}
+                  </div>
+                ))}
+                {interactiveRows.length < 10 && (
+                  <button type="button" onClick={() => setInteractiveRows((prev) => [...prev, {title: "", description: ""}])}
+                    className="flex items-center gap-1 text-xs text-emerald-700 hover:underline">
+                    <Plus className="h-3 w-3" /> Add option
+                  </button>
+                )}
+              </div>
+            )}
+            <Button size="sm" onClick={handleSendInteractive} disabled={sendMessage.isPending || !interactiveBody.trim()}>
+              {sendMessage.isPending ? <Clock className="h-3.5 w-3.5 animate-pulse" /> : <Send className="h-3.5 w-3.5" />}
+              Send interactive
+            </Button>
+          </div>
+        )}
 
         <div className="mb-2 flex flex-wrap items-center gap-2">
           <button
@@ -396,6 +585,13 @@ export function ChatWindow({
               onClick={handleAiSuggest}
               disabled={isAiGenerating}
               className={cn("text-emerald-600 hover:bg-emerald-50", isAiGenerating && "animate-pulse")}
+            />
+            <ComposerIcon
+              icon={LayoutList}
+              label="Send interactive message (buttons or list)"
+              active={showInteractive}
+              onClick={() => setShowInteractive((v) => !v)}
+              className="text-emerald-600 hover:bg-emerald-50"
             />
 
             {showEmoji && (
@@ -523,7 +719,15 @@ export function ChatWindow({
 
 // ─── Bubbles ──────────────────────────────────────────────────────────────────
 
-function MessageBubble({ message }: { message: InboxMessage }) {
+function MessageBubble({
+  message,
+  quotedMessage,
+  onReply,
+}: {
+  message: InboxMessage;
+  quotedMessage?: InboxMessage | null;
+  onReply?: () => void;
+}) {
   const outbound = message.direction === "OUTBOUND";
 
   if (message.isNote) {
@@ -548,8 +752,21 @@ function MessageBubble({ message }: { message: InboxMessage }) {
     );
   }
 
+  const replyBtn = onReply && (
+    <button
+      type="button"
+      onClick={onReply}
+      title="Reply"
+      aria-label="Reply to this message"
+      className="mb-1 shrink-0 rounded-full p-1.5 text-slate-400 opacity-0 transition hover:bg-slate-100 hover:text-slate-600 group-hover:opacity-100"
+    >
+      <Reply className="h-3.5 w-3.5" />
+    </button>
+  );
+
   return (
-    <div className={cn("flex", outbound ? "justify-end" : "justify-start")}>
+    <div className={cn("group flex items-end gap-1", outbound ? "justify-end" : "justify-start")}>
+      {!outbound && replyBtn}
       <div
         className={cn(
           "max-w-[85%] rounded-2xl px-3 py-2 shadow-sm sm:max-w-[70%]",
@@ -558,6 +775,25 @@ function MessageBubble({ message }: { message: InboxMessage }) {
             : "rounded-bl-sm border border-slate-200 bg-white text-slate-800",
         )}
       >
+        {quotedMessage && (
+          <div
+            className={cn(
+              "mb-2 rounded-lg border-l-[3px] px-2 py-1.5",
+              outbound ? "border-white/40 bg-white/10" : "border-emerald-500 bg-slate-50",
+            )}
+          >
+            <p className={cn("mb-0.5 text-[10px] font-semibold", outbound ? "text-white/70" : "text-emerald-700")}>
+              {quotedMessage.direction === "OUTBOUND" ? "You" : "Customer"}
+            </p>
+            <p className={cn("truncate text-xs", outbound ? "text-white/80" : "text-slate-600")}>
+              {quotedMessage.content ||
+                (quotedMessage.type === "INTERACTIVE"
+                  ? "Interactive message"
+                  : `[${quotedMessage.type?.toLowerCase() ?? "message"}]`)}
+            </p>
+          </div>
+        )}
+
         {message.isAiGenerated && (
           <span
             className={cn(
@@ -582,6 +818,7 @@ function MessageBubble({ message }: { message: InboxMessage }) {
           {outbound && <StatusTick status={message.status} />}
         </div>
       </div>
+      {outbound && replyBtn}
     </div>
   );
 }
@@ -681,6 +918,63 @@ function MessageBody({
         </a>
       ) : (
         chip
+      );
+    }
+
+    case "INTERACTIVE": {
+      const interactive = meta.interactive as Record<string, unknown> | undefined;
+      const bodyText = caption || (interactive?.body as { text?: string } | undefined)?.text;
+
+      if (interactive?.type === "button") {
+        const buttons =
+          (interactive.action as { buttons?: Array<{ reply?: { title?: string } }> } | undefined)?.buttons ?? [];
+        return (
+          <div className="space-y-2">
+            {bodyText && <p className="whitespace-pre-wrap wrap-break-word text-sm">{bodyText}</p>}
+            <div className="flex flex-wrap gap-1.5">
+              {buttons.map((btn, i) => (
+                <span
+                  key={i}
+                  className={cn(
+                    "inline-flex items-center rounded-full px-3 py-1 text-xs font-medium ring-1 ring-inset",
+                    outbound
+                      ? "bg-white/15 text-white ring-white/30"
+                      : "bg-emerald-50 text-emerald-800 ring-emerald-200",
+                  )}
+                >
+                  {btn.reply?.title ?? `Button ${i + 1}`}
+                </span>
+              ))}
+            </div>
+          </div>
+        );
+      }
+
+      if (interactive?.type === "list") {
+        const menuLabel =
+          (interactive.action as { button?: string } | undefined)?.button ?? "View options";
+        return (
+          <div className="space-y-2">
+            {bodyText && <p className="whitespace-pre-wrap wrap-break-word text-sm">{bodyText}</p>}
+            <span
+              className={cn(
+                "inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-medium ring-1 ring-inset",
+                outbound
+                  ? "bg-white/15 text-white ring-white/30"
+                  : "bg-emerald-50 text-emerald-800 ring-emerald-200",
+              )}
+            >
+              <LayoutList className="h-3 w-3" />
+              {menuLabel}
+            </span>
+          </div>
+        );
+      }
+
+      return (
+        <p className="whitespace-pre-wrap wrap-break-word text-sm">
+          {bodyText || <span className="italic opacity-70">Interactive message</span>}
+        </p>
       );
     }
 

@@ -89,7 +89,8 @@ export async function sendTextMessage(
   phoneNumberId: string,
   apiKey: string,
   to: string,
-  body: string
+  body: string,
+  contextMessageId?: string
 ) {
   const recipient = normalizeWaTo(to);
   if (!recipient) {
@@ -116,6 +117,7 @@ export async function sendTextMessage(
       to: recipient,
       type: "text",
       text: { preview_url: false, body: text },
+      ...(contextMessageId ? { context: { message_id: contextMessageId } } : {}),
     }),
   });
 
@@ -400,7 +402,8 @@ export async function sendInteractiveMessage(
   phoneNumberId: string,
   apiKey: string,
   to: string,
-  interactive: Record<string, unknown>
+  interactive: Record<string, unknown>,
+  contextMessageId?: string
 ): Promise<WASendMessageResponse> {
   const res = await fetch(`${WA_BASE_URL}/${phoneNumberId}/messages`, {
     method: "POST",
@@ -414,6 +417,7 @@ export async function sendInteractiveMessage(
       to,
       type: "interactive",
       interactive,
+      ...(contextMessageId ? { context: { message_id: contextMessageId } } : {}),
     }),
   });
 

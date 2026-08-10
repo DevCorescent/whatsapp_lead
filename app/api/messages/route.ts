@@ -18,11 +18,12 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { MessageDirection, MessageStatus, MessageType } from "@prisma/client";
+import type { Prisma } from "@prisma/client";
 import type { Contact, Conversation, Message } from "@prisma/client";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { pusher, tenantChannel, PusherEvent } from "@/lib/pusher";
-import { sendTextMessage } from "@/lib/whatsapp";
+import { sendTextMessage, sendInteractiveMessage } from "@/lib/whatsapp";
 import { resolveWhatsAppCreds } from "@/lib/business";
 import { sendMessageSchema } from "@/lib/validators/message";
 
@@ -125,8 +126,14 @@ async function saveOutboundMessage(
   conversationId: string,
   sentById: string,
   content: string,
-  waMessageId: string | null
+  waMessageId: string | null,
+  opts?: {
+    type?: MessageType;
+    replyToId?: string;
+    metadata?: Prisma.InputJsonObject;
+  }
 ): Promise<Message> {
+  const type = opts?.type ?? MessageType.TEXT;
   return prisma.$transaction(async (tx) => {
     const saved = await tx.message.create({
       data: {
@@ -135,9 +142,11 @@ async function saveOutboundMessage(
         sentById,
         waMessageId,
         direction: MessageDirection.OUTBOUND,
-        type: MessageType.TEXT,
+        type,
         status: MessageStatus.SENT,
         content,
+        ...(opts?.replyToId ? { replyToId: opts.replyToId } : {}),
+        ...(opts?.metadata ? { metadata: opts.metadata } : {}),
       },
     });
 
@@ -215,24 +224,26 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const { conversationId, type, content, isNote } = parsed.data;
+    const { conversationId, type, content, isNote, interactive, replyToId } = parsed.data;
 
-    // Media and template sends are separate flows with their own payload shapes. Accepting the type
-    // here and quietly sending plain text instead would send the customer something the agent did
-    // not write, so an unsupported type is refused outright.
-    if (type !== MessageType.TEXT) {
+    // Notes are always TEXT — interactive notes make no sense and we don't send them to WhatsApp.
+    const body = content?.trim();
+
+    if (type === "TEXT" && !body) {
       return NextResponse.json(
-        { success: false, error: `Unsupported message type: ${type}` },
+        { success: false, error: "Message content is required" },
         { status: 400 }
       );
     }
-
-    // `content` is optional on the shared schema because media messages carry a caption instead.
-    // On a text send it is the message, so its absence is a bad request rather than an empty send.
-    const body = content?.trim();
-    if (!body) {
+    if (type === "INTERACTIVE" && !interactive) {
       return NextResponse.json(
-        { success: false, error: "Message content is required" },
+        { success: false, error: "interactive payload is required for INTERACTIVE messages" },
+        { status: 400 }
+      );
+    }
+    if (!["TEXT", "INTERACTIVE"].includes(type)) {
+      return NextResponse.json(
+        { success: false, error: `Unsupported message type: ${type}` },
         { status: 400 }
       );
     }
@@ -246,9 +257,8 @@ export async function POST(req: NextRequest) {
     }
 
     if (isNote) {
-      const note = await saveNote(tenantId, conversationId, userId, body);
+      const note = await saveNote(tenantId, conversationId, userId, body ?? "");
       await broadcastMessage(tenantId, note);
-
       return NextResponse.json({ success: true, data: note }, { status: 201 });
     }
 
@@ -260,19 +270,50 @@ export async function POST(req: NextRequest) {
       );
     }
 
+    // Resolve the waMessageId of the quoted message so we can pass context to Meta.
+    let contextWaMessageId: string | undefined;
+    if (replyToId) {
+      const quoted = await prisma.message.findFirst({
+        where: { id: replyToId, tenantId },
+        select: { waMessageId: true },
+      });
+      contextWaMessageId = quoted?.waMessageId ?? undefined;
+    }
+
+    let waMessageId: string | null = null;
+
+    if (type === "INTERACTIVE" && interactive) {
+      const sent = await sendInteractiveMessage(
+        creds.phoneNumberId,
+        creds.apiKey,
+        conversation.contact.phone,
+        interactive as Record<string, unknown>,
+        contextWaMessageId
+      );
+      waMessageId = sent.messages?.[0]?.id ?? null;
+      const interactiveBody = interactive.type === "button"
+        ? interactive.body.text
+        : interactive.body.text;
+      const message = await saveOutboundMessage(
+        tenantId, conversationId, userId, interactiveBody, waMessageId,
+        { type: MessageType.INTERACTIVE, replyToId, metadata: { interactive } as Prisma.InputJsonObject }
+      );
+      await broadcastMessage(tenantId, message);
+      return NextResponse.json({ success: true, data: message }, { status: 201 });
+    }
+
     const sent = await sendTextMessage(
       creds.phoneNumberId,
       creds.apiKey,
       conversation.contact.phone,
-      body
+      body!,
+      contextWaMessageId
     );
+    waMessageId = sent.messages?.[0]?.id ?? null;
 
     const message = await saveOutboundMessage(
-      tenantId,
-      conversationId,
-      userId,
-      body,
-      sent.messages?.[0]?.id ?? null
+      tenantId, conversationId, userId, body!, waMessageId,
+      { replyToId }
     );
 
     await broadcastMessage(tenantId, message);

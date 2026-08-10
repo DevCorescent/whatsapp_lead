@@ -21,6 +21,7 @@
 
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import type { Message } from "@prisma/client";
+import type { InteractivePayload } from "@/lib/validators/message";
 
 /** The envelope every route in this project returns. Discriminated, so a failure cannot be read. */
 type ApiResponse<T> =
@@ -30,9 +31,11 @@ type ApiResponse<T> =
 /** Body accepted by POST /api/messages. Mirrors the route's `sendMessageSchema`. */
 export interface SendMessageInput {
   conversationId: string;
-  content: string;
-  type?: "TEXT";
+  content?: string;
+  type?: "TEXT" | "INTERACTIVE";
   isNote?: boolean;
+  interactive?: InteractivePayload;
+  replyToId?: string;
 }
 
 /**

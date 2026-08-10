@@ -457,6 +457,14 @@ async function saveInboundMessage(
   // Media with no caption still needs something in the inbox list, or the row renders empty.
   const preview = (content ?? `[${message.type}]`).slice(0, PREVIEW_MAX_LENGTH);
 
+  // Resolve the local message being quoted, so the reply-to chain is visible in the inbox.
+  const contextWaId = (message as unknown as Record<string, unknown>).context
+    ? ((message as unknown as Record<string, { id?: string }>).context?.id ?? null)
+    : null;
+  const replyToMsg = contextWaId
+    ? await prisma.message.findFirst({ where: { waMessageId: contextWaId }, select: { id: true } })
+    : null;
+
   try {
     const created = await prisma.$transaction(async (tx) => {
       const saved = await tx.message.create({
@@ -474,6 +482,7 @@ async function saveInboundMessage(
           mediaMimeType: media?.mime_type ?? null,
           metadata: message as unknown as Prisma.InputJsonObject,
           createdAt: extractTimestamp(message),
+          ...(replyToMsg ? { replyToId: replyToMsg.id } : {}),
         },
       });
 
@@ -1315,6 +1324,47 @@ export async function processIncomingMessage(
   if (isNew) {
     await markInboundAsRead(scopedTenant, message.id);
     await broadcastMessage(scopedTenant.tenantId, saved);
+
+    // ── Opt-out / opt-in keyword handling ──────────────────────────────────────
+    // Normalise to letters-only uppercase so "Stop.", "STOP!" etc. all match.
+    const msgKeyword = extractContent(message)?.trim().toUpperCase().replace(/[^A-Z]/g, "") ?? "";
+    const OPT_OUT = new Set(["STOP", "UNSUBSCRIBE", "CANCEL", "END", "QUIT", "OPTOUT"]);
+    const OPT_IN  = new Set(["START", "SUBSCRIBE", "YES", "HELLO", "HELP"]);
+
+    if (OPT_OUT.has(msgKeyword)) {
+      await prisma.contact.update({ where: { id: contact.id }, data: { optedOut: true } });
+      if (scopedTenant.waPhoneNumberId && scopedTenant.waApiKey) {
+        await sendTextMessage(
+          scopedTenant.waPhoneNumberId,
+          scopedTenant.waApiKey,
+          message.from,
+          "You have been unsubscribed and will no longer receive messages from us. Reply START to re-subscribe at any time."
+        ).catch(() => {/* best-effort */});
+      }
+      return { tenant: scopedTenant, contact, conversation, message: saved };
+    }
+
+    const contactStatus = await prisma.contact.findUnique({
+      where: { id: contact.id },
+      select: { optedOut: true },
+    });
+
+    if (contactStatus?.optedOut) {
+      if (OPT_IN.has(msgKeyword)) {
+        await prisma.contact.update({ where: { id: contact.id }, data: { optedOut: false } });
+        if (scopedTenant.waPhoneNumberId && scopedTenant.waApiKey) {
+          await sendTextMessage(
+            scopedTenant.waPhoneNumberId,
+            scopedTenant.waApiKey,
+            message.from,
+            "You have been re-subscribed and will receive messages from us again. Reply STOP at any time to unsubscribe."
+          ).catch(() => {/* best-effort */});
+        }
+      }
+      // Opted-out contacts don't trigger flows or AI — return after handling.
+      return { tenant: scopedTenant, contact, conversation, message: saved };
+    }
+    // ── End opt-out handling ───────────────────────────────────────────────────
 
     // Guarded by `isNew`, so a redelivered inbound message cannot credit the same reply twice.
     await creditCampaignReply(scopedTenant.tenantId, contact.phone);

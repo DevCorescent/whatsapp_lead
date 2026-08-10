@@ -57,7 +57,7 @@ const CONVERSATION_LIST_SELECT = {
   lastMessageAt: true,
   updatedAt: true,
   contact: {
-    select: { id: true, name: true, phone: true },
+    select: { id: true, name: true, phone: true, optedOut: true, isBlocked: true },
   },
 } as const;
 

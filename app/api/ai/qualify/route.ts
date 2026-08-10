@@ -41,14 +41,14 @@ const TRANSCRIPT_SPEAKER = {
 /**
  * The body of a qualification request.
  *
- * `strictObject` because the accepted surface must be enforced rather than documented. In this route
- * it matters more than most: the response carries a `score` and a `scoreLabel`, and a permissive
- * object would invite a client to try supplying them. They are model output written server-side, and
- * accepting either would let a caller mark their own lead QUALIFIED.
+ * Accepts either a `conversationId` (inbox context, most accurate — uses the full thread transcript)
+ * or a `leadId` (CRM drawer context — resolves the lead's contact and picks the most recent
+ * conversation for that contact automatically).
  */
-const qualifySchema = z.strictObject({
-  conversationId: z.string().min(1),
-});
+const qualifySchema = z.union([
+  z.object({ conversationId: z.string().min(1) }),
+  z.object({ leadId: z.string().min(1) }),
+]);
 
 /**
  * Resolve a conversation while enforcing tenant isolation, and carry its contact out.
@@ -135,6 +135,20 @@ async function resolveLead(tenantId: string, contactId: string) {
   });
 }
 
+/** Resolve a conversation from a leadId for CRM-drawer qualify requests. */
+async function resolveConversationFromLead(tenantId: string, leadId: string) {
+  const lead = await prisma.lead.findFirst({
+    where: { id: leadId, tenantId },
+    select: { contactId: true },
+  });
+  if (!lead) return null;
+  return prisma.conversation.findFirst({
+    where: { tenantId, contactId: lead.contactId },
+    orderBy: { updatedAt: "desc" },
+    select: { id: true, contactId: true },
+  });
+}
+
 /**
  * Write the qualification onto the lead.
  *
@@ -197,10 +211,10 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const conversation = await resolveConversation(
-      tenantId,
-      parsed.data.conversationId
-    );
+    const input = parsed.data;
+    const conversation = "leadId" in input
+      ? await resolveConversationFromLead(tenantId, input.leadId)
+      : await resolveConversation(tenantId, input.conversationId);
     if (!conversation) {
       return NextResponse.json(
         { success: false, error: "Conversation not found" },
@@ -208,7 +222,9 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const lead = await resolveLead(tenantId, conversation.contactId);
+    const lead = "leadId" in input
+      ? { id: input.leadId }
+      : await resolveLead(tenantId, conversation.contactId);
     if (!lead) {
       return NextResponse.json(
         { success: false, error: "Lead not found" },
