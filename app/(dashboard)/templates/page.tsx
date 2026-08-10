@@ -80,6 +80,10 @@ export default function TemplatesPage() {
   const { data, isLoading, isError } = useTemplates();
   const [modal, setModal] = useState<{ open: boolean; editing: TemplateDTO | null }>({ open: false, editing: null });
   const [rejection, setRejection] = useState<TemplateDTO | null>(null);
+  const [syncError, setSyncError] = useState<string | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
+  const [confirmDeleteTemplate, setConfirmDeleteTemplate] = useState<TemplateDTO | null>(null);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
 
   const del = useDeleteTemplate();
   const duplicate = useDuplicateTemplate();
@@ -93,7 +97,28 @@ export default function TemplatesPage() {
     [all, tab],
   );
 
-  const run = (p: Promise<unknown>) => p.catch((e: Error) => alert(e.message));
+  const handleSyncAll = async () => {
+    setSyncError(null);
+    try { await syncAll.mutateAsync(); }
+    catch (e) { setSyncError((e as Error).message); }
+  };
+
+  const handleAction = async (p: Promise<unknown>) => {
+    setActionError(null);
+    try { await p; }
+    catch (e) { setActionError((e as Error).message); }
+  };
+
+  const handleDeleteConfirmed = async () => {
+    if (!confirmDeleteTemplate) return;
+    setDeleteError(null);
+    try {
+      await del.mutateAsync(confirmDeleteTemplate.id);
+      setConfirmDeleteTemplate(null);
+    } catch (e) {
+      setDeleteError((e as Error).message);
+    }
+  };
 
   return (
     <div>
@@ -102,7 +127,7 @@ export default function TemplatesPage() {
         description="Create WhatsApp templates, submit them to Meta for approval, and use approved ones in campaigns."
         action={
           <div className="flex flex-wrap items-center gap-2">
-            <Button variant="secondary" onClick={() => run(syncAll.mutateAsync())} disabled={syncAll.isPending}>
+            <Button variant="secondary" onClick={handleSyncAll} disabled={syncAll.isPending}>
               <RefreshCw className={cn("h-4 w-4", syncAll.isPending && "animate-spin")} />
               Sync all
             </Button>
@@ -113,6 +138,16 @@ export default function TemplatesPage() {
           </div>
         }
       />
+
+      {syncError && (
+        <div className="mb-3 rounded-lg bg-rose-50 px-3 py-2 text-sm text-rose-700">{syncError}</div>
+      )}
+      {actionError && (
+        <div className="mb-3 flex items-center justify-between rounded-lg bg-rose-50 px-3 py-2 text-sm text-rose-700">
+          <span>{actionError}</span>
+          <button type="button" onClick={() => setActionError(null)} className="ml-3 shrink-0 text-rose-500 hover:text-rose-700 text-xs underline">dismiss</button>
+        </div>
+      )}
 
       <div className="scrollbar-slim mb-4 flex gap-1 overflow-x-auto border-b border-slate-200">
         {TABS.map((t) => (
@@ -206,8 +241,8 @@ export default function TemplatesPage() {
                             size="sm"
                             title="Submit to Meta"
                             aria-label="Submit to Meta"
-                            disabled={submit.isPending}
-                            onClick={() => run(submit.mutateAsync(t.id))}
+                            disabled={submit.isPending && submit.variables === t.id}
+                            onClick={() => handleAction(submit.mutateAsync(t.id))}
                           >
                             <Send className="h-4 w-4" />
                           </Button>
@@ -218,8 +253,8 @@ export default function TemplatesPage() {
                             size="sm"
                             title="Refresh status"
                             aria-label="Refresh status"
-                            disabled={refresh.isPending}
-                            onClick={() => run(refresh.mutateAsync(t.id))}
+                            disabled={refresh.isPending && refresh.variables === t.id}
+                            onClick={() => handleAction(refresh.mutateAsync(t.id))}
                           >
                             <RotateCw className="h-4 w-4" />
                           </Button>
@@ -240,8 +275,8 @@ export default function TemplatesPage() {
                           size="sm"
                           title="Duplicate"
                           aria-label="Duplicate template"
-                          disabled={duplicate.isPending}
-                          onClick={() => run(duplicate.mutateAsync(t.id))}
+                          disabled={duplicate.isPending && duplicate.variables === t.id}
+                          onClick={() => handleAction(duplicate.mutateAsync(t.id))}
                         >
                           <Copy className="h-4 w-4" />
                         </Button>
@@ -251,10 +286,8 @@ export default function TemplatesPage() {
                           title={DELETABLE.has(t.status) ? "Delete" : "Approved/in-review templates can't be deleted"}
                           aria-label="Delete template"
                           className="text-rose-600 hover:bg-rose-50"
-                          disabled={!DELETABLE.has(t.status) || del.isPending}
-                          onClick={() => {
-                            if (confirm(`Delete template "${t.name}"?`)) run(del.mutateAsync(t.id));
-                          }}
+                          disabled={!DELETABLE.has(t.status) || (del.isPending && confirmDeleteTemplate?.id === t.id)}
+                          onClick={() => { setDeleteError(null); setConfirmDeleteTemplate(t); }}
                         >
                           <Trash2 className="h-4 w-4" />
                         </Button>
@@ -287,6 +320,25 @@ export default function TemplatesPage() {
         <div className="mt-4 flex justify-end">
           <Button variant="secondary" onClick={() => setRejection(null)}>
             Close
+          </Button>
+        </div>
+      </Modal>
+
+      <Modal
+        open={!!confirmDeleteTemplate}
+        onClose={() => { if (!del.isPending) { setConfirmDeleteTemplate(null); setDeleteError(null); } }}
+        title="Delete template?"
+        description={confirmDeleteTemplate ? `"${confirmDeleteTemplate.name}" will be permanently removed and cannot be recovered.` : ""}
+      >
+        {deleteError && (
+          <p className="mb-3 rounded-lg bg-rose-50 px-3 py-2 text-sm text-rose-700">{deleteError}</p>
+        )}
+        <div className="flex justify-end gap-2">
+          <Button variant="secondary" onClick={() => { setConfirmDeleteTemplate(null); setDeleteError(null); }} disabled={del.isPending}>
+            Cancel
+          </Button>
+          <Button variant="danger" onClick={handleDeleteConfirmed} disabled={del.isPending}>
+            {del.isPending ? "Deleting…" : "Delete template"}
           </Button>
         </div>
       </Modal>

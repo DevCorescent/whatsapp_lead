@@ -62,17 +62,18 @@ const TABS: { key: "ALL" | CampaignStatus; label: string }[] = [
   { key: "DRAFT", label: "Drafts" },
   { key: "SCHEDULED", label: "Scheduled" },
   { key: "RUNNING", label: "Running" },
+  { key: "PROCESSING", label: "Processing" },
   { key: "COMPLETED", label: "Completed" },
+  { key: "SENT", label: "Sent" },
   { key: "PAUSED", label: "Paused" },
   { key: "FAILED", label: "Failed" },
 ];
 
+// Segment targeting is scoped to "all contacts" until the segment builder ships.
+// Do not add options here that the backend doesn't handle — the POST route returns
+// 400 when audience === non-"all" but no contactIds are provided.
 const AUDIENCES = [
   { value: "all", label: "All contacts" },
-  { value: "tag:vip", label: "Tag — VIP customers" },
-  { value: "tag:new", label: "Tag — New signups" },
-  { value: "stage:qualified", label: "Lead stage — Qualified" },
-  { value: "score:hot", label: "Lead score — Hot" },
 ];
 
 const CONTACT_FIELD_OPTIONS = [
@@ -412,7 +413,6 @@ function CreateCampaignModal({ open, onClose }: { open: boolean; onClose: () => 
   const [name, setName] = useState("");
   const [templateId, setTemplateId] = useState("");
   const [bodyVarMapping, setBodyVarMapping] = useState<string[]>([]);
-  const [audience, setAudience] = useState("all");
   const [schedule, setSchedule] = useState("");
   const [showPreview, setShowPreview] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -461,7 +461,6 @@ function CreateCampaignModal({ open, onClose }: { open: boolean; onClose: () => 
     setName("");
     setTemplateId("");
     setBodyVarMapping([]);
-    setAudience("all");
     setSchedule("");
     setShowPreview(false);
     setError(null);
@@ -481,7 +480,7 @@ function CreateCampaignModal({ open, onClose }: { open: boolean; onClose: () => 
       name,
       templateId,
       bodyVarMapping,
-      all: audience === "all",
+      all: true,
       ...(when && !Number.isNaN(when.getTime()) && { scheduledAt: when.toISOString() }),
     });
   }
@@ -609,25 +608,11 @@ function CreateCampaignModal({ open, onClose }: { open: boolean; onClose: () => 
           </div>
         )}
 
-        {/* Audience */}
-        <Field label="Audience" htmlFor="campaign-audience">
-          <select
-            id="campaign-audience"
-            value={audience}
-            onChange={(e) => setAudience(e.target.value)}
-            className={inputClass}
-          >
-            {AUDIENCES.map((a) => (
-              <option key={a.value} value={a.value}>
-                {a.label}
-              </option>
-            ))}
-          </select>
-          <p className="mt-1.5 flex items-center gap-1.5 text-xs text-slate-500">
-            <Users className="h-3.5 w-3.5 text-slate-400" />
-            Segment builder coming soon — for now the whole segment is used.
-          </p>
-        </Field>
+        {/* Audience — segment builder coming soon; only "All contacts" is supported today */}
+        <div className="flex items-center gap-2 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm text-slate-600">
+          <Users className="h-4 w-4 shrink-0 text-slate-400" />
+          <span>All contacts — segment builder coming soon.</span>
+        </div>
 
         {/* Schedule */}
         <Field label="Schedule" htmlFor="campaign-schedule">

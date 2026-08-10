@@ -47,6 +47,7 @@ export default function ChatbotPage() {
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [menuId, setMenuId] = useState<string | null>(null);
   const [localDraft, setLocalDraft] = useState<ChatbotFlow | null>(null);
+  const [confirmCloseLocal, setConfirmCloseLocal] = useState(false);
   /** Optimistic active toggles; anything untouched falls back to the server value. */
   const [localActive, setLocalActive] = useState<Record<string, boolean>>({});
 
@@ -85,12 +86,33 @@ export default function ChatbotPage() {
   if (editingId) {
     const localOnly = localDraft?.id === editingId;
     return (
-      <FlowBuilder
-        flowId={editingId}
-        initialFlow={localOnly ? localDraft : undefined}
-        localOnly={localOnly}
-        onClose={() => setEditingId(null)}
-      />
+      <>
+        <FlowBuilder
+          flowId={editingId}
+          initialFlow={localOnly ? localDraft : undefined}
+          localOnly={localOnly}
+          onClose={() => {
+            if (localOnly) {
+              setConfirmCloseLocal(true);
+            } else {
+              setEditingId(null);
+            }
+          }}
+        />
+        <Modal
+          open={confirmCloseLocal}
+          onClose={() => setConfirmCloseLocal(false)}
+          title="Discard unsaved draft?"
+          description="This chatbot flow hasn't been saved to the server yet. Closing now will permanently lose all your work."
+        >
+          <div className="flex justify-end gap-2">
+            <Button variant="secondary" onClick={() => setConfirmCloseLocal(false)}>Keep editing</Button>
+            <Button variant="danger" onClick={() => { setConfirmCloseLocal(false); setLocalDraft(null); setEditingId(null); }}>
+              Discard
+            </Button>
+          </div>
+        </Modal>
+      </>
     );
   }
 

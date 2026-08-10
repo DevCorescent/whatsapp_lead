@@ -73,6 +73,7 @@ export default function BusinessesPage() {
   const [form, setForm] = useState<FormState>(EMPTY_FORM);
   const [error, setError] = useState<string | null>(null);
   const [confirmDelete, setConfirmDelete] = useState<BusinessDTO | null>(null);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
 
   const businesses = data?.data ?? [];
   const currentId = data?.currentBusinessId;
@@ -116,11 +117,12 @@ export default function BusinessesPage() {
 
   const onDelete = async () => {
     if (!confirmDelete) return;
+    setDeleteError(null);
     try {
       await deleteBusiness.mutateAsync(confirmDelete.id);
       setConfirmDelete(null);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to delete");
+      setDeleteError(err instanceof Error ? err.message : "Failed to delete");
     }
   };
 
@@ -406,7 +408,7 @@ export default function BusinessesPage() {
       {/* Delete confirmation */}
       <Modal
         open={!!confirmDelete}
-        onClose={() => setConfirmDelete(null)}
+        onClose={() => { if (!deleteBusiness.isPending) { setConfirmDelete(null); setDeleteError(null); } }}
         title="Delete business?"
         description={
           confirmDelete
@@ -414,8 +416,11 @@ export default function BusinessesPage() {
             : ""
         }
       >
+        {deleteError && (
+          <p className="mb-3 rounded-lg bg-rose-50 px-3 py-2 text-sm text-rose-700">{deleteError}</p>
+        )}
         <div className="flex justify-end gap-2">
-          <Button variant="secondary" onClick={() => setConfirmDelete(null)}>
+          <Button variant="secondary" onClick={() => { setConfirmDelete(null); setDeleteError(null); }} disabled={deleteBusiness.isPending}>
             Cancel
           </Button>
           <Button variant="danger" onClick={onDelete} disabled={deleteBusiness.isPending}>

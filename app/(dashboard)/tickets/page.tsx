@@ -122,6 +122,7 @@ export default function TicketsPage() {
   const [priority, setPriority] = useState("ALL");
   const [department, setDepartment] = useState("ALL");
   const [open, setOpen] = useState(false);
+  const [selectedTicket, setSelectedTicket] = useState<TicketRow | null>(null);
   const now = useNow();
 
   const { data, isLoading, isError } = useTickets({ status, priority, department });
@@ -229,7 +230,7 @@ export default function TicketsPage() {
                 {tickets.map((t) => {
                   const contact = t.contact ?? t.conversation?.contact ?? null;
                   return (
-                    <tr key={t.id} className="cursor-pointer hover:bg-slate-50">
+                    <tr key={t.id} className="cursor-pointer hover:bg-slate-50" onClick={() => setSelectedTicket(t)}>
                       <td className="max-w-xs px-4 py-3">
                         <p className="truncate font-medium text-slate-900">{t.subject}</p>
                         <p className="mt-0.5 font-mono text-[11px] text-slate-400">
@@ -288,6 +289,7 @@ export default function TicketsPage() {
       </Card>
 
       <NewTicketModal open={open} onClose={() => setOpen(false)} />
+      <TicketDetailModal ticket={selectedTicket} onClose={() => setSelectedTicket(null)} />
     </div>
   );
 }
@@ -573,6 +575,108 @@ function NewTicketModal({ open, onClose }: { open: boolean; onClose: () => void 
           </Button>
         </div>
       </form>
+    </Modal>
+  );
+}
+
+// ─── Ticket detail modal ──────────────────────────────────────────────────────
+
+function TicketDetailModal({ ticket, onClose }: { ticket: TicketRow | null; onClose: () => void }) {
+  const queryClient = useQueryClient();
+  const [newStatus, setNewStatus] = useState<TicketStatus>(ticket?.status ?? "OPEN");
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => { if (ticket) setNewStatus(ticket.status); }, [ticket]);
+
+  const update = useMutation({
+    mutationFn: async (s: TicketStatus) => {
+      const res = await fetch(`/api/tickets/${ticket!.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ status: s }),
+      });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error ?? "Failed to update");
+      return json;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["tickets"] });
+      onClose();
+    },
+    onError: (err: Error) => setError(err.message),
+  });
+
+  const contact = ticket?.contact ?? ticket?.conversation?.contact ?? null;
+
+  return (
+    <Modal
+      open={!!ticket}
+      onClose={onClose}
+      title={ticket?.subject ?? "Ticket"}
+      description={`#${ticket?.id.slice(-6).toUpperCase() ?? ""} · ${ticket?.department ?? "No department"}`}
+    >
+      <div className="space-y-4">
+        {contact && (
+          <div className="flex items-center gap-2 rounded-lg bg-slate-50 px-3 py-2.5">
+            <Avatar name={contact.name} size="sm" />
+            <div>
+              <p className="text-sm font-medium text-slate-900">{contact.name}</p>
+              {contact.phone && <p className="text-xs text-slate-500">{contact.phone}</p>}
+            </div>
+          </div>
+        )}
+
+        <div className="grid grid-cols-2 gap-3 text-sm">
+          <div>
+            <p className="mb-1 text-xs font-medium text-slate-500">Priority</p>
+            <Badge className={TICKET_PRIORITY_STYLE[ticket?.priority ?? "MEDIUM"]}>{ticket?.priority}</Badge>
+          </div>
+          <div>
+            <p className="mb-1 text-xs font-medium text-slate-500">Created</p>
+            <p className="text-slate-700">{ticket ? formatDate(ticket.createdAt) : "—"}</p>
+          </div>
+          {ticket?.assignedTo && (
+            <div className="col-span-2">
+              <p className="mb-1 text-xs font-medium text-slate-500">Assigned to</p>
+              <div className="flex items-center gap-2">
+                <Avatar name={ticket.assignedTo.name} src={ticket.assignedTo.avatar} size="sm" />
+                <span className="text-slate-700">{ticket.assignedTo.name}</span>
+              </div>
+            </div>
+          )}
+          {ticket?.slaDeadline && (
+            <div className="col-span-2">
+              <p className="mb-1 text-xs font-medium text-slate-500">SLA deadline</p>
+              <SlaCell deadline={ticket.slaDeadline} status={ticket.status} now={Date.now()} />
+            </div>
+          )}
+        </div>
+
+        <Field label="Change status" htmlFor="detail-status">
+          <select
+            id="detail-status"
+            value={newStatus}
+            onChange={(e) => setNewStatus(e.target.value as TicketStatus)}
+            className={inputClass}
+          >
+            {(["OPEN", "ASSIGNED", "IN_PROGRESS", "RESOLVED", "CLOSED"] as TicketStatus[]).map((s) => (
+              <option key={s} value={s}>{STATUS_LABEL[s]}</option>
+            ))}
+          </select>
+        </Field>
+
+        {error && <p className="rounded-lg bg-rose-50 px-3 py-2 text-xs text-rose-700">{error}</p>}
+
+        <div className="flex justify-end gap-2 pt-2">
+          <Button variant="secondary" onClick={onClose}>Close</Button>
+          <Button
+            disabled={newStatus === ticket?.status || update.isPending}
+            onClick={() => update.mutate(newStatus)}
+          >
+            {update.isPending ? "Saving…" : "Update status"}
+          </Button>
+        </div>
+      </div>
     </Modal>
   );
 }

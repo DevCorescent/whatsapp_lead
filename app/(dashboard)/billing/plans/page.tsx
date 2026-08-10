@@ -17,6 +17,8 @@ export default function PlansPage() {
   const checkout = useCheckout();
   const change = useChangePlan();
   const [busyId, setBusyId] = useState<string | null>(null);
+  const [planError, setPlanError] = useState<string | null>(null);
+  const [planSuccess, setPlanSuccess] = useState<string | null>(null);
 
   const plans = data?.plans ?? [];
   const currentPlanId = data?.currentPlanId ?? null;
@@ -25,22 +27,24 @@ export default function PlansPage() {
 
   const choose = async (plan: PlanDTO) => {
     setBusyId(plan.id);
+    setPlanError(null);
+    setPlanSuccess(null);
     try {
       // An existing paid subscriber switching plans goes through change (proration);
       // otherwise start a fresh checkout.
       if (hasActivePaid && plan.priceMonthly > 0) {
         await change.mutateAsync(plan.id);
-        alert("Your plan has been updated.");
+        setPlanSuccess("Your plan has been updated.");
       } else {
         const res = await checkout.mutateAsync(plan.id);
         if (res?.url) {
           window.location.assign(res.url);
           return;
         }
-        alert("Your plan is now active.");
+        setPlanSuccess("Your plan is now active.");
       }
     } catch (e) {
-      alert((e as Error).message);
+      setPlanError((e as Error).message);
     } finally {
       setBusyId(null);
     }
@@ -65,6 +69,13 @@ export default function PlansPage() {
         <div className="mb-4 rounded-lg bg-amber-50 px-4 py-3 text-sm text-amber-800">
           Payments are not configured on this deployment. Free plans can still be selected; paid checkout is disabled until Stripe is connected.
         </div>
+      )}
+
+      {planError && (
+        <div className="mb-4 rounded-lg bg-rose-50 px-4 py-3 text-sm text-rose-700">{planError}</div>
+      )}
+      {planSuccess && (
+        <div className="mb-4 rounded-lg bg-emerald-50 px-4 py-3 text-sm text-emerald-700">{planSuccess}</div>
       )}
 
       {isLoading ? (

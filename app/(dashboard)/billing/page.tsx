@@ -1,5 +1,6 @@
 "use client";
 
+import { useState } from "react";
 import Link from "next/link";
 import {
   CreditCard,
@@ -16,6 +17,7 @@ import {
   Button,
   Card,
   EmptyState,
+  Modal,
   PageHeader,
   Skeleton,
 } from "@/components/ui";
@@ -69,17 +71,37 @@ export default function BillingPage() {
   const portal = useBillingPortal();
   const cancel = useCancelSubscription();
   const resume = useResumeSubscription();
+  const [actionError, setActionError] = useState<string | null>(null);
+  const [cancelConfirm, setCancelConfirm] = useState(false);
 
   const openPortal = async () => {
+    setActionError(null);
     try {
       const res = await portal.mutateAsync();
       if (res?.url) window.location.assign(res.url);
     } catch (e) {
-      alert((e as Error).message);
+      setActionError((e as Error).message);
     }
   };
 
-  const run = (p: Promise<unknown>) => p.catch((e: Error) => alert(e.message));
+  const handleResume = async () => {
+    setActionError(null);
+    try {
+      await resume.mutateAsync();
+    } catch (e) {
+      setActionError((e as Error).message);
+    }
+  };
+
+  const handleCancel = async () => {
+    setActionError(null);
+    try {
+      await cancel.mutateAsync();
+      setCancelConfirm(false);
+    } catch (e) {
+      setActionError((e as Error).message);
+    }
+  };
 
   return (
     <div>
@@ -103,6 +125,10 @@ export default function BillingPage() {
           </div>
         }
       />
+
+      {actionError && (
+        <div className="mb-4 rounded-lg bg-rose-50 px-4 py-3 text-sm text-rose-700">{actionError}</div>
+      )}
 
       {isLoading ? (
         <div className="space-y-5">
@@ -137,16 +163,16 @@ export default function BillingPage() {
 
               <div className="flex items-center gap-2">
                 {data?.cancelAtPeriodEnd ? (
-                  <Button variant="secondary" onClick={() => run(resume.mutateAsync())} disabled={resume.isPending}>
+                  <Button variant="secondary" onClick={handleResume} disabled={resume.isPending}>
                     <RotateCw className="h-4 w-4" />
-                    Resume
+                    {resume.isPending ? "Resuming…" : "Resume"}
                   </Button>
                 ) : (
                   data?.status !== "CANCELLED" && (
                     <Button
                       variant="ghost"
                       className="text-rose-600 hover:bg-rose-50"
-                      onClick={() => { if (confirm("Cancel your subscription at the end of the current period?")) run(cancel.mutateAsync()); }}
+                      onClick={() => setCancelConfirm(true)}
                       disabled={cancel.isPending}
                     >
                       <Ban className="h-4 w-4" />
@@ -184,7 +210,13 @@ export default function BillingPage() {
               <p className="mt-0.5 text-sm text-slate-500">Invoices for this workspace.</p>
             </div>
 
-            {isError || !data || data.invoices.length === 0 ? (
+            {isError ? (
+              <EmptyState
+                icon={Receipt}
+                title="Couldn't load invoices"
+                description="Payment history is unavailable. Try refreshing the page."
+              />
+            ) : !data || data.invoices.length === 0 ? (
               <EmptyState
                 icon={Receipt}
                 title="No invoices yet"
@@ -237,6 +269,25 @@ export default function BillingPage() {
           </Card>
         </div>
       )}
+
+      <Modal
+        open={cancelConfirm}
+        onClose={() => { if (!cancel.isPending) setCancelConfirm(false); }}
+        title="Cancel subscription?"
+        description="Your plan stays active until the end of the current billing period. You can resume any time before then."
+      >
+        {actionError && (
+          <p className="mb-3 rounded-lg bg-rose-50 px-3 py-2 text-sm text-rose-700">{actionError}</p>
+        )}
+        <div className="flex justify-end gap-2">
+          <Button variant="secondary" onClick={() => setCancelConfirm(false)} disabled={cancel.isPending}>
+            Keep plan
+          </Button>
+          <Button variant="danger" onClick={handleCancel} disabled={cancel.isPending}>
+            {cancel.isPending ? "Cancelling…" : "Cancel subscription"}
+          </Button>
+        </div>
+      </Modal>
     </div>
   );
 }

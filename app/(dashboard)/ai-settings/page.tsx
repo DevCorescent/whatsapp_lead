@@ -146,7 +146,25 @@ export default function AISettingsPage() {
       return j.data as {
         aiEnabled: boolean; aiModel: string; autoReply: boolean;
         autoReplyDelay: number; aiPersonality: string | null;
+        aiTemperature: number | null; aiMaxTokens: number | null;
+        aiSystemPrompt: string | null; offHoursMessage: string | null;
         provider: "openrouter" | "groq"; defaultModel: string;
+      };
+    },
+  });
+
+  // Load business-hours fields (timezone, start/end, days) from the general settings endpoint.
+  const { data: generalData } = useQuery({
+    queryKey: ["settings-general-hours"],
+    queryFn: async () => {
+      const r = await fetch("/api/settings");
+      const j = await r.json();
+      const d = j.data as Record<string, unknown> | undefined;
+      return {
+        timezone: typeof d?.timezone === "string" ? d.timezone : null,
+        businessHoursStart: typeof d?.businessHoursStart === "string" ? d.businessHoursStart : null,
+        businessHoursEnd: typeof d?.businessHoursEnd === "string" ? d.businessHoursEnd : null,
+        businessDays: Array.isArray(d?.businessDays) ? (d!.businessDays as number[]) : null,
       };
     },
   });
@@ -156,15 +174,29 @@ export default function AISettingsPage() {
       setForm((f) => ({
         ...f,
         aiEnabled: aiData.aiEnabled,
-        // Only OpenRouter ids (with "/") are honoured; anything else means
-        // "use the workspace default", shown as the "" option.
         model: aiData.aiModel?.includes("/") ? aiData.aiModel : "",
         autoReply: aiData.autoReply,
         replyDelay: aiData.autoReplyDelay,
         personality: aiData.aiPersonality ?? f.personality,
+        temperature: aiData.aiTemperature ?? f.temperature,
+        maxTokens: aiData.aiMaxTokens ?? f.maxTokens,
+        systemPrompt: aiData.aiSystemPrompt ?? f.systemPrompt,
+        offHoursMessage: aiData.offHoursMessage ?? f.offHoursMessage,
       }));
     }
   }, [aiData]);
+
+  useEffect(() => {
+    if (generalData) {
+      setForm((f) => ({
+        ...f,
+        timezone: generalData.timezone ?? f.timezone,
+        startTime: generalData.businessHoursStart ?? f.startTime,
+        endTime: generalData.businessHoursEnd ?? f.endTime,
+        businessDays: generalData.businessDays ?? f.businessDays,
+      }));
+    }
+  }, [generalData]);
 
   // Include a saved-but-unlisted model so the dropdown still shows it.
   const modelOptions =
@@ -176,45 +208,81 @@ export default function AISettingsPage() {
   const set = <K extends keyof typeof INITIAL>(key: K, value: (typeof INITIAL)[K]) =>
     setForm((f) => ({ ...f, [key]: value }));
 
-  // "Dirty" must compare against what's actually saved on the server, not the
-  // static INITIAL defaults — otherwise the form reads as unsaved on load and
-  // stays "unsaved" even right after a successful save. Only the fields the API
-  // persists are compared (the others aren't wired to the backend yet).
-  const savedSnapshot = aiData
-    ? {
-        aiEnabled: aiData.aiEnabled,
-        model: aiData.aiModel?.includes("/") ? aiData.aiModel : "",
-        autoReply: aiData.autoReply,
-        replyDelay: aiData.autoReplyDelay,
-        personality: aiData.aiPersonality ?? INITIAL.personality,
-      }
-    : null;
+  // Snapshot of everything the server currently holds — used for dirty detection and Reset.
+  const savedSnapshot =
+    aiData && generalData
+      ? {
+          aiEnabled: aiData.aiEnabled,
+          model: aiData.aiModel?.includes("/") ? aiData.aiModel : "",
+          autoReply: aiData.autoReply,
+          replyDelay: aiData.autoReplyDelay,
+          personality: aiData.aiPersonality ?? INITIAL.personality,
+          temperature: aiData.aiTemperature ?? INITIAL.temperature,
+          maxTokens: aiData.aiMaxTokens ?? INITIAL.maxTokens,
+          systemPrompt: aiData.aiSystemPrompt ?? INITIAL.systemPrompt,
+          offHoursMessage: aiData.offHoursMessage ?? INITIAL.offHoursMessage,
+          timezone: generalData.timezone ?? INITIAL.timezone,
+          startTime: generalData.businessHoursStart ?? INITIAL.startTime,
+          endTime: generalData.businessHoursEnd ?? INITIAL.endTime,
+          businessDays: generalData.businessDays ?? INITIAL.businessDays,
+        }
+      : null;
 
   const dirty = savedSnapshot
     ? form.aiEnabled !== savedSnapshot.aiEnabled ||
       form.model !== savedSnapshot.model ||
       form.autoReply !== savedSnapshot.autoReply ||
       form.replyDelay !== savedSnapshot.replyDelay ||
-      form.personality !== savedSnapshot.personality
+      form.personality !== savedSnapshot.personality ||
+      form.temperature !== savedSnapshot.temperature ||
+      form.maxTokens !== savedSnapshot.maxTokens ||
+      form.systemPrompt !== savedSnapshot.systemPrompt ||
+      form.offHoursMessage !== savedSnapshot.offHoursMessage ||
+      form.timezone !== savedSnapshot.timezone ||
+      form.startTime !== savedSnapshot.startTime ||
+      form.endTime !== savedSnapshot.endTime ||
+      JSON.stringify(form.businessDays) !== JSON.stringify(savedSnapshot.businessDays)
     : false;
 
   const saveMutation = useMutation({
     mutationFn: async () => {
-      const r = await fetch("/api/settings/ai", {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          aiEnabled: form.aiEnabled,
-          aiModel: form.model,
-          autoReply: form.autoReply,
-          autoReplyDelay: form.replyDelay,
-          aiPersonality: form.personality,
+      // Two parallel PATCHes — AI model/personality settings go to /api/settings/ai
+      // (which saves to TenantSettings + Business); business-hours go to /api/settings
+      // (which saves to TenantSettings). Both endpoints are idempotent.
+      const [r1, r2] = await Promise.all([
+        fetch("/api/settings/ai", {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            aiEnabled: form.aiEnabled,
+            aiModel: form.model,
+            autoReply: form.autoReply,
+            autoReplyDelay: form.replyDelay,
+            aiPersonality: form.personality,
+            aiTemperature: form.temperature,
+            aiMaxTokens: form.maxTokens,
+            aiSystemPrompt: form.systemPrompt,
+            offHoursMessage: form.offHoursMessage,
+          }),
         }),
-      });
-      if (!r.ok) { const j = await r.json(); throw new Error(j.error ?? "Save failed"); }
-      return r.json();
+        fetch("/api/settings", {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            timezone: form.timezone,
+            businessHoursStart: form.startTime,
+            businessHoursEnd: form.endTime,
+            businessDays: form.businessDays,
+          }),
+        }),
+      ]);
+      if (!r1.ok) { const j = await r1.json(); throw new Error(j.error ?? "Save failed"); }
+      if (!r2.ok) { const j = await r2.json(); throw new Error(j.error ?? "Failed to save business hours"); }
     },
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["settings-ai"] }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["settings-ai"] });
+      qc.invalidateQueries({ queryKey: ["settings-general-hours"] });
+    },
   });
 
   const toggleDay = (day: number) =>
@@ -498,6 +566,7 @@ export default function AISettingsPage() {
       </div>
 
       {/* ── Sticky save bar ────────────────────────────────────────────────── */}
+      {/* lg:left-64 matches the sidebar's w-64 (16 rem). Both must change together if the sidebar width ever changes. */}
       <div className="fixed inset-x-0 bottom-0 z-30 border-t border-slate-200 bg-white/95 px-4 py-3 backdrop-blur lg:left-64">
         <div className="flex items-center justify-between gap-3">
           <p className="text-xs">

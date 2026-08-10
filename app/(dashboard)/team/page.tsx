@@ -29,7 +29,7 @@ import { cn, formatCompact, timeAgo } from "@/lib/utils";
 
 // TODO [SHALMON]: GET /api/team + POST /api/team/invite (currently 501).
 
-type Member = User & { _count?: { assignedConvs?: number; assignedTickets?: number } };
+type Member = User & { _count?: { assignedConvs?: number; assignedTickets?: number } | null };
 
 const ROLE_STYLE: Record<UserRole, string> = {
   SUPER_ADMIN: "bg-slate-900 text-white ring-slate-900/20",
@@ -94,17 +94,27 @@ export default function TeamPage() {
   const { data, isLoading, isError } = useTeam();
   const [open, setOpen] = useState(false);
   const [editingMember, setEditingMember] = useState<Member | null>(null);
+  const [confirmToggle, setConfirmToggle] = useState<Member | null>(null);
+  const [toggleError, setToggleError] = useState<string | null>(null);
 
-  const toggleActive = async (member: Member) => {
-    const label = member.isActive ? "deactivate" : "activate";
-    if (!confirm(`${label.charAt(0).toUpperCase() + label.slice(1)} ${member.name}?`)) return;
-    await fetch(`/api/team/${member.id}`, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ isActive: !member.isActive }),
-    });
-    queryClient.invalidateQueries({ queryKey: ["team"] });
-  };
+  const toggleMutation = useMutation({
+    mutationFn: async (member: Member) => {
+      const res = await fetch(`/api/team/${member.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ isActive: !member.isActive }),
+      });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error ?? "Failed to update member");
+      return json;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["team"] });
+      setConfirmToggle(null);
+      setToggleError(null);
+    },
+    onError: (err: Error) => setToggleError(err.message),
+  });
 
   const members = data ?? [];
   const stats = {
@@ -199,7 +209,7 @@ export default function TeamPage() {
                     <td className="px-4 py-3">
                       <span className="inline-flex items-center gap-1.5 tabular-nums text-slate-700">
                         <MessagesSquare className="h-3.5 w-3.5 text-slate-400" />
-                        {formatCompact((m as any)._count?.assignedConvs ?? 0)}
+                        {formatCompact(m._count?.assignedConvs ?? 0)}
                       </span>
                     </td>
                     <td className="px-4 py-3">
@@ -212,7 +222,7 @@ export default function TeamPage() {
                           variant="ghost"
                           size="sm"
                           className={m.isActive ? "text-rose-600 hover:bg-rose-50" : ""}
-                          onClick={() => toggleActive(m)}
+                          onClick={() => { setToggleError(null); setConfirmToggle(m); }}
                         >
                           {m.isActive ? (
                             <>
@@ -238,6 +248,40 @@ export default function TeamPage() {
 
       <InviteModal open={open} onClose={() => setOpen(false)} />
       <ChangeRoleModal member={editingMember} onClose={() => setEditingMember(null)} />
+
+      {/* Activate / Deactivate confirmation */}
+      <Modal
+        open={!!confirmToggle}
+        onClose={() => { if (!toggleMutation.isPending) { setConfirmToggle(null); setToggleError(null); } }}
+        title={confirmToggle?.isActive ? "Deactivate member?" : "Activate member?"}
+        description={
+          confirmToggle?.isActive
+            ? `${confirmToggle.name} will lose access to this workspace immediately.`
+            : `${confirmToggle?.name} will regain access to this workspace.`
+        }
+      >
+        {toggleError && (
+          <p className="mb-3 rounded-lg bg-rose-50 px-3 py-2 text-sm text-rose-700">{toggleError}</p>
+        )}
+        <div className="flex justify-end gap-2">
+          <Button
+            variant="secondary"
+            onClick={() => { setConfirmToggle(null); setToggleError(null); }}
+            disabled={toggleMutation.isPending}
+          >
+            Cancel
+          </Button>
+          <Button
+            variant={confirmToggle?.isActive ? "danger" : "primary"}
+            disabled={toggleMutation.isPending}
+            onClick={() => confirmToggle && toggleMutation.mutate(confirmToggle)}
+          >
+            {toggleMutation.isPending
+              ? (confirmToggle?.isActive ? "Deactivating…" : "Activating…")
+              : (confirmToggle?.isActive ? "Deactivate" : "Activate")}
+          </Button>
+        </div>
+      </Modal>
     </div>
   );
 }
