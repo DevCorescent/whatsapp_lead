@@ -119,7 +119,22 @@ const createTicketSchema = z.strictObject({
   assignedToId: z.string().min(1).optional(),
   department: z.string().trim().min(1).optional(),
   details: z.string().trim().optional(),
-  slaDeadline: z.string().datetime({ offset: true }).optional(),
+  // datetime-local from the browser is "YYYY-MM-DDTHH:mm" (no seconds / offset).
+  // Accept that and any parseable ISO string; coerce to Date for Prisma.
+  slaDeadline: z
+    .string()
+    .trim()
+    .min(1)
+    .optional()
+    .transform((value, ctx) => {
+      if (!value) return undefined;
+      const parsed = new Date(value);
+      if (Number.isNaN(parsed.getTime())) {
+        ctx.addIssue({ code: "custom", message: "Invalid SLA deadline" });
+        return z.NEVER;
+      }
+      return parsed;
+    }),
 });
 
 type CreateTicketInput = z.infer<typeof createTicketSchema>;
@@ -260,7 +275,7 @@ async function createTicket(
       priority,
       department: input.department,
       // Use caller-supplied deadline if given, otherwise derive from priority.
-      slaDeadline: input.slaDeadline ? new Date(input.slaDeadline) : slaDeadline(priority),
+      slaDeadline: input.slaDeadline ?? slaDeadline(priority),
       ...(assignedToId && {
         assignedToId,
         status: TicketStatus.ASSIGNED,

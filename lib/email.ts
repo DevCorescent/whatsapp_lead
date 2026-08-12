@@ -1,16 +1,81 @@
 import nodemailer from "nodemailer";
+import type { Transporter } from "nodemailer";
 
-const transporter = nodemailer.createTransport({
-  host: process.env.SMTP_HOST ?? "smtp.hostinger.com",
-  port: Number(process.env.SMTP_PORT ?? 465),
-  secure: true,
-  auth: {
-    user: process.env.SMTP_USER,
-    pass: process.env.SMTP_PASS,
-  },
-});
+type SmtpEnv = {
+  host: string;
+  port: number;
+  user: string;
+  pass: string;
+  from: string;
+};
 
-const FROM = process.env.SMTP_FROM ?? "WhatsCRM <noreply@example.com>";
+function readSmtpEnv(): SmtpEnv {
+  const host = process.env.SMTP_HOST?.trim();
+  const user = process.env.SMTP_USER?.trim();
+  const pass = process.env.SMTP_PASS?.trim();
+  const from = process.env.SMTP_FROM?.trim();
+  const port = Number(process.env.SMTP_PORT ?? 465);
+
+  if (!host || !user || !pass || !from) {
+    throw new Error(
+      "SMTP is not configured. Set SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS, and SMTP_FROM.",
+    );
+  }
+  if (!Number.isFinite(port) || port <= 0) {
+    throw new Error(`Invalid SMTP_PORT: ${process.env.SMTP_PORT}`);
+  }
+
+  return { host, port, user, pass, from };
+}
+
+let transporter: Transporter | null = null;
+
+function getTransporter(): Transporter {
+  if (transporter) return transporter;
+
+  const { host, port, user, pass } = readSmtpEnv();
+  transporter = nodemailer.createTransport({
+    host,
+    port,
+    // 465 = implicit TLS; 587 = STARTTLS
+    secure: port === 465,
+    auth: { user, pass },
+  });
+  return transporter;
+}
+
+async function sendMail(opts: {
+  to: string;
+  subject: string;
+  html: string;
+  kind: string;
+}) {
+  const { from } = readSmtpEnv();
+  const transport = getTransporter();
+
+  console.log(`[EMAIL] Sending ${opts.kind}`, { to: opts.to, subject: opts.subject });
+
+  try {
+    const info = await transport.sendMail({
+      from,
+      to: opts.to,
+      subject: opts.subject,
+      html: opts.html,
+    });
+    console.log(`[EMAIL] Sent ${opts.kind}`, {
+      to: opts.to,
+      messageId: info.messageId,
+      response: info.response,
+    });
+    return info;
+  } catch (error) {
+    console.error(`[EMAIL] Failed ${opts.kind}`, {
+      to: opts.to,
+      error: error instanceof Error ? error.message : String(error),
+    });
+    throw error;
+  }
+}
 
 export async function sendInviteEmail(opts: {
   to: string;
@@ -20,8 +85,8 @@ export async function sendInviteEmail(opts: {
   tempPassword: string;
   loginUrl: string;
 }) {
-  await transporter.sendMail({
-    from: FROM,
+  await sendMail({
+    kind: "invite",
     to: opts.to,
     subject: `You've been invited to ${opts.tenantName} on WhatsCRM`,
     html: `
@@ -45,8 +110,8 @@ export async function sendPasswordResetEmail(opts: {
   name: string;
   resetUrl: string;
 }) {
-  await transporter.sendMail({
-    from: FROM,
+  await sendMail({
+    kind: "password-reset",
     to: opts.to,
     subject: "Reset your WhatsCRM password",
     html: `
@@ -54,7 +119,7 @@ export async function sendPasswordResetEmail(opts: {
         <h2>Hi ${opts.name},</h2>
         <p>We received a request to reset your password. Click the button below to set a new password.</p>
         <a href="${opts.resetUrl}" style="display:inline-block;margin-top:16px;padding:12px 24px;background:#059669;color:#fff;border-radius:6px;text-decoration:none;">Reset Password</a>
-        <p style="margin-top:24px;color:#6b7280;font-size:13px;">This link expires in 1 hour. If you didn't request this, you can ignore this email.</p>
+        <p style="margin-top:24px;color:#6b7280;font-size:13px;">This link expires in 30 minutes. If you didn't request this, you can ignore this email.</p>
       </div>
     `,
   });
@@ -66,8 +131,8 @@ export async function sendWelcomeEmail(opts: {
   tenantName: string;
   loginUrl: string;
 }) {
-  await transporter.sendMail({
-    from: FROM,
+  await sendMail({
+    kind: "welcome",
     to: opts.to,
     subject: `Welcome to WhatsCRM — ${opts.tenantName}`,
     html: `

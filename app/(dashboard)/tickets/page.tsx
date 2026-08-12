@@ -487,11 +487,21 @@ function NewTicketModal({ open, onClose }: { open: boolean; onClose: () => void 
         onSubmit={(e) => {
           e.preventDefault();
           setError(null);
+          // datetime-local is "YYYY-MM-DDTHH:mm" (local). Convert to ISO for the API.
+          let slaDeadline: string | undefined;
+          if (sla) {
+            const parsed = new Date(sla);
+            if (Number.isNaN(parsed.getTime())) {
+              setError("Invalid SLA deadline");
+              return;
+            }
+            slaDeadline = parsed.toISOString();
+          }
           create.mutate({
             subject,
             priority,
             department,
-            ...(sla && { slaDeadline: sla }),
+            ...(slaDeadline && { slaDeadline }),
             ...(details.trim() && { details: details.trim() }),
             ...(selectedContact && { contactId: selectedContact.id }),
           });

@@ -307,8 +307,18 @@ function InviteModal({ open, onClose }: { open: boolean; onClose: () => void }) 
     },
     onSuccess: (json) => {
       queryClient.invalidateQueries({ queryKey: ["team"] });
-      const pwd = json.data?.tempPassword;
-      setSuccess(pwd ? `Invited! Temporary password: ${pwd}` : "Member invited successfully.");
+      const pwd = json.data?.tempPassword as string | undefined;
+      const emailSent = json.data?.emailSent === true;
+      const emailError = json.data?.emailError as string | undefined;
+      if (pwd && emailSent) {
+        setSuccess(`Invited! Email sent. Temporary password (shown once): ${pwd}`);
+      } else if (pwd) {
+        setSuccess(
+          `Member created, but invite email failed${emailError ? `: ${emailError}` : ""}. Share this temporary password now (shown once): ${pwd}`,
+        );
+      } else {
+        setSuccess(emailSent ? "Member invited successfully." : "Member created, but invite email failed.");
+      }
       setName(""); setEmail(""); setRole("AGENT");
     },
     onError: (err: Error) => setError(err.message),

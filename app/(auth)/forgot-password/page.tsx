@@ -1,8 +1,5 @@
 // Forgot Password — step 1 of the reset flow.
 // Step 2 lives at /reset-password?token=xxx (new password + confirm).
-//
-// TODO [SHALMON]: wire POST /api/auth/forgot-password
-// No endpoint exists yet, so success is simulated client-side below.
 
 "use client";
 
@@ -21,20 +18,28 @@ type ForgotPasswordValues = z.infer<typeof forgotPasswordSchema>;
 
 const RESEND_COOLDOWN = 30;
 
-// TODO [SHALMON]: wire POST /api/auth/forgot-password
-// The route does not exist yet, so we fake the round-trip and always succeed.
-async function sendResetLink() {
-  await new Promise((resolve) => setTimeout(resolve, 700));
+async function sendResetLink(email: string) {
+  const res = await fetch("/api/auth/forgot-password", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ email }),
+  });
+  const json = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    throw new Error((json as { error?: string }).error ?? "Failed to send reset link");
+  }
 }
 
 export default function ForgotPasswordPage() {
   const [sentTo, setSentTo] = useState("");
   const [cooldown, setCooldown] = useState(0);
   const [resending, setResending] = useState(false);
+  const [formError, setFormError] = useState<string | null>(null);
 
   const {
     register,
     handleSubmit,
+    getValues,
     formState: { errors, isSubmitting },
   } = useForm<ForgotPasswordValues>({
     resolver: zodResolver(forgotPasswordSchema),
@@ -48,17 +53,28 @@ export default function ForgotPasswordPage() {
   }, [cooldown]);
 
   async function onSubmit(values: ForgotPasswordValues) {
-    await sendResetLink();
-    setSentTo(values.email);
-    setCooldown(RESEND_COOLDOWN);
+    setFormError(null);
+    try {
+      await sendResetLink(values.email);
+      setSentTo(values.email);
+      setCooldown(RESEND_COOLDOWN);
+    } catch (err) {
+      setFormError(err instanceof Error ? err.message : "Failed to send reset link");
+    }
   }
 
   async function onResend() {
     if (cooldown > 0 || resending) return;
     setResending(true);
-    await sendResetLink();
-    setResending(false);
-    setCooldown(RESEND_COOLDOWN);
+    setFormError(null);
+    try {
+      await sendResetLink(sentTo || getValues("email"));
+      setCooldown(RESEND_COOLDOWN);
+    } catch (err) {
+      setFormError(err instanceof Error ? err.message : "Failed to resend reset link");
+    } finally {
+      setResending(false);
+    }
   }
 
   if (sentTo) {
@@ -72,12 +88,16 @@ export default function ForgotPasswordPage() {
           Check your inbox
         </h1>
         <p className="mt-2 text-sm leading-relaxed text-slate-500">
-          We&apos;ve sent a password reset link to
+          If an account exists for that address, we&apos;ve sent a password reset link to
         </p>
         <p className="mt-1 break-all text-sm font-semibold text-slate-900">{sentTo}</p>
         <p className="mt-3 text-sm text-slate-500">
           The link expires in 30 minutes. Check your spam folder if it doesn&apos;t show up.
         </p>
+
+        {formError && (
+          <p className="mt-4 rounded-lg bg-rose-50 px-3 py-2 text-sm text-rose-700">{formError}</p>
+        )}
 
         <div className="mt-8 rounded-xl border border-slate-200 bg-slate-50/70 p-4">
           <p className="text-sm text-slate-600">Didn&apos;t get it?</p>
@@ -139,6 +159,10 @@ export default function ForgotPasswordPage() {
             />
           </div>
         </Field>
+
+        {formError && (
+          <p className="rounded-lg bg-rose-50 px-3 py-2 text-sm text-rose-700">{formError}</p>
+        )}
 
         <Button type="submit" disabled={isSubmitting} className="w-full py-2.5">
           {isSubmitting ? (

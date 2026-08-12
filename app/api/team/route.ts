@@ -95,15 +95,37 @@ export async function POST(req: NextRequest) {
       },
     });
 
-    // Send invite email (non-blocking — don't fail the request if email fails)
+    // Await the invite email so the UI can show whether it actually left SMTP.
+    // Still return 201 with tempPassword if mail fails — the member was created;
+    // the owner must copy the one-time password from the modal.
     const tenant = await prisma.tenant.findUnique({ where: { id: tenantId }, select: { name: true } });
     const inviterName = session.user.name ?? "Your administrator";
     const loginUrl = `${process.env.NEXT_PUBLIC_APP_URL ?? "http://localhost:3000"}/login`;
-    sendInviteEmail({ to: email, name, inviterName, tenantName: tenant?.name ?? "your workspace", tempPassword, loginUrl }).catch(
-      (err) => console.error("[TEAM INVITE EMAIL]", err)
-    );
 
-    return NextResponse.json({ success: true, data: { ...user, tempPassword } }, { status: 201 });
+    let emailSent = false;
+    let emailError: string | null = null;
+    try {
+      await sendInviteEmail({
+        to: email,
+        name,
+        inviterName,
+        tenantName: tenant?.name ?? "your workspace",
+        tempPassword,
+        loginUrl,
+      });
+      emailSent = true;
+    } catch (err) {
+      emailError = err instanceof Error ? err.message : "Failed to send invite email";
+      console.error("[TEAM INVITE EMAIL]", err);
+    }
+
+    return NextResponse.json(
+      {
+        success: true,
+        data: { ...user, tempPassword, emailSent, emailError },
+      },
+      { status: 201 },
+    );
   } catch (error) {
     console.error("[TEAM POST]", error);
     return NextResponse.json({ success: false, error: "Failed to invite team member" }, { status: 500 });

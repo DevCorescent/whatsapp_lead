@@ -124,20 +124,35 @@ export async function POST(req: NextRequest) {
 
   const job = (await req.json()) as CampaignSendJob;
 
+  console.log("[WORKER CAMPAIGN-SEND] Job received", {
+    campaignId: job.campaignId,
+    recipientId: job.recipientId,
+    phone: job.phone,
+    businessId: job.businessId,
+    templateName: job.templateName ?? null,
+    language: job.language ?? null,
+    bodyParamCount: job.bodyParams?.length ?? 0,
+  });
+
   try {
     // QStash delivers at-least-once, and a send is the one thing here that cannot be taken back.
     // A recipient that has already reached a terminal state has had its outcome decided, so a
     // redelivery must not send to it again or move its campaign's counters a second time.
     const recipient = await prisma.campaignContact.findUnique({
       where: { id: job.recipientId },
-      select: { status: true },
+      select: { status: true, phone: true, campaignId: true },
     });
 
     if (!recipient) {
-      console.warn(
-        `[WORKER CAMPAIGN-SEND] Recipient ${job.recipientId} no longer exists — skipping`
-      );
-      return NextResponse.json({ ok: true });
+      // Classic bug: job.recipientId was Contact.id instead of CampaignContact.id — every send
+      // skipped and the campaign stayed RUNNING with 0 sent. Log loudly so it shows in Vercel.
+      console.error("[WORKER CAMPAIGN-SEND] CampaignContact not found — skipping (no Meta send)", {
+        campaignId: job.campaignId,
+        recipientId: job.recipientId,
+        phone: job.phone,
+        hint: "recipientId must be CampaignContact.id, not Contact.id",
+      });
+      return NextResponse.json({ ok: true, skipped: "recipient_missing" });
     }
 
     // Any terminal status, not just SENT. A recipient that has already been settled FAILED has
@@ -145,6 +160,10 @@ export async function POST(req: NextRequest) {
     // message a customer the campaign has already given up on, and could then settle it a second
     // time. Once a recipient is out of flight it stays out.
     if (TERMINAL_STATUSES.includes(recipient.status)) {
+      console.log("[WORKER CAMPAIGN-SEND] Already settled — skip", {
+        recipientId: job.recipientId,
+        status: recipient.status,
+      });
       return NextResponse.json({ ok: true, skipped: `already ${recipient.status}` });
     }
 
@@ -158,6 +177,11 @@ export async function POST(req: NextRequest) {
     });
 
     if (!creds) {
+      console.error("[WORKER CAMPAIGN-SEND] WhatsApp not connected", {
+        campaignId: job.campaignId,
+        businessId: job.businessId,
+        recipientId: job.recipientId,
+      });
       // Settled immediately rather than retried. A workspace with no connected number will not
       // acquire one in the seconds between redeliveries, so spending attempts on it only delays
       // the outcome — and reporting a send that never happened is worse than reporting the
@@ -186,6 +210,12 @@ export async function POST(req: NextRequest) {
             parameters: job.bodyParams.map((text) => ({ type: "text" as const, text })),
           });
         }
+        console.log("[WORKER CAMPAIGN-SEND] Sending template", {
+          phone: job.phone,
+          templateName: job.templateName,
+          language: job.language ?? "en",
+          bodyParams: job.bodyParams,
+        });
         sent = await sendTemplateMessage(
           creds.phoneNumberId,
           creds.apiKey,
@@ -195,6 +225,10 @@ export async function POST(req: NextRequest) {
           components.length ? components : undefined,
         );
       } else {
+        console.log("[WORKER CAMPAIGN-SEND] Sending text", {
+          phone: job.phone,
+          messagePreview: job.message.slice(0, 80),
+        });
         sent = await sendTextMessage(
           creds.phoneNumberId,
           creds.apiKey,
@@ -247,9 +281,16 @@ export async function POST(req: NextRequest) {
     // better than messaging someone twice. Contained here rather than in the outer catch, which
     // is reserved for pre-send failures where a retry is genuinely safe.
     try {
+      const waMessageId = sent.messages?.[0]?.id ?? null;
+      console.log("[WORKER CAMPAIGN-SEND] Meta accepted — settling SENT", {
+        campaignId: job.campaignId,
+        recipientId: job.recipientId,
+        phone: job.phone,
+        waMessageId,
+      });
       await settleRecipient(job, {
         status: "SENT",
-        waMessageId: sent.messages?.[0]?.id ?? null,
+        waMessageId,
       });
       await completeIfFinished(job.campaignId);
     } catch (error) {

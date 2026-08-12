@@ -189,7 +189,14 @@ async function createCampaign(
       })),
     });
 
-    return campaign;
+    // createMany does not return ids — reload so QStash jobs carry CampaignContact.id
+    // (the worker looks up by that id; publishing Contact.id made every send skip silently).
+    const recipients = await tx.campaignContact.findMany({
+      where: { campaignId: campaign.id },
+      select: { id: true, phone: true, contactId: true },
+    });
+
+    return { campaign, recipients };
   });
 }
 
@@ -215,30 +222,73 @@ async function publishCampaign(
   templateName: string,
   language: string,
   bodyVarMapping: string[],
-  recipients: CampaignRecipient[],
+  /** CampaignContact rows — `id` must be CampaignContact.id, not Contact.id */
+  campaignContacts: { id: string; phone: string; contactId: string | null }[],
+  contactsById: Map<string, CampaignRecipient>,
   scheduledAt?: Date | null,
-): Promise<void> {
-  for (const recipient of recipients) {
-    const bodyParams = bodyVarMapping.map((field) =>
-      CONTACT_FIELD[field] ? CONTACT_FIELD[field](recipient) : field,
-    );
-    // Plain-text fallback: body params joined for logging/preview.
+): Promise<{ published: number; failed: number }> {
+  let published = 0;
+  let failed = 0;
+
+  console.log("[CAMPAIGNS] Publishing jobs", {
+    campaignId,
+    businessId,
+    templateName,
+    language,
+    recipientCount: campaignContacts.length,
+    scheduledAt: scheduledAt?.toISOString() ?? null,
+  });
+
+  for (const row of campaignContacts) {
+    const contact = row.contactId ? contactsById.get(row.contactId) : undefined;
+    const recipient: CampaignRecipient = contact ?? {
+      id: row.contactId ?? row.id,
+      phone: row.phone,
+      name: null,
+      company: null,
+    };
+
+    // Meta rejects empty template parameters — never send "".
+    const bodyParams = bodyVarMapping.map((field) => {
+      const raw = CONTACT_FIELD[field] ? CONTACT_FIELD[field](recipient) : field;
+      return raw.trim() || "-";
+    });
     const message = bodyParams.join(" / ") || templateName;
 
-    await publishCampaignSend(
-      {
+    try {
+      const result = await publishCampaignSend(
+        {
+          campaignId,
+          recipientId: row.id, // CampaignContact.id — required by the worker
+          phone: row.phone,
+          message,
+          businessId,
+          templateName,
+          language,
+          bodyParams: bodyParams.length ? bodyParams : undefined,
+        },
+        scheduledAt ?? undefined,
+      );
+      published += 1;
+      console.log("[CAMPAIGNS] Job published", {
         campaignId,
-        recipientId: recipient.id,
-        phone: recipient.phone,
-        message,
-        businessId,
-        templateName,
-        language,
-        bodyParams: bodyParams.length ? bodyParams : undefined,
-      },
-      scheduledAt ?? undefined,
-    );
+        campaignContactId: row.id,
+        phone: row.phone,
+        qstashMessageId: result.messageId,
+      });
+    } catch (error) {
+      failed += 1;
+      console.error("[CAMPAIGNS] Failed to publish job", {
+        campaignId,
+        campaignContactId: row.id,
+        phone: row.phone,
+        error,
+      });
+    }
   }
+
+  console.log("[CAMPAIGNS] Publish finished", { campaignId, published, failed });
+  return { published, failed };
 }
 
 /**
@@ -335,6 +385,16 @@ export async function POST(req: NextRequest) {
       );
     }
 
+    console.log("[CAMPAIGNS] Creating campaign", {
+      tenantId,
+      businessId,
+      name: input.name,
+      templateId: input.templateId,
+      audience: input.all ? "all" : "selected",
+      contactCount: contacts.length,
+      scheduledAt: input.scheduledAt ?? null,
+    });
+
     // Verify the template belongs to this tenant and is approved.
     const template = await prisma.messageTemplate.findFirst({
       where: { id: input.templateId, tenantId },
@@ -355,6 +415,7 @@ export async function POST(req: NextRequest) {
 
     const creds = await resolveWhatsAppCreds(businessId);
     if (!creds.phoneNumberId || !creds.apiKey) {
+      console.warn("[CAMPAIGNS] WhatsApp not connected", { businessId });
       return NextResponse.json(
         {
           success: false,
@@ -380,7 +441,7 @@ export async function POST(req: NextRequest) {
       if (parsedDate.getTime() > Date.now()) scheduledAt = parsedDate;
     }
 
-    const campaign = await createCampaign(
+    const { campaign, recipients } = await createCampaign(
       tenantId,
       businessId,
       input,
@@ -390,15 +451,40 @@ export async function POST(req: NextRequest) {
       template.language,
     );
 
-    await publishCampaign(
+    const contactsById = new Map(contacts.map((c) => [c.id, c]));
+    const { published, failed } = await publishCampaign(
       campaign.id,
       businessId,
       template.name,
       template.language,
       input.bodyVarMapping,
-      contacts,
+      recipients,
+      contactsById,
       scheduledAt,
     );
+
+    if (published === 0 && recipients.length > 0) {
+      console.error("[CAMPAIGNS] No jobs published — check QSTASH_TOKEN / NEXT_PUBLIC_APP_URL", {
+        campaignId: campaign.id,
+        recipientCount: recipients.length,
+        failed,
+      });
+      await prisma.campaign.update({
+        where: { id: campaign.id },
+        data: {
+          status: CampaignStatus.FAILED,
+          lastError: "Failed to queue any sends. Check QStash configuration.",
+          completedAt: new Date(),
+        },
+      });
+      return NextResponse.json(
+        {
+          success: false,
+          error: "Campaign created but no messages could be queued. Check QStash / app URL config.",
+        },
+        { status: 502 },
+      );
+    }
 
     // The recipients stay PENDING and the cron picks the campaign up when it comes due.
     if (scheduledAt) {
@@ -409,6 +495,8 @@ export async function POST(req: NextRequest) {
             campaignId: campaign.id,
             total: contacts.length,
             scheduledAt: scheduledAt.toISOString(),
+            queued: published,
+            queueFailed: failed,
             sentCount: 0,
             failedCount: 0,
           },
@@ -426,6 +514,8 @@ export async function POST(req: NextRequest) {
         data: {
           campaignId: campaign.id,
           total: contacts.length,
+          queued: published,
+          queueFailed: failed,
           sentCount: 0,
           failedCount: 0,
         },

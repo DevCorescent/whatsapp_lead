@@ -7,8 +7,22 @@ import { authConfig } from "@/lib/auth.config";
 const { auth } = NextAuth(authConfig);
 
 const PUBLIC_ROUTES = ["/", "/pricing", "/features", "/about", "/blog", "/contact", "/industries", "/privacy-policy", "/terms", "/refund-policy"];
-const AUTH_ROUTES = ["/login", "/register", "/forgot-password"];
+const AUTH_ROUTES = ["/login", "/register", "/forgot-password", "/reset-password"];
 const ADMIN_ROUTE_PREFIX = "/admin";
+
+/** Agents only get ops surfaces — not Team / Settings / Automate admin. */
+const AGENT_ALLOWED_PREFIXES = ["/inbox", "/contacts", "/leads", "/tickets"];
+const AGENT_BLOCKED_PREFIXES = [
+  "/team",
+  "/settings",
+  "/campaigns",
+  "/chatbot",
+  "/ai-settings",
+  "/knowledge-base",
+  "/analytics",
+  "/templates",
+  "/businesses",
+];
 
 export default auth((req) => {
   const { nextUrl } = req;
@@ -39,6 +53,18 @@ export default auth((req) => {
     const loginUrl = new URL("/login", nextUrl);
     loginUrl.searchParams.set("callbackUrl", pathname);
     return NextResponse.redirect(loginUrl);
+  }
+
+  if (session?.user?.role === "AGENT") {
+    const blocked = AGENT_BLOCKED_PREFIXES.some(
+      (p) => pathname === p || pathname.startsWith(`${p}/`),
+    );
+    const allowed = AGENT_ALLOWED_PREFIXES.some(
+      (p) => pathname === p || pathname.startsWith(`${p}/`),
+    );
+    if (blocked || !allowed) {
+      return NextResponse.redirect(new URL("/inbox", nextUrl));
+    }
   }
 
   return NextResponse.next();

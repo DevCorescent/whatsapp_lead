@@ -69,18 +69,18 @@ const TABS: { key: "ALL" | CampaignStatus; label: string }[] = [
   { key: "FAILED", label: "Failed" },
 ];
 
-// Segment targeting is scoped to "all contacts" until the segment builder ships.
-// Do not add options here that the backend doesn't handle — the POST route returns
-// 400 when audience === non-"all" but no contactIds are provided.
-const AUDIENCES = [
-  { value: "all", label: "All contacts" },
-];
-
 const CONTACT_FIELD_OPTIONS = [
   { value: "name", label: "Contact Name" },
   { value: "phone", label: "Contact Phone" },
   { value: "company", label: "Contact Company" },
 ];
+
+interface PickerContact {
+  id: string;
+  name: string | null;
+  phone: string;
+  company?: string | null;
+}
 
 // ─── Hooks ────────────────────────────────────────────────────────────────────
 
@@ -109,6 +109,23 @@ function useTemplates(enabled: boolean) {
     },
     enabled,
     staleTime: 60_000,
+  });
+}
+
+function useCampaignContacts(enabled: boolean, search: string) {
+  return useQuery<PickerContact[]>({
+    queryKey: ["campaign-contact-picker", search],
+    queryFn: async () => {
+      const params = new URLSearchParams({ limit: "100" });
+      if (search.trim()) params.set("search", search.trim());
+      const res = await fetch(`/api/contacts?${params}`);
+      if (!res.ok) throw new Error("Failed to load contacts");
+      const json = await res.json();
+      const list = Array.isArray(json) ? json : (json.data ?? []);
+      return (list as PickerContact[]).filter((c) => c?.id && c?.phone);
+    },
+    enabled,
+    staleTime: 30_000,
   });
 }
 
@@ -413,11 +430,19 @@ function CreateCampaignModal({ open, onClose }: { open: boolean; onClose: () => 
   const [name, setName] = useState("");
   const [templateId, setTemplateId] = useState("");
   const [bodyVarMapping, setBodyVarMapping] = useState<string[]>([]);
+  const [audienceMode, setAudienceMode] = useState<"all" | "selected">("all");
+  const [selectedIds, setSelectedIds] = useState<string[]>([]);
+  const [contactSearch, setContactSearch] = useState("");
   const [schedule, setSchedule] = useState("");
   const [showPreview, setShowPreview] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const { data: templatesData, isLoading: tplLoading } = useTemplates(open);
+  const { data: contactsData, isLoading: contactsLoading } = useCampaignContacts(
+    open && audienceMode === "selected",
+    contactSearch,
+  );
+  const contacts = contactsData ?? [];
   const allTemplates = templatesData ?? [];
   const approvedTemplates = allTemplates.filter((t) => t.status === "APPROVED");
   const selectedTemplate = approvedTemplates.find((t) => t.id === templateId) ?? null;
@@ -438,6 +463,7 @@ function CreateCampaignModal({ open, onClose }: { open: boolean; onClose: () => 
       templateId: string;
       bodyVarMapping: string[];
       all?: boolean;
+      contactIds?: string[];
       scheduledAt?: string;
     }) => {
       const res = await fetch("/api/campaigns", {
@@ -461,6 +487,9 @@ function CreateCampaignModal({ open, onClose }: { open: boolean; onClose: () => 
     setName("");
     setTemplateId("");
     setBodyVarMapping([]);
+    setAudienceMode("all");
+    setSelectedIds([]);
+    setContactSearch("");
     setSchedule("");
     setShowPreview(false);
     setError(null);
@@ -472,20 +501,51 @@ function CreateCampaignModal({ open, onClose }: { open: boolean; onClose: () => 
     onClose();
   }
 
+  function toggleContact(id: string) {
+    setSelectedIds((prev) =>
+      prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id],
+    );
+  }
+
+  function toggleSelectAllVisible() {
+    const visibleIds = contacts.map((c) => c.id);
+    const allSelected = visibleIds.length > 0 && visibleIds.every((id) => selectedIds.includes(id));
+    if (allSelected) {
+      setSelectedIds((prev) => prev.filter((id) => !visibleIds.includes(id)));
+    } else {
+      setSelectedIds((prev) => Array.from(new Set([...prev, ...visibleIds])));
+    }
+  }
+
   function submit(e: React.FormEvent) {
     e.preventDefault();
     setError(null);
+
+    if (audienceMode === "selected" && selectedIds.length === 0) {
+      setError("Select at least one contact, or choose Select all.");
+      return;
+    }
+
     const when = schedule ? new Date(schedule) : null;
     create.mutate({
       name,
       templateId,
       bodyVarMapping,
-      all: true,
+      ...(audienceMode === "all"
+        ? { all: true }
+        : { contactIds: selectedIds }),
       ...(when && !Number.isNaN(when.getTime()) && { scheduledAt: when.toISOString() }),
     });
   }
 
-  const canSubmit = name.trim() && templateId && !create.isPending;
+  const canSubmit =
+    name.trim() &&
+    templateId &&
+    !create.isPending &&
+    (audienceMode === "all" || selectedIds.length > 0);
+
+  const allVisibleSelected =
+    contacts.length > 0 && contacts.every((c) => selectedIds.includes(c.id));
 
   return (
     <Modal
@@ -608,10 +668,99 @@ function CreateCampaignModal({ open, onClose }: { open: boolean; onClose: () => 
           </div>
         )}
 
-        {/* Audience — segment builder coming soon; only "All contacts" is supported today */}
-        <div className="flex items-center gap-2 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm text-slate-600">
-          <Users className="h-4 w-4 shrink-0 text-slate-400" />
-          <span>All contacts — segment builder coming soon.</span>
+        {/* Audience */}
+        <div>
+          <span className="mb-1.5 block text-sm font-medium text-slate-700">Audience</span>
+          <div className="flex gap-2">
+            <button
+              type="button"
+              onClick={() => setAudienceMode("all")}
+              className={cn(
+                "flex flex-1 items-center justify-center gap-2 rounded-lg border px-3 py-2.5 text-sm font-medium transition",
+                audienceMode === "all"
+                  ? "border-emerald-600 bg-emerald-50 text-emerald-800"
+                  : "border-slate-200 bg-white text-slate-600 hover:bg-slate-50",
+              )}
+            >
+              <Users className="h-4 w-4" />
+              Select all
+            </button>
+            <button
+              type="button"
+              onClick={() => setAudienceMode("selected")}
+              className={cn(
+                "flex flex-1 items-center justify-center gap-2 rounded-lg border px-3 py-2.5 text-sm font-medium transition",
+                audienceMode === "selected"
+                  ? "border-emerald-600 bg-emerald-50 text-emerald-800"
+                  : "border-slate-200 bg-white text-slate-600 hover:bg-slate-50",
+              )}
+            >
+              <Users className="h-4 w-4" />
+              Select persons
+            </button>
+          </div>
+
+          {audienceMode === "all" ? (
+            <p className="mt-2 flex items-center gap-1.5 text-xs text-slate-500">
+              <Info className="h-3.5 w-3.5 shrink-0" />
+              Sends the template to every contact in this business.
+            </p>
+          ) : (
+            <div className="mt-2 space-y-2 rounded-lg border border-slate-200 bg-slate-50 p-3">
+              <input
+                value={contactSearch}
+                onChange={(e) => setContactSearch(e.target.value)}
+                className={inputClass}
+                placeholder="Search contacts…"
+              />
+              <div className="flex items-center justify-between gap-2">
+                <label className="flex cursor-pointer items-center gap-2 text-xs font-medium text-slate-700">
+                  <input
+                    type="checkbox"
+                    checked={allVisibleSelected}
+                    onChange={toggleSelectAllVisible}
+                    disabled={contacts.length === 0}
+                    className="rounded border-slate-300 text-emerald-600 focus:ring-emerald-500"
+                  />
+                  Select all visible
+                </label>
+                <span className="text-xs tabular-nums text-slate-500">
+                  {selectedIds.length} selected
+                </span>
+              </div>
+              <div className="max-h-48 overflow-y-auto rounded-md border border-slate-200 bg-white">
+                {contactsLoading ? (
+                  <div className="flex items-center gap-2 px-3 py-4 text-xs text-slate-400">
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                    Loading contacts…
+                  </div>
+                ) : contacts.length === 0 ? (
+                  <p className="px-3 py-4 text-xs text-slate-500">No contacts found.</p>
+                ) : (
+                  <ul className="divide-y divide-slate-100">
+                    {contacts.map((c) => (
+                      <li key={c.id}>
+                        <label className="flex cursor-pointer items-center gap-2.5 px-3 py-2 hover:bg-slate-50">
+                          <input
+                            type="checkbox"
+                            checked={selectedIds.includes(c.id)}
+                            onChange={() => toggleContact(c.id)}
+                            className="rounded border-slate-300 text-emerald-600 focus:ring-emerald-500"
+                          />
+                          <span className="min-w-0 flex-1">
+                            <span className="block truncate text-sm font-medium text-slate-800">
+                              {c.name?.trim() || "Unnamed"}
+                            </span>
+                            <span className="block truncate text-xs text-slate-500">{c.phone}</span>
+                          </span>
+                        </label>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+            </div>
+          )}
         </div>
 
         {/* Schedule */}

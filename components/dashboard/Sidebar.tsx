@@ -29,30 +29,36 @@ const NAV = [
   {
     section: null,
     items: [
-      { href: "/inbox", label: "Inbox", icon: MessageSquare },
-      { href: "/contacts", label: "Contacts", icon: Users },
-      { href: "/leads", label: "Leads", icon: Target },
+      { href: "/inbox", label: "Inbox", icon: MessageSquare, roles: null },
+      { href: "/contacts", label: "Contacts", icon: Users, roles: null },
+      { href: "/leads", label: "Leads", icon: Target, roles: null },
     ],
   },
   {
     section: "Automate",
     items: [
-      { href: "/campaigns", label: "Campaigns", icon: Megaphone },
-      { href: "/chatbot", label: "Chatbot", icon: Bot },
-      { href: "/ai-settings", label: "AI Settings", icon: Sparkles },
-      { href: "/knowledge-base", label: "Knowledge Base", icon: BookOpen },
+      { href: "/campaigns", label: "Campaigns", icon: Megaphone, roles: ["SUPER_ADMIN", "TENANT_OWNER", "ADMIN", "MANAGER", "MARKETING_USER"] },
+      { href: "/chatbot", label: "Chatbot", icon: Bot, roles: ["SUPER_ADMIN", "TENANT_OWNER", "ADMIN", "MANAGER"] },
+      { href: "/ai-settings", label: "AI Settings", icon: Sparkles, roles: ["SUPER_ADMIN", "TENANT_OWNER", "ADMIN", "MANAGER"] },
+      { href: "/knowledge-base", label: "Knowledge Base", icon: BookOpen, roles: ["SUPER_ADMIN", "TENANT_OWNER", "ADMIN", "MANAGER"] },
     ],
   },
   {
     section: "Manage",
     items: [
-      { href: "/tickets", label: "Tickets", icon: Ticket },
-      { href: "/analytics", label: "Analytics", icon: BarChart2 },
-      { href: "/team", label: "Team", icon: UserCog },
-      { href: "/settings", label: "Settings", icon: Settings },
+      { href: "/tickets", label: "Tickets", icon: Ticket, roles: null },
+      { href: "/analytics", label: "Analytics", icon: BarChart2, roles: ["SUPER_ADMIN", "TENANT_OWNER", "ADMIN", "MANAGER", "MARKETING_USER"] },
+      { href: "/team", label: "Team", icon: UserCog, roles: ["SUPER_ADMIN", "TENANT_OWNER", "ADMIN", "MANAGER"] },
+      { href: "/settings", label: "Settings", icon: Settings, roles: ["SUPER_ADMIN", "TENANT_OWNER", "ADMIN", "MANAGER"] },
     ],
   },
 ];
+
+function canSeeNavItem(role: string | null | undefined, allowed: string[] | null) {
+  if (!allowed) return true;
+  if (!role) return false;
+  return allowed.includes(role);
+}
 
 export interface SidebarUser {
   name?: string | null;
@@ -92,7 +98,10 @@ export function Sidebar({ user }: { user: SidebarUser }) {
       </div>
 
       <nav className="scrollbar-slim flex-1 overflow-y-auto px-3 pb-3">
-        {NAV.map((group, gi) => (
+        {NAV.map((group, gi) => {
+          const items = group.items.filter((item) => canSeeNavItem(user.role, item.roles));
+          if (items.length === 0) return null;
+          return (
           <div key={group.section ?? gi} className={cn(gi > 0 && "mt-5")}>
             {group.section && (
               <p className="px-3 pb-1.5 text-[11px] font-semibold uppercase tracking-wider text-slate-400">
@@ -100,7 +109,7 @@ export function Sidebar({ user }: { user: SidebarUser }) {
               </p>
             )}
             <div className="space-y-0.5">
-              {group.items.map(({ href, label, icon: Icon }) => {
+              {items.map(({ href, label, icon: Icon }) => {
                 const active = pathname === href || pathname.startsWith(`${href}/`);
                 return (
                   <Link
@@ -131,7 +140,8 @@ export function Sidebar({ user }: { user: SidebarUser }) {
               })}
             </div>
           </div>
-        ))}
+          );
+        })}
       </nav>
 
       {/* Two clean lines: who you are, then which plan. The old single-row layout

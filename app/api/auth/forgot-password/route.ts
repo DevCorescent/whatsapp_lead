@@ -61,11 +61,21 @@ export async function POST(req: NextRequest) {
 
     const appUrl = process.env.NEXT_PUBLIC_APP_URL ?? new URL(req.url).origin;
     const resetUrl = `${appUrl.replace(/\/$/, "")}/reset-password?token=${token}`;
-    await sendPasswordResetEmail({
-      to: user.email,
-      name: user.name ?? user.email,
-      resetUrl,
-    });
+
+    try {
+      await sendPasswordResetEmail({
+        to: user.email,
+        name: user.name ?? user.email,
+        resetUrl,
+      });
+    } catch (mailError) {
+      // Token is already stored — log loudly so Vercel shows why the inbox stayed empty.
+      // Still return the generic success body so this endpoint cannot be used to probe accounts.
+      console.error("[FORGOT PASSWORD] Email send failed", {
+        email: user.email,
+        error: mailError instanceof Error ? mailError.message : String(mailError),
+      });
+    }
 
     if (process.env.NODE_ENV !== "production") {
       console.info(`[FORGOT PASSWORD] Reset link for ${email}: ${resetUrl}`);

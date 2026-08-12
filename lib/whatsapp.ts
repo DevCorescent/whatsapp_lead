@@ -177,6 +177,11 @@ export async function sendTemplateMessage(
   language: string,
   components?: WATemplateComponent[]
 ): Promise<WASendMessageResponse> {
+  const recipient = normalizeWaTo(to);
+  if (!recipient) {
+    throw new Error(`WhatsApp template send aborted — empty recipient (raw="${to}")`);
+  }
+
   const res = await fetch(`${WA_BASE_URL}/${phoneNumberId}/messages`, {
     method: "POST",
     headers: {
@@ -186,7 +191,7 @@ export async function sendTemplateMessage(
     body: JSON.stringify({
       messaging_product: "whatsapp",
       recipient_type: "individual",
-      to,
+      to: recipient,
       type: "template",
       template: {
         name: templateName,
@@ -200,10 +205,26 @@ export async function sendTemplateMessage(
     // Meta returns JSON on error, but can emit HTML on gateway failures —
     // read as text so the error path never throws over the real error.
     const err = await res.text();
+    console.error("[WA SEND] Meta rejected template message", {
+      status: res.status,
+      phoneNumberId,
+      to: recipient,
+      templateName,
+      language,
+      componentCount: components?.length ?? 0,
+      meta: err.slice(0, 800),
+    });
     throw new Error(
-      `WhatsApp API error (${res.status} ${res.statusText}) sending template "${templateName}" [${language}] to ${to}: ${err}`
+      `WhatsApp API error (${res.status} ${res.statusText}) sending template "${templateName}" [${language}] to ${recipient}: ${err}`
     );
   }
+
+  console.log("[WA SEND] Template accepted", {
+    phoneNumberId,
+    to: recipient,
+    templateName,
+    language,
+  });
 
   return res.json() as Promise<WASendMessageResponse>;
 }
