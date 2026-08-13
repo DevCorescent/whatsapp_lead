@@ -3,6 +3,8 @@ import { z } from "zod";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { generateReplyStream } from "@/lib/ai";
+import { guardFeature, guardLimit } from "@/lib/billing/guard";
+import { incrementAiUsage, planAllows } from "@/lib/billing/usage";
 import { retrieveContext } from "@/lib/rag";
 
 const schema = z.object({
@@ -13,6 +15,11 @@ export async function POST(req: NextRequest) {
   const session = await auth();
   if (!session?.user) return NextResponse.json({ success: false, error: "Unauthorized" }, { status: 401 });
   const { tenantId } = session.user;
+
+  // An agent is waiting on this one, so both refusals are 403s that open the
+  // upgrade dialog rather than the silent skip the auto-reply worker takes.
+  const denied = (await guardFeature(tenantId, "aiEnabled")) ?? (await guardLimit(tenantId, "ai"));
+  if (denied) return denied;
 
   try {
     let body: unknown;
@@ -50,11 +57,19 @@ export async function POST(req: NextRequest) {
     if (messages.length === 0) return NextResponse.json({ success: false, error: "No messages to reply to" }, { status: 400 });
 
     // RAG: retrieve only the chunks relevant to the customer's latest question.
+    // Ungrounded rather than refused on a tier without the knowledge base — the
+    // suggestion is still useful, it just has nothing to cite.
     const lastCustomerMsg = [...messages].reverse().find((m) => m.role === "user")?.content ?? "";
-    const knowledgeContext = await retrieveContext(tenantId, conversation.businessId, lastCustomerMsg);
+    const knowledgeContext = (await planAllows(tenantId, "ragEnabled"))
+      ? await retrieveContext(tenantId, conversation.businessId, lastCustomerMsg)
+      : "";
 
     const systemPrompt = "You are a helpful WhatsApp CRM assistant. Suggest a concise, professional reply to the customer's last message.";
     const streamIterable = await generateReplyStream(messages, systemPrompt, knowledgeContext, settings?.aiModel);
+
+    // Charged once the model has accepted the request. The stream below can still
+    // be interrupted mid-flight, but the tokens are spent either way.
+    await incrementAiUsage(tenantId);
 
     const encoder = new TextEncoder();
     const readable = new ReadableStream({

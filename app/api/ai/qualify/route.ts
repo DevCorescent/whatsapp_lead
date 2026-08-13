@@ -31,6 +31,8 @@ import { z } from "zod";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { qualifyLead } from "@/lib/ai";
+import { guardFeature, guardLimit } from "@/lib/billing/guard";
+import { incrementAiUsage } from "@/lib/billing/usage";
 
 /** How a transcript line is labelled for the model. Speaker labels, not chat roles. */
 const TRANSCRIPT_SPEAKER = {
@@ -202,6 +204,11 @@ export async function POST(req: NextRequest) {
 
   const { tenantId } = session.user;
 
+  // Lead scoring is the "Advanced AI" line item on the pricing cards, so it is
+  // gated on that rather than on the general AI switch.
+  const denied = (await guardFeature(tenantId, "advancedAi")) ?? (await guardLimit(tenantId, "ai"));
+  if (denied) return denied;
+
   try {
     const parsed = qualifySchema.safeParse(await req.json());
     if (!parsed.success) {
@@ -244,6 +251,7 @@ export async function POST(req: NextRequest) {
     }
 
     const qualification = await qualifyLead(transcript);
+    await incrementAiUsage(tenantId);
 
     await applyQualification(lead.id, qualification);
 

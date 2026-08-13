@@ -7,6 +7,7 @@
 // ============================================================================
 
 import { NextRequest, NextResponse } from "next/server";
+import { guardFeature } from "@/lib/billing/guard";
 import { getBusinessScope } from "@/lib/business";
 import { prisma } from "@/lib/prisma";
 import { toCsv, type CsvColumn } from "@/lib/csv";
@@ -33,6 +34,9 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ success: false, error: "Unauthorized" }, { status: 401 });
   }
   const { tenantId, businessId } = scope;
+
+  const denied = await guardFeature(tenantId, "allowExport");
+  if (denied) return denied;
 
   const resource = new URL(req.url).searchParams.get("resource") as Resource | null;
   if (!resource || !RESOURCES.includes(resource)) {

@@ -22,6 +22,8 @@ import { z } from "zod";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { summarizeConversation } from "@/lib/ai";
+import { guardFeature, guardLimit } from "@/lib/billing/guard";
+import { incrementAiUsage } from "@/lib/billing/usage";
 
 /**
  * The body of a summarise request.
@@ -118,6 +120,9 @@ export async function POST(req: NextRequest) {
 
   const { tenantId } = session.user;
 
+  const denied = (await guardFeature(tenantId, "aiEnabled")) ?? (await guardLimit(tenantId, "ai"));
+  if (denied) return denied;
+
   try {
     const parsed = summarizeSchema.safeParse(await req.json());
     if (!parsed.success) {
@@ -150,6 +155,7 @@ export async function POST(req: NextRequest) {
     }
 
     const summary = await summarizeConversation(transcript);
+    await incrementAiUsage(tenantId);
 
     return NextResponse.json({
       success: true,

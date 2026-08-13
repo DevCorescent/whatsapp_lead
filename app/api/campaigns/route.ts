@@ -33,6 +33,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { CampaignStatus, Prisma } from "@prisma/client";
 import { z } from "zod";
 import { prisma } from "@/lib/prisma";
+import { guardCeiling, guardLimit } from "@/lib/billing/guard";
+import { resolveTenantPlan } from "@/lib/billing/usage";
 import { getBusinessScope, resolveWhatsAppCreds } from "@/lib/business";
 import { publishCampaignSend } from "@/lib/queue";
 
@@ -384,6 +386,18 @@ export async function POST(req: NextRequest) {
         { status: 400 }
       );
     }
+
+    // All three caps are asserted here, at launch, where the audience size is
+    // known — not per recipient in the send worker. The worker settles each
+    // recipient terminally, so refusing there would mark thousands of customers
+    // FAILED for a campaign that was only ever too large to start; refusing here
+    // leaves the campaign uncreated and the audience intact.
+    const { limits, planName } = await resolveTenantPlan(tenantId);
+    const overLimit =
+      (await guardLimit(tenantId, "campaigns")) ??
+      (await guardLimit(tenantId, "messagesPerDay", contacts.length)) ??
+      guardCeiling("campaignRecipients", contacts.length, limits.campaignRecipients, planName);
+    if (overLimit) return overLimit;
 
     console.log("[CAMPAIGNS] Creating campaign", {
       tenantId,

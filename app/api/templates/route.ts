@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { prisma } from "@/lib/prisma";
+import { guardLimit } from "@/lib/billing/guard";
 import { getBusinessScope } from "@/lib/business";
 
 const createTemplateSchema = z.object({
@@ -41,6 +42,9 @@ export async function POST(req: NextRequest) {
   const scope = await getBusinessScope();
   if (!scope) return NextResponse.json({ success: false, error: "Unauthorized" }, { status: 401 });
   const { tenantId, businessId } = scope;
+
+  const overLimit = await guardLimit(tenantId, "templates");
+  if (overLimit) return overLimit;
 
   try {
     let body: unknown;

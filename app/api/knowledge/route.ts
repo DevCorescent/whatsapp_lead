@@ -2,6 +2,8 @@ import { createHash, randomUUID } from "crypto";
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { prisma } from "@/lib/prisma";
+import { guardCeiling, guardFeature, guardLimit } from "@/lib/billing/guard";
+import { resolveTenantPlan } from "@/lib/billing/usage";
 import { getBusinessScope } from "@/lib/business";
 import { extractDocumentText, ingestDocument, type DocType } from "@/lib/rag";
 import { publishKnowledgeIngest } from "@/lib/queue";
@@ -26,8 +28,7 @@ const FILE_TYPES: Record<string, DocType> = {
   tiff: "IMAGE",
   bmp: "IMAGE",
 };
-const MAX_FILE_MB = 10;
-const MAX_FILE_BYTES = MAX_FILE_MB * 1024 * 1024;
+const BYTES_PER_MB = 1024 * 1024;
 
 export async function GET(req: NextRequest) {
   const scope = await getBusinessScope();
@@ -65,6 +66,12 @@ export async function POST(req: NextRequest) {
   if (!scope) return NextResponse.json({ success: false, error: "Unauthorized" }, { status: 401 });
   const { tenantId, businessId } = scope;
 
+  // The knowledge base is the whole feature, so this gate comes before any
+  // branch: a tier without RAG has no business storing documents it can never
+  // retrieve from.
+  const noRag = await guardFeature(tenantId, "ragEnabled");
+  if (noRag) return noRag;
+
   const contentType = req.headers.get("content-type") ?? "";
 
   try {
@@ -74,13 +81,26 @@ export async function POST(req: NextRequest) {
       const files = form.getAll("files").filter((f): f is File => f instanceof File);
       if (files.length === 0) return NextResponse.json({ success: false, error: "No files provided" }, { status: 400 });
 
+      // Every check that can reject the batch runs before the loop writes
+      // anything: document count, the storage it will occupy, and the per-file
+      // ceiling. Failing on file five would otherwise leave files one to four
+      // stored and indexed, behind a 403 saying nothing was uploaded. The
+      // largest file stands in for the per-file check — if it passes, all do.
+      // The 10 MB once hardcoded here is now the plan's maxUploadMb, whose
+      // column default is that same 10.
+      const { limits, planName } = await resolveTenantPlan(tenantId);
+      const batchMb = Math.ceil(files.reduce((sum, f) => sum + f.size, 0) / BYTES_PER_MB);
+      const largestMb = Math.ceil(Math.max(...files.map((f) => f.size)) / BYTES_PER_MB);
+
+      const overLimit =
+        (await guardLimit(tenantId, "knowledgeDocs", files.length)) ??
+        (await guardLimit(tenantId, "storage", batchMb)) ??
+        guardCeiling("uploadSize", largestMb, limits.uploadMb, planName);
+      if (overLimit) return overLimit;
+
       const results: Array<{ success: boolean; doc?: unknown; error?: string; skipped?: boolean; duplicate?: boolean }> = [];
       for (const file of files) {
         try {
-          if (file.size > MAX_FILE_BYTES) {
-            results.push({ success: false, error: `${file.name} exceeds the ${MAX_FILE_MB} MB limit` });
-            continue;
-          }
           const ext = (file.name.split(".").pop() ?? "").toLowerCase();
           const type = FILE_TYPES[ext];
           if (!type) {
@@ -101,6 +121,9 @@ export async function POST(req: NextRequest) {
     }
 
     // ── Raw text or URL via JSON ──────────────────────────────────────────
+    const overLimit = await guardLimit(tenantId, "knowledgeDocs");
+    if (overLimit) return overLimit;
+
     let body: unknown;
     try { body = await req.json(); } catch { return NextResponse.json({ success: false, error: "Invalid JSON" }, { status: 400 }); }
 

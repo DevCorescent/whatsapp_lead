@@ -15,6 +15,22 @@ const updatePlanSchema = z.object({
   maxAgents: z.number().int().positive().optional(),
   maxCampaigns: z.number().int().positive().optional(),
   maxFlows: z.number().int().positive().optional(),
+  // nonnegative, not positive: 0 is the "unlimited" sentinel these four use
+  // (isUnlimited in lib/billing/tiers.ts), so it has to be a settable value.
+  maxMsgPerDay: z.number().int().nonnegative().optional(),
+  maxMsgPerHour: z.number().int().nonnegative().optional(),
+  maxBusinesses: z.number().int().nonnegative().optional(),
+  maxKnowledgeDocs: z.number().int().nonnegative().optional(),
+  maxTemplates: z.number().int().nonnegative().optional(),
+  maxQuickReplies: z.number().int().nonnegative().optional(),
+  maxCampaignRecipients: z.number().int().nonnegative().optional(),
+  maxUploadMb: z.number().int().nonnegative().optional(),
+  // 0 here means "keep forever", not "delete immediately" — the retention cron
+  // skips any plan at 0. See app/api/cron/retention/route.ts.
+  retentionDays: z.number().int().nonnegative().optional(),
+  allowedAiModels: z.array(z.string().min(1)).optional(),
+  allowExport: z.boolean().optional(),
+  isPopular: z.boolean().optional(),
   aiEnabled: z.boolean().optional(),
   ragEnabled: z.boolean().optional(),
   whiteLabel: z.boolean().optional(),
@@ -60,7 +76,18 @@ export async function PATCH(req: NextRequest, { params }: Params) {
     return NextResponse.json({ success: false, error: parsed.error.issues[0].message }, { status: 400 });
   }
 
-  const updated = await prisma.plan.update({ where: { id }, data: parsed.data });
+  // "Most Popular" is a badge on one card, so promoting a plan demotes whichever
+  // held it. Both writes go in one transaction: applied separately, a failure
+  // between them leaves the ribbon on two cards or on none.
+  const updated = await prisma.$transaction(async (tx) => {
+    if (parsed.data.isPopular === true) {
+      await tx.plan.updateMany({
+        where: { id: { not: id }, isPopular: true },
+        data: { isPopular: false },
+      });
+    }
+    return tx.plan.update({ where: { id }, data: parsed.data });
+  });
 
   console.log("[admin/plans/[id]] updated plan:", id, JSON.stringify(parsed.data));
 

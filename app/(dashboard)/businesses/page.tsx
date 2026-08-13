@@ -14,6 +14,8 @@ import {
   selectClass,
 } from "@/components/ui";
 import { Toggle } from "@/components/ui/Toggle";
+import { UpgradeModal } from "@/components/billing/UpgradeModal";
+import { upgradeReasonOf, type UpgradeReason } from "@/lib/billing/limits";
 import {
   useBusinesses,
   useSwitchBusiness,
@@ -74,6 +76,7 @@ export default function BusinessesPage() {
   const [error, setError] = useState<string | null>(null);
   const [confirmDelete, setConfirmDelete] = useState<BusinessDTO | null>(null);
   const [deleteError, setDeleteError] = useState<string | null>(null);
+  const [upgrade, setUpgrade] = useState<UpgradeReason | null>(null);
 
   const businesses = data?.data ?? [];
   const currentId = data?.currentBusinessId;
@@ -111,6 +114,14 @@ export default function BusinessesPage() {
       }
       setShowForm(false);
     } catch (err) {
+      // The plan has nothing to do with the fields they filled in, so a refusal
+      // replaces the form rather than annotating it.
+      const reason = upgradeReasonOf(err);
+      if (reason) {
+        setShowForm(false);
+        setUpgrade(reason);
+        return;
+      }
       setError(err instanceof Error ? err.message : "Something went wrong");
     }
   };
@@ -428,6 +439,8 @@ export default function BusinessesPage() {
           </Button>
         </div>
       </Modal>
+
+      <UpgradeModal reason={upgrade} onClose={() => setUpgrade(null)} />
     </div>
   );
 }

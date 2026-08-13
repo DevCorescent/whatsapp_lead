@@ -3,6 +3,8 @@ import { z } from "zod";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { generateReply } from "@/lib/ai";
+import { guardFeature, guardLimit } from "@/lib/billing/guard";
+import { incrementAiUsage, planAllows } from "@/lib/billing/usage";
 import { retrieveContext } from "@/lib/rag";
 
 const schema = z.object({
@@ -14,6 +16,9 @@ export async function POST(req: NextRequest) {
   const session = await auth();
   if (!session?.user) return NextResponse.json({ success: false, error: "Unauthorized" }, { status: 401 });
   const { tenantId } = session.user;
+
+  const denied = (await guardFeature(tenantId, "aiEnabled")) ?? (await guardLimit(tenantId, "ai"));
+  if (denied) return denied;
 
   try {
     let body: unknown;
@@ -73,9 +78,12 @@ export async function POST(req: NextRequest) {
 
     // RAG: pull only the chunks relevant to the customer's latest message.
     const lastCustomerMsg = [...messages].reverse().find((m) => m.role === "user")?.content ?? "";
-    const knowledgeContext = await retrieveContext(tenantId, conversation.businessId, lastCustomerMsg);
+    const knowledgeContext = (await planAllows(tenantId, "ragEnabled"))
+      ? await retrieveContext(tenantId, conversation.businessId, lastCustomerMsg)
+      : "";
 
     const reply = await generateReply(messages, systemPrompt, knowledgeContext, settings?.aiModel);
+    await incrementAiUsage(tenantId);
     return NextResponse.json({ success: true, data: { reply } });
   } catch (error) {
     console.error("[CHATBOT RESPOND]", error);

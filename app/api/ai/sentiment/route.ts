@@ -24,6 +24,8 @@ import { z } from "zod";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { detectSentiment } from "@/lib/ai";
+import { guardFeature, guardLimit } from "@/lib/billing/guard";
+import { incrementAiUsage } from "@/lib/billing/usage";
 
 /** Matches the sibling AI routes: strict, so nothing can ride along into a Prisma predicate. */
 const sentimentSchema = z.strictObject({
@@ -45,6 +47,9 @@ export async function POST(req: NextRequest) {
   }
 
   const { tenantId } = session.user;
+
+  const denied = (await guardFeature(tenantId, "aiEnabled")) ?? (await guardLimit(tenantId, "ai"));
+  if (denied) return denied;
 
   try {
     const parsed = sentimentSchema.safeParse(await req.json());
@@ -98,6 +103,7 @@ export async function POST(req: NextRequest) {
       .join("\n");
 
     const sentiment = await detectSentiment(text);
+    await incrementAiUsage(tenantId);
 
     return NextResponse.json({ success: true, data: { sentiment } });
   } catch (error) {

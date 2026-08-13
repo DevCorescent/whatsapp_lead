@@ -4,11 +4,13 @@
 // POST   - Create a new business (workspace) under the tenant.
 //
 // A user can own several businesses; these endpoints back the business switcher
-// and the "Create Business" flow. Billing/team stay tenant-level, so no plan
-// limit is enforced on business count here.
+// and the "Create Business" flow. How many is a plan limit (Plan.maxBusinesses):
+// each business is a separate WhatsApp number with its own inbox, contacts and
+// AI settings, so it is the unit the tiers actually sell.
 // ============================================================================
 
 import { NextRequest, NextResponse } from "next/server";
+import { guardLimit } from "@/lib/billing/guard";
 import { getBusinessScope, listBusinesses, publicBusiness, uniqueBusinessSlug } from "@/lib/business";
 import { invalidateTenantCache } from "@/lib/cache";
 import { prisma } from "@/lib/prisma";
@@ -36,6 +38,11 @@ export async function POST(req: NextRequest) {
   if (!MANAGER_ROLES.has(scope.role)) {
     return NextResponse.json({ success: false, error: "You don't have permission to create businesses" }, { status: 403 });
   }
+
+  // Ahead of parsing: nothing in the payload can change the answer, and a tenant
+  // at its limit should be told that rather than which field it also got wrong.
+  const overLimit = await guardLimit(scope.tenantId, "businesses");
+  if (overLimit) return overLimit;
 
   let body: unknown;
   try {

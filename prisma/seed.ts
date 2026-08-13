@@ -14,9 +14,36 @@ async function main() {
   console.log("🌱 Seeding database...");
 
   // ─── Plans ──────────────────────────────────────────────────────────────────
+  // These field sets are in `update` as well as `create`, unlike everything else
+  // here. They were added to Plan after these rows existed, so an existing
+  // database has them at column defaults — maxBusinesses 1 for every tier,
+  // including Enterprise, and no plan carrying the Most Popular badge at all.
+  // Re-running the seed is what corrects that, and it touches only these fields;
+  // prices and limits edited in the admin UI stay as they are.
+  //
+  // isPopular is seeded false on all three on purpose. It is an override, not the
+  // source of truth: the Plans page gives the badge to whichever plan has the most
+  // subscribers and falls back to Growth when there is no clear leader, so pinning
+  // anything here would switch that off before it ever ran. It is written on every
+  // plan rather than left alone so a re-seed also clears a pin set by hand.
+  const STARTER_CAPS = {
+    isPopular: false,
+    maxMsgPerDay: 500,
+    maxMsgPerHour: 100,
+    maxBusinesses: 1,
+    maxKnowledgeDocs: 10,
+    maxTemplates: 10,
+    maxQuickReplies: 20,
+    maxCampaignRecipients: 500,
+    maxUploadMb: 5,
+    retentionDays: 90,
+    allowedAiModels: [] as string[],
+    allowExport: false,
+  };
+
   await prisma.plan.upsert({
     where: { name: "STARTER" },
-    update: {},
+    update: STARTER_CAPS,
     create: {
       name: "STARTER",
       displayName: "Starter",
@@ -28,6 +55,7 @@ async function main() {
       maxAgents: 3,
       maxCampaigns: 5,
       maxFlows: 3,
+      ...STARTER_CAPS,
       aiEnabled: false,
       ragEnabled: false,
       whiteLabel: false,
@@ -36,9 +64,24 @@ async function main() {
     },
   });
 
+  const GROWTH_CAPS = {
+    isPopular: false,
+    maxMsgPerDay: 5000,
+    maxMsgPerHour: 750,
+    maxBusinesses: 3,
+    maxKnowledgeDocs: 100,
+    maxTemplates: 50,
+    maxQuickReplies: 100,
+    maxCampaignRecipients: 5000,
+    maxUploadMb: 10,
+    retentionDays: 365,
+    allowedAiModels: [] as string[],
+    allowExport: true,
+  };
+
   await prisma.plan.upsert({
     where: { name: "GROWTH" },
-    update: {},
+    update: GROWTH_CAPS,
     create: {
       name: "GROWTH",
       displayName: "Growth",
@@ -50,6 +93,7 @@ async function main() {
       maxAgents: 10,
       maxCampaigns: 25,
       maxFlows: 10,
+      ...GROWTH_CAPS,
       aiEnabled: true,
       ragEnabled: true,
       whiteLabel: false,
@@ -58,9 +102,26 @@ async function main() {
     },
   });
 
+  // 0 is the unlimited sentinel — Enterprise is not rate limited, but it is still
+  // capped on businesses so the tier has something concrete to sell.
+  const ENTERPRISE_CAPS = {
+    isPopular: false,
+    maxMsgPerDay: 0,
+    maxMsgPerHour: 0,
+    maxBusinesses: 25,
+    maxKnowledgeDocs: 0,
+    maxTemplates: 0,
+    maxQuickReplies: 0,
+    maxCampaignRecipients: 0,
+    maxUploadMb: 50,
+    retentionDays: 0,
+    allowedAiModels: [] as string[],
+    allowExport: true,
+  };
+
   await prisma.plan.upsert({
     where: { name: "ENTERPRISE" },
-    update: {},
+    update: ENTERPRISE_CAPS,
     create: {
       name: "ENTERPRISE",
       displayName: "Enterprise",
@@ -72,6 +133,7 @@ async function main() {
       maxAgents: 100,
       maxCampaigns: 100,
       maxFlows: 50,
+      ...ENTERPRISE_CAPS,
       aiEnabled: true,
       ragEnabled: true,
       whiteLabel: true,
@@ -93,6 +155,39 @@ async function main() {
       settings: { create: {} },
     },
   });
+
+  // ─── Demo Subscription ──────────────────────────────────────────────────────
+  //
+  // Without this the demo workspace has no Subscription row at all, which
+  // resolveTenantPlan reads as the implicit free tier — and the free tier grants
+  // no AI, no knowledge base and no export. The demo would then be unable to
+  // demonstrate the three features the product is mostly sold on. Growth is the
+  // right tier for it: everything except white label and lead scoring, so the
+  // gates are visibly doing something rather than switched off wholesale.
+  const growthPlan = await prisma.plan.findUnique({ where: { name: "GROWTH" } });
+
+  if (growthPlan) {
+    const now = new Date();
+    const periodEnd = new Date(now);
+    periodEnd.setFullYear(periodEnd.getFullYear() + 1);
+
+    await prisma.subscription.upsert({
+      where: { tenantId: demoTenant.id },
+      // Only the plan link is corrected on re-seed. Overwriting the period or
+      // resetting aiCreditsUsed would wipe real usage on a workspace someone has
+      // been demoing from all week.
+      update: { planId: growthPlan.id },
+      create: {
+        tenantId: demoTenant.id,
+        planId: growthPlan.id,
+        status: "ACTIVE",
+        billingCycle: "ANNUAL",
+        currentPeriodStart: now,
+        currentPeriodEnd: periodEnd,
+      },
+    });
+    console.log("✅ Demo subscription (Growth) created");
+  }
 
   // ─── Demo User (admin) ──────────────────────────────────────────────────────
   const hashedPassword = await bcrypt.hash("Demo@1234", 12);

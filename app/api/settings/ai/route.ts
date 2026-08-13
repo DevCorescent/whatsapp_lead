@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { prisma } from "@/lib/prisma";
 import { aiProviderInfo } from "@/lib/ai";
+import { guardFeature } from "@/lib/billing/guard";
+import { modelAllowed, resolveTenantPlan } from "@/lib/billing/usage";
 import { getBusinessScope } from "@/lib/business";
 
 const patchSchema = z.object({
@@ -62,6 +64,29 @@ export async function PATCH(req: NextRequest) {
     if (!parsed.success) return NextResponse.json({ success: false, error: parsed.error.issues[0].message }, { status: 400 });
 
     const { aiEnabled, aiModel, autoReply, autoReplyDelay, aiPersonality, aiTemperature, aiMaxTokens, aiSystemPrompt, aiResponseTone, offHoursMessage } = parsed.data;
+
+    // Switching AI on at all requires the plan to include it, otherwise the flag
+    // is written, ignored by resolveAutoReplyConfig, and the settings page shows
+    // a toggle that is on while nothing happens.
+    if (aiEnabled === true) {
+      const denied = await guardFeature(tenantId, "aiEnabled");
+      if (denied) return denied;
+    }
+
+    // The model is the direct cost lever — this column is free text, so without
+    // this a tenant on the cheapest tier can point at the priciest model.
+    if (aiModel) {
+      const { grants, planName } = await resolveTenantPlan(tenantId);
+      if (!modelAllowed(grants, aiModel)) {
+        return NextResponse.json(
+          {
+            success: false,
+            error: `The ${planName} plan cannot use "${aiModel}". Available models: ${grants.allowedAiModels.join(", ")}.`,
+          },
+          { status: 403 },
+        );
+      }
+    }
 
     const tenantData = Object.fromEntries(
       Object.entries({ aiEnabled, aiModel, autoReply, autoReplyDelay, aiPersonality }).filter(([, v]) => v !== undefined)

@@ -35,9 +35,21 @@ interface Plan {
   priceAnnual: number;
   maxContacts: number;
   maxMsgPerMonth: number;
+  maxMsgPerDay: number;
+  maxMsgPerHour: number;
   maxAgents: number;
   maxCampaigns: number;
   maxFlows: number;
+  maxBusinesses: number;
+  maxKnowledgeDocs: number;
+  maxTemplates: number;
+  maxQuickReplies: number;
+  maxCampaignRecipients: number;
+  maxUploadMb: number;
+  retentionDays: number;
+  allowedAiModels: string[];
+  allowExport: boolean;
+  isPopular: boolean;
   aiEnabled: boolean;
   ragEnabled: boolean;
   whiteLabel: boolean;
@@ -52,14 +64,23 @@ const FEATURES: { key: keyof Plan; label: string }[] = [
   { key: "ragEnabled", label: "Knowledge base (RAG)" },
   { key: "advancedAi", label: "Advanced AI (lead scoring)" },
   { key: "whiteLabel", label: "White label" },
+  { key: "allowExport", label: "CSV export" },
 ];
 
 const LIMITS: { key: keyof Plan; label: string }[] = [
+  { key: "maxBusinesses", label: "Businesses" },
   { key: "maxContacts", label: "Contacts" },
   { key: "maxMsgPerMonth", label: "Messages / month" },
+  { key: "maxMsgPerDay", label: "Messages / day" },
+  { key: "maxMsgPerHour", label: "Messages / hour" },
   { key: "maxAgents", label: "Agents" },
   { key: "maxCampaigns", label: "Campaigns" },
   { key: "maxFlows", label: "Chatbot flows" },
+  { key: "maxKnowledgeDocs", label: "Knowledge base docs" },
+  { key: "maxTemplates", label: "Message templates" },
+  { key: "maxQuickReplies", label: "Quick replies" },
+  { key: "maxCampaignRecipients", label: "Recipients / campaign" },
+  { key: "maxUploadMb", label: "Upload size (MB)" },
 ];
 
 /** Tier icon, keyed off the plan name — gives each card visual hierarchy. */
@@ -80,9 +101,21 @@ const FALLBACK_PLANS: Plan[] = [
     priceAnnual: 9590,
     maxContacts: 1000,
     maxMsgPerMonth: 5000,
+    maxMsgPerDay: 500,
+    maxMsgPerHour: 100,
     maxAgents: 3,
     maxCampaigns: 5,
     maxFlows: 3,
+    maxBusinesses: 1,
+    maxKnowledgeDocs: 10,
+    maxTemplates: 10,
+    maxQuickReplies: 20,
+    maxCampaignRecipients: 500,
+    maxUploadMb: 5,
+    retentionDays: 90,
+    allowedAiModels: [],
+    allowExport: false,
+    isPopular: false,
     aiEnabled: false,
     ragEnabled: false,
     whiteLabel: false,
@@ -99,9 +132,21 @@ const FALLBACK_PLANS: Plan[] = [
     priceAnnual: 28790,
     maxContacts: 10000,
     maxMsgPerMonth: 50000,
+    maxMsgPerDay: 5000,
+    maxMsgPerHour: 750,
     maxAgents: 10,
     maxCampaigns: 50,
     maxFlows: 15,
+    maxBusinesses: 3,
+    maxKnowledgeDocs: 100,
+    maxTemplates: 50,
+    maxQuickReplies: 100,
+    maxCampaignRecipients: 5000,
+    maxUploadMb: 10,
+    retentionDays: 365,
+    allowedAiModels: [],
+    allowExport: true,
+    isPopular: false,
     aiEnabled: true,
     ragEnabled: true,
     whiteLabel: false,
@@ -118,9 +163,21 @@ const FALLBACK_PLANS: Plan[] = [
     priceAnnual: 95990,
     maxContacts: 1000000,
     maxMsgPerMonth: 1000000,
+    maxMsgPerDay: 0,
+    maxMsgPerHour: 0,
     maxAgents: 100,
     maxCampaigns: 500,
     maxFlows: 100,
+    maxBusinesses: 25,
+    maxKnowledgeDocs: 0,
+    maxTemplates: 0,
+    maxQuickReplies: 0,
+    maxCampaignRecipients: 0,
+    maxUploadMb: 50,
+    retentionDays: 0,
+    allowedAiModels: [],
+    allowExport: true,
+    isPopular: false,
     aiEnabled: true,
     ragEnabled: true,
     whiteLabel: true,
@@ -162,7 +219,49 @@ function useUpdatePlan() {
 }
 
 const subscribersOf = (p: Plan) => p.subscribers ?? p._count?.subscriptions ?? 0;
-const limitLabel = (v: number) => (v >= 1_000_000 ? "Unlimited" : formatCompact(v));
+
+/** Tier the badge falls back to when the subscriber numbers do not pick a winner. */
+const DEFAULT_POPULAR = "GROWTH";
+
+/**
+ * Which plan wears the "Most Popular" ribbon.
+ *
+ * Resolved in this order:
+ *
+ *   1. An explicit pin (Plan.isPopular). The escape hatch for when the numbers
+ *      point at a tier you would rather not advertise — the cheapest plan
+ *      usually has the most subscribers, which is exactly the one a pricing
+ *      page should not be steering people toward.
+ *   2. The plan with the most subscribers, when there is a single clear leader.
+ *   3. Growth.
+ *
+ * A tie at the top counts as "no winner" rather than picking whichever happened
+ * to sort first: the badge would then flip between two cards on unrelated
+ * re-renders, and "most popular" would be saying something untrue about both.
+ * An all-zero table is the same case — nothing is popular yet.
+ */
+function popularPlanId(plans: Plan[]): string | null {
+  if (plans.length === 0) return null;
+
+  const pinned = plans.find((p) => p.isPopular);
+  if (pinned) return pinned.id;
+
+  const top = Math.max(...plans.map(subscribersOf));
+  const leaders = plans.filter((p) => subscribersOf(p) === top);
+  if (top > 0 && leaders.length === 1) return leaders[0].id;
+
+  const fallback = plans.find((p) => p.name.toUpperCase() === DEFAULT_POPULAR);
+  return fallback?.id ?? null;
+}
+
+/**
+ * Zero and below is the "unlimited" sentinel the enforcement code reads (see
+ * isUnlimited in lib/billing/tiers.ts), so it must not render as a literal "0" —
+ * a card promising "0 messages / hour" describes the opposite of what that plan
+ * actually grants.
+ */
+const limitLabel = (v: number) =>
+  v <= 0 || v >= 1_000_000 ? "Unlimited" : formatCompact(v);
 
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
@@ -171,6 +270,11 @@ export default function AdminPlansPage() {
   const [editing, setEditing] = useState<Plan | null>(null);
 
   const plans = data && data.length > 0 ? data : FALLBACK_PLANS;
+
+  // Resolved once across the whole set, not per card — "most" is a question
+  // about every plan at once, and asking it inside the map would let two cards
+  // each conclude they were the answer.
+  const popularId = popularPlanId(plans);
 
   return (
     <>
@@ -188,7 +292,7 @@ export default function AdminPlansPage() {
       ) : (
         <div className="grid grid-cols-1 gap-6 md:grid-cols-3">
           {plans.map((plan) => {
-            const popular = plan.name.toUpperCase() === "GROWTH";
+            const popular = plan.id === popularId;
             const TierIcon = TIER_ICON[plan.name.toUpperCase()] ?? Sparkles;
             return (
               <AdminCard
@@ -359,9 +463,21 @@ type PlanForm = {
   priceAnnual: number;
   maxContacts: number;
   maxMsgPerMonth: number;
+  maxMsgPerDay: number;
+  maxMsgPerHour: number;
   maxAgents: number;
   maxCampaigns: number;
   maxFlows: number;
+  maxBusinesses: number;
+  maxKnowledgeDocs: number;
+  maxTemplates: number;
+  maxQuickReplies: number;
+  maxCampaignRecipients: number;
+  maxUploadMb: number;
+  retentionDays: number;
+  allowedAiModels: string[];
+  allowExport: boolean;
+  isPopular: boolean;
   aiEnabled: boolean;
   ragEnabled: boolean;
   whiteLabel: boolean;
@@ -382,9 +498,21 @@ function EditPlanModal({ plan, onClose }: { plan: Plan | null; onClose: () => vo
       priceAnnual: plan.priceAnnual,
       maxContacts: plan.maxContacts,
       maxMsgPerMonth: plan.maxMsgPerMonth,
+      maxMsgPerDay: plan.maxMsgPerDay ?? 0,
+      maxMsgPerHour: plan.maxMsgPerHour ?? 0,
       maxAgents: plan.maxAgents,
       maxCampaigns: plan.maxCampaigns,
       maxFlows: plan.maxFlows,
+      maxBusinesses: plan.maxBusinesses ?? 1,
+      maxKnowledgeDocs: plan.maxKnowledgeDocs ?? 0,
+      maxTemplates: plan.maxTemplates ?? 0,
+      maxQuickReplies: plan.maxQuickReplies ?? 0,
+      maxCampaignRecipients: plan.maxCampaignRecipients ?? 0,
+      maxUploadMb: plan.maxUploadMb ?? 10,
+      retentionDays: plan.retentionDays ?? 0,
+      allowedAiModels: plan.allowedAiModels ?? [],
+      allowExport: plan.allowExport ?? true,
+      isPopular: plan.isPopular ?? false,
       aiEnabled: plan.aiEnabled,
       ragEnabled: plan.ragEnabled,
       whiteLabel: plan.whiteLabel,
@@ -402,14 +530,33 @@ function EditPlanModal({ plan, onClose }: { plan: Plan | null; onClose: () => vo
   const toggle = (key: keyof PlanForm) => () =>
     setForm((f) => (f ? { ...f, [key]: !f[key] } : f));
 
-  const numberFields: { key: keyof PlanForm; label: string }[] = [
+  // `hint` is set on every field whose 0 means unlimited rather than none, so an
+  // admin typing 0 knows which of the two they are choosing before they save.
+  const numberFields: { key: keyof PlanForm; label: string; hint?: string }[] = [
     { key: "priceMonthly", label: "Monthly price (₹)" },
     { key: "priceAnnual", label: "Annual price (₹)" },
+    { key: "maxBusinesses", label: "Max businesses", hint: "Separate WhatsApp numbers. 0 = unlimited." },
     { key: "maxContacts", label: "Max contacts" },
     { key: "maxMsgPerMonth", label: "Max messages / month" },
+    { key: "maxMsgPerDay", label: "Max messages / day", hint: "Rolling 24h, outbound only. 0 = unlimited." },
+    { key: "maxMsgPerHour", label: "Max messages / hour", hint: "Rolling 60m, outbound only. 0 = unlimited." },
     { key: "maxAgents", label: "Max agents" },
     { key: "maxCampaigns", label: "Max campaigns" },
     { key: "maxFlows", label: "Max chatbot flows" },
+    { key: "maxKnowledgeDocs", label: "Max knowledge base docs", hint: "PDFs, docs and URLs. 0 = unlimited." },
+    { key: "maxTemplates", label: "Max message templates", hint: "0 = unlimited." },
+    { key: "maxQuickReplies", label: "Max quick replies", hint: "0 = unlimited." },
+    {
+      key: "maxCampaignRecipients",
+      label: "Max recipients / campaign",
+      hint: "Audience of a single send. 0 = unlimited.",
+    },
+    { key: "maxUploadMb", label: "Max upload size (MB)", hint: "Per file. 0 = unlimited." },
+    {
+      key: "retentionDays",
+      label: "Message retention (days)",
+      hint: "Older messages are deleted nightly. 0 = keep forever.",
+    },
   ];
 
   const toggles: { key: keyof PlanForm; label: string }[] = [
@@ -417,6 +564,7 @@ function EditPlanModal({ plan, onClose }: { plan: Plan | null; onClose: () => vo
     { key: "ragEnabled", label: "Knowledge base (RAG)" },
     { key: "advancedAi", label: "Advanced AI" },
     { key: "whiteLabel", label: "White label" },
+    { key: "allowExport", label: "CSV export" },
   ];
 
   return (
@@ -454,9 +602,70 @@ function EditPlanModal({ plan, onClose }: { plan: Plan | null; onClose: () => vo
                 onChange={setNum(n.key)}
                 className={inputClass}
               />
+              {n.hint && <p className="mt-1 text-[11px] text-slate-500">{n.hint}</p>}
             </Field>
           ))}
         </div>
+
+        <Field label="Allowed AI models" htmlFor="p-models">
+          <input
+            id="p-models"
+            value={form.allowedAiModels.join(", ")}
+            onChange={(e) =>
+              setForm((f) =>
+                f
+                  ? {
+                      ...f,
+                      // Split on save rather than on every keystroke, so a
+                      // half-typed name is not turned into an entry the moment
+                      // the admin reaches for the comma.
+                      allowedAiModels: e.target.value
+                        .split(",")
+                        .map((m) => m.trim())
+                        .filter(Boolean),
+                    }
+                  : f,
+              )
+            }
+            placeholder="gpt-4o-mini, claude-haiku-4-5-20251001"
+            className={cn(inputClass, "font-mono text-xs")}
+          />
+          <p className="mt-1 text-[11px] text-slate-500">
+            Comma-separated. Leave empty to allow any model.
+          </p>
+        </Field>
+
+        {/* Presentation, not entitlement — kept out of the feature box below so
+            it does not read as something the tier grants. */}
+        <label className="flex cursor-pointer items-center justify-between gap-3 rounded-lg border border-violet-200 bg-violet-50/50 p-3">
+          <span>
+            <span className="text-sm font-medium text-violet-900">
+              Pin the &ldquo;Most Popular&rdquo; badge here
+            </span>
+            <span className="mt-0.5 block text-[11px] text-violet-700/80">
+              Off by default, the badge goes to whichever plan has the most subscribers
+              (Growth if there is no clear leader). Pin it to override that. Only one plan
+              can hold the pin.
+            </span>
+          </span>
+          <button
+            type="button"
+            role="switch"
+            aria-checked={form.isPopular}
+            onClick={toggle("isPopular")}
+            className={cn(
+              "relative h-5 w-9 shrink-0 rounded-full transition",
+              form.isPopular ? "bg-violet-600" : "bg-slate-300",
+            )}
+          >
+            <span
+              className={cn(
+                "absolute top-0.5 h-4 w-4 rounded-full bg-white transition-all",
+                form.isPopular ? "left-4.5" : "left-0.5",
+              )}
+            />
+          </button>
+        </label>
 
         <div className="space-y-2 rounded-lg border border-slate-200 p-3">
           {toggles.map((t) => (

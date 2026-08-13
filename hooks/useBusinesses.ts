@@ -2,6 +2,7 @@
 
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useRouter } from "next/navigation";
+import { throwApiError } from "@/lib/billing/limits";
 
 // Mirrors publicBusiness() in lib/business.ts — the encrypted access/verify tokens
 // are never sent to the client, only boolean flags saying whether they are set.
@@ -104,7 +105,10 @@ export function useCreateBusiness() {
         body: JSON.stringify(data),
       });
       const json = await res.json();
-      if (!res.ok) throw new Error(json.error ?? "Failed to create business");
+      // Plan limits come back as a typed LimitError so the caller can open the
+      // upgrade dialog; everything else stays a plain Error for the form's
+      // inline message. See lib/billing/limits.ts.
+      if (!res.ok) throwApiError(json, "Failed to create business");
       return json;
     },
     onSuccess: () => {

@@ -21,6 +21,7 @@ import { MessageDirection, MessageStatus, MessageType } from "@prisma/client";
 import type { Prisma } from "@prisma/client";
 import type { Contact, Conversation, Message } from "@prisma/client";
 import { auth } from "@/lib/auth";
+import { guardLimit } from "@/lib/billing/guard";
 import { prisma } from "@/lib/prisma";
 import { pusher, tenantChannel, PusherEvent } from "@/lib/pusher";
 import { sendTextMessage, sendInteractiveMessage } from "@/lib/whatsapp";
@@ -260,6 +261,15 @@ export async function POST(req: NextRequest) {
       const note = await saveNote(tenantId, conversationId, userId, body ?? "");
       await broadcastMessage(tenantId, note);
       return NextResponse.json({ success: true, data: note }, { status: 201 });
+    }
+
+    // Throughput caps, checked only on the path that actually reaches WhatsApp —
+    // the note branch above has already returned. Both windows are asserted
+    // before the send rather than after, so a refusal costs the tenant nothing:
+    // no Meta conversation is opened and no Message row is written.
+    for (const window of ["messagesPerHour", "messagesPerDay"] as const) {
+      const overLimit = await guardLimit(tenantId, window);
+      if (overLimit) return overLimit;
     }
 
     const creds = await resolveWhatsAppCreds(conversation.businessId);

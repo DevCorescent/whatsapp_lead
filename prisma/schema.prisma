@@ -359,9 +359,9 @@ model Conversation {
   updatedAt          DateTime           @updatedAt
 
   // Chatbot flow session — null when no flow is active
-  activeFlowId   String?
-  activeNodeId   String?
-  flowVars       Json?
+  activeFlowId String?
+  activeNodeId String?
+  flowVars     Json?
 
   businessId String
   business   Business  @relation(fields: [businessId], references: [id], onDelete: Cascade)
@@ -408,6 +408,10 @@ model Message {
   @@index([conversationId, createdAt])
   @@index([tenantId])
   @@index([businessId])
+  // Every outbound send counts the last hour and the last day before it is
+  // allowed through. On @@index([tenantId]) alone that is a scan of the whole
+  // tenant's history to answer a question about the last sixty minutes.
+  @@index([tenantId, direction, createdAt])
   @@map("messages")
 }
 
@@ -515,23 +519,23 @@ model LeadActivity {
 // ─── MESSAGE TEMPLATE ─────────────────────────────────────────────────────────
 
 model MessageTemplate {
-  id            String   @id @default(cuid())
-  tenantId      String
-  name          String
-  category      String
-  language      String   @default("en")
-  headerType    String?
-  headerContent String?
-  body          String
-  footer        String?
-  buttons       Json?
-  variables     String[]
+  id              String    @id @default(cuid())
+  tenantId        String
+  name            String
+  category        String
+  language        String    @default("en")
+  headerType      String?
+  headerContent   String?
+  body            String
+  footer          String?
+  buttons         Json?
+  variables       String[]
   waTemplateId    String?
-  status          String   @default("PENDING")
+  status          String    @default("PENDING")
   rejectionReason String?
   lastSyncedAt    DateTime?
-  createdAt       DateTime @default(now())
-  updatedAt       DateTime @updatedAt
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
 
   businessId String
   business   Business   @relation(fields: [businessId], references: [id], onDelete: Cascade)
@@ -680,8 +684,8 @@ model KnowledgeDoc {
 // ─── PLAN ────────────────────────────────────────────────────────────────────
 
 model Plan {
-  id             String   @id @default(cuid())
-  name           String   @unique
+  id             String  @id @default(cuid())
+  name           String  @unique
   displayName    String
   description    String?
   priceMonthly   Float
@@ -690,19 +694,59 @@ model Plan {
   maxMsgPerMonth Int
   maxAgents      Int
   maxCampaigns   Int
-  maxFlows       Int      @default(5)
-  maxStorageMb   Int      @default(1024)
-  aiCredits      Int      @default(0)
-  stripePriceId  String?
-  aiEnabled      Boolean  @default(false)
-  ragEnabled     Boolean  @default(false)
-  whiteLabel     Boolean  @default(false)
-  advancedAi     Boolean  @default(false)
-  features       String[]
-  isActive       Boolean  @default(true)
-  sortOrder      Int      @default(0)
-  createdAt      DateTime @default(now())
-  updatedAt      DateTime @updatedAt
+  maxFlows       Int     @default(5)
+  maxStorageMb   Int     @default(1024)
+  aiCredits      Int     @default(0)
+
+  // Throughput caps, checked per rolling window on every outbound send. 0 means
+  // unlimited (see isUnlimited), which is what an existing row backfills to —
+  // adding the columns must not start refusing sends for tenants already live.
+  maxMsgPerDay  Int @default(0)
+  maxMsgPerHour Int @default(0)
+
+  // Capacity caps. maxBusinesses defaults to 1 because that is what an account
+  // gets without paying for more; a tenant already over it keeps every business
+  // it has and is only stopped from creating the next one.
+  maxBusinesses    Int @default(1)
+  maxKnowledgeDocs Int @default(0)
+  maxTemplates     Int @default(0)
+  maxQuickReplies  Int @default(0)
+
+  // Per-request ceilings rather than running totals: these bound one campaign or
+  // one file, and are compared against the request itself, not against history.
+  maxCampaignRecipients Int @default(0)
+  maxUploadMb           Int @default(10)
+
+  // Days of message history kept before /api/cron/retention deletes it. 0 keeps
+  // everything forever, which is what every existing row backfills to — adding
+  // the column must never silently start destroying customer conversations.
+  retentionDays Int @default(0)
+
+  // Empty means "any model". Non-empty restricts which values a tenant may store
+  // in Business.aiModel / TenantSettings.aiModel — the lever on inference cost,
+  // since that column is otherwise free text pointing at whatever is priciest.
+  allowedAiModels String[]
+
+  allowExport Boolean @default(true)
+
+  // Which card wears the "Most Popular" ribbon. Presentation, not entitlement —
+  // it changes nothing about what the tier grants. Kept to at most one row by
+  // the admin write routes rather than by a constraint: Postgres can express
+  // "unique among rows where isPopular" with a partial index, but that turns
+  // promoting a different plan into a two-statement dance every caller has to
+  // get right, and a ribbon on two cards is a cosmetic bug, not a corrupt row.
+  isPopular Boolean @default(false)
+
+  stripePriceId String?
+  aiEnabled     Boolean  @default(false)
+  ragEnabled    Boolean  @default(false)
+  whiteLabel    Boolean  @default(false)
+  advancedAi    Boolean  @default(false)
+  features      String[]
+  isActive      Boolean  @default(true)
+  sortOrder     Int      @default(0)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
 
   subscriptions Subscription[]
 

@@ -32,6 +32,7 @@ import { prisma } from "@/lib/prisma";
 import { ensureDefaultBusiness, resolveWhatsAppCreds } from "@/lib/business";
 import { decryptSecret } from "@/lib/crypto";
 import { generateReply } from "@/lib/ai";
+import { hasCapacity, incrementAiUsage, planAllows } from "@/lib/billing/usage";
 import { retrieveContext } from "@/lib/rag";
 import { pusher, tenantChannel, PusherEvent } from "@/lib/pusher";
 import { markMessageAsRead, sendTextMessage } from "@/lib/whatsapp";
@@ -210,20 +211,27 @@ export async function resolveTenantById(
  * did nothing. Business flags win when set; otherwise we fall back to the tenant row.
  */
 async function resolveAutoReplyConfig(tenant: ResolvedTenant) {
-  const business = await prisma.business.findUnique({
-    where: { id: tenant.businessId },
-    select: {
-      aiEnabled: true,
-      autoReply: true,
-      autoReplyDelay: true,
-      aiModel: true,
-      aiPersonality: true,
-      aiSystemPrompt: true,
-      name: true,
-    },
-  });
+  const [business, planAi] = await Promise.all([
+    prisma.business.findUnique({
+      where: { id: tenant.businessId },
+      select: {
+        aiEnabled: true,
+        autoReply: true,
+        autoReplyDelay: true,
+        aiModel: true,
+        aiPersonality: true,
+        aiSystemPrompt: true,
+        name: true,
+      },
+    }),
+    planAllows(tenant.tenantId, "aiEnabled"),
+  ]);
 
-  const aiEnabled = Boolean(business?.aiEnabled || tenant.aiEnabled);
+  // The workspace switches are only half the answer. Nothing stops a tenant on a
+  // tier without AI from turning `aiEnabled` on in Business settings, so the plan
+  // is ANDed in here — the one place both auto-reply paths (the immediate one and
+  // the delayed worker) already read their config from, so neither can miss it.
+  const aiEnabled = planAi && Boolean(business?.aiEnabled || tenant.aiEnabled);
   const autoReply = Boolean(business?.autoReply || tenant.autoReply);
 
   return {
@@ -990,8 +998,14 @@ export async function handleAutoReply(
   }
 
   // RAG: ground the reply in the tenant's knowledge base, scoped to what the customer just asked.
+  // Skipped entirely on a tier without it — the reply still goes out, ungrounded,
+  // because refusing to answer the customer would punish them for their vendor's
+  // billing tier. Retrieval is also the expensive half (embedding + vector search),
+  // so not running it is the saving the gate exists to make.
   const lastCustomerMsg = [...history].reverse().find((m) => m.role === "user")?.content ?? "";
-  const knowledgeContext = await retrieveContext(tenant.tenantId, tenant.businessId, lastCustomerMsg);
+  const knowledgeContext = (await planAllows(tenant.tenantId, "ragEnabled"))
+    ? await retrieveContext(tenant.tenantId, tenant.businessId, lastCustomerMsg)
+    : "";
 
   const personality = cfg.aiPersonality?.trim() || DEFAULT_AI_PERSONALITY;
 
@@ -1012,6 +1026,18 @@ export async function handleAutoReply(
     )
     .digest("hex");
 
+  // AI credits are the one allowance with a real per-unit cost behind it. An
+  // exhausted tenant simply gets no auto-reply: the customer's message is still
+  // stored and still visible in the inbox for an agent to answer by hand, which
+  // is the same outcome as having auto-reply switched off.
+  if (!(await hasCapacity(tenant.tenantId, "ai"))) {
+    console.log("[INBOUND] Skipping AI reply — plan AI credits exhausted", {
+      conversationId: conversation.id,
+      tenantId: tenant.tenantId,
+    });
+    return;
+  }
+
   let reply: string;
   try {
     console.log("[INBOUND] Generating AI reply", {
@@ -1020,9 +1046,14 @@ export async function handleAutoReply(
       model: cfg.aiModel,
     });
     reply = (
-      await cachedAiReply(cacheKey, () =>
-        generateReply(history, personality, knowledgeContext, cfg.aiModel)
-      )
+      // Metered inside the cache factory, not around it: a cache hit costs no
+      // model call, so charging a credit for one would bill the tenant for work
+      // that never happened.
+      await cachedAiReply(cacheKey, async () => {
+        const draft = await generateReply(history, personality, knowledgeContext, cfg.aiModel);
+        await incrementAiUsage(tenant.tenantId);
+        return draft;
+      })
     ).trim();
   } catch (error) {
     console.error(

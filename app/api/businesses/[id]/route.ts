@@ -9,6 +9,8 @@
 // ============================================================================
 
 import { NextRequest, NextResponse } from "next/server";
+import { guardFeature } from "@/lib/billing/guard";
+import { modelAllowed, resolveTenantPlan } from "@/lib/billing/usage";
 import { getBusinessScope, publicBusiness, CURRENT_BUSINESS_COOKIE } from "@/lib/business";
 import { invalidateCredsCache, invalidateTenantCache } from "@/lib/cache";
 import { prisma } from "@/lib/prisma";
@@ -44,6 +46,27 @@ export async function PATCH(req: NextRequest, { params }: Params) {
   }
 
   const { whatsappAccessToken, whatsappPhoneNumberId, logo, ...rest } = parsed.data;
+
+  // The Businesses page is the second way into both of these — /api/settings/ai
+  // is the first — so the same two checks live here. Without them, a tenant can
+  // simply switch workspaces to escape the gate.
+  if (rest.aiEnabled === true) {
+    const denied = await guardFeature(scope.tenantId, "aiEnabled");
+    if (denied) return denied;
+  }
+
+  if (rest.aiModel) {
+    const { grants, planName } = await resolveTenantPlan(scope.tenantId);
+    if (!modelAllowed(grants, rest.aiModel)) {
+      return NextResponse.json(
+        {
+          success: false,
+          error: `The ${planName} plan cannot use "${rest.aiModel}". Available models: ${grants.allowedAiModels.join(", ")}.`,
+        },
+        { status: 403 },
+      );
+    }
+  }
 
   if (whatsappAccessToken) {
     const cleaned = sanitizeWhatsAppToken(whatsappAccessToken);

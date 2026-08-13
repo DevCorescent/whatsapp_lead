@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { auth } from "@/lib/auth";
+import { guardFeature } from "@/lib/billing/guard";
 import { invalidateCredsCache, invalidateTenantCache } from "@/lib/cache";
 import { encryptSecret, isMetaAccessToken, sanitizeWhatsAppToken } from "@/lib/crypto";
 import { prisma } from "@/lib/prisma";
@@ -175,12 +176,20 @@ export async function PATCH(req: NextRequest) {
       }
     }
 
-    // Also allow updating tenant name/logo via same endpoint
+    // Also allow updating tenant name/logo via same endpoint. The name is just
+    // what the workspace is called; the logo and custom domain are the white
+    // label, so those two are gated while renaming stays free on every tier.
     const tenantBody = body as Record<string, unknown>;
-    if (tenantBody.tenantName || tenantBody.logo) {
-      const tenantData: { name?: string; logo?: string } = {};
+    if (tenantBody.logo || tenantBody.domain) {
+      const denied = await guardFeature(tenantId, "whiteLabel");
+      if (denied) return denied;
+    }
+
+    if (tenantBody.tenantName || tenantBody.logo || tenantBody.domain) {
+      const tenantData: { name?: string; logo?: string; domain?: string } = {};
       if (tenantBody.tenantName) tenantData.name = String(tenantBody.tenantName);
       if (tenantBody.logo) tenantData.logo = String(tenantBody.logo);
+      if (tenantBody.domain) tenantData.domain = String(tenantBody.domain);
       await prisma.tenant.update({ where: { id: tenantId }, data: tenantData });
     }
 

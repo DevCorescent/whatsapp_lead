@@ -4,6 +4,8 @@ import { useState, useRef, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { Building2, ChevronsUpDown, Check, Plus, Settings2, Loader2 } from "lucide-react";
 import { Modal, Field, Button, inputClass } from "@/components/ui";
+import { UpgradeModal } from "@/components/billing/UpgradeModal";
+import { upgradeReasonOf, type UpgradeReason } from "@/lib/billing/limits";
 import {
   useBusinesses,
   useSwitchBusiness,
@@ -34,6 +36,7 @@ export function BusinessSwitcher({
   const [creating, setCreating] = useState(false);
   const [name, setName] = useState("");
   const [error, setError] = useState<string | null>(null);
+  const [upgrade, setUpgrade] = useState<UpgradeReason | null>(null);
   const ref = useRef<HTMLDivElement>(null);
 
   const businesses = data?.data ?? [];
@@ -69,6 +72,15 @@ export function BusinessSwitcher({
       if (created?.id) switchBusiness.mutate(created.id);
       else router.refresh();
     } catch (err) {
+      // A plan refusal is not a form validation failure — it says nothing about
+      // the name they typed — so it closes the form and opens the upgrade dialog
+      // instead of turning the field red.
+      const reason = upgradeReasonOf(err);
+      if (reason) {
+        setCreating(false);
+        setUpgrade(reason);
+        return;
+      }
       setError(err instanceof Error ? err.message : "Failed to create business");
     }
   };
@@ -192,6 +204,8 @@ export function BusinessSwitcher({
           </div>
         </form>
       </Modal>
+
+      <UpgradeModal reason={upgrade} onClose={() => setUpgrade(null)} />
     </div>
   );
 }

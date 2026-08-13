@@ -1,11 +1,15 @@
 import { NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
+import { guardFeature } from "@/lib/billing/guard";
 import { prisma } from "@/lib/prisma";
 
 export async function GET() {
   const session = await auth();
   if (!session?.user) return NextResponse.json({ success: false, error: "Unauthorized" }, { status: 401 });
   const { tenantId } = session.user;
+
+  const denied = await guardFeature(tenantId, "allowExport");
+  if (denied) return denied;
 
   const contacts = await prisma.contact.findMany({
     where: { tenantId, isBlocked: false },
