@@ -6,6 +6,7 @@ import {
   AlertCircle,
   Check,
   CheckCircle2,
+  ClipboardList,
   Copy,
   Eye,
   EyeOff,
@@ -53,7 +54,9 @@ export function WhatsAppTab() {
   const [verifyToken, setVerifyToken] = useState("");
   const [showKey, setShowKey] = useState(false);
   const [showSecret, setShowSecret] = useState(false);
-  const [copied, setCopied] = useState(false);
+  // Which button was pressed, not merely that one was — two copy buttons sharing
+  // a boolean would both flash "Copied" whichever you clicked.
+  const [copied, setCopied] = useState<"url" | "setup" | null>(null);
   const [saved, setSaved] = useState(false);
   const [testing, setTesting] = useState(false);
   const [testResult, setTestResult] = useState<TestResult | null>(null);
@@ -71,16 +74,49 @@ export function WhatsAppTab() {
 
   const connected = Boolean(phoneNumberId && apiKey);
 
-  const webhookUrl =
-    typeof window !== "undefined"
-      ? `${window.location.origin}/api/webhook/whatsapp`
-      : "/api/webhook/whatsapp";
+  /**
+   * The origin Meta has to reach, which is not necessarily the one this browser
+   * is on. An agent configuring the webhook from localhost needs the deployed
+   * URL — pasting http://localhost:3000 into Meta's console produces a callback
+   * that silently never fires, and the field looked authoritative while doing it.
+   *
+   * NEXT_PUBLIC_APP_URL is the same value lib/queue.ts uses to address its own
+   * workers, so if it is wrong the app is already broken in louder ways than this.
+   */
+  const appOrigin =
+    process.env.NEXT_PUBLIC_APP_URL?.replace(/\/+$/, "") ||
+    (typeof window !== "undefined" ? window.location.origin : "");
+  const webhookUrl = `${appOrigin}/api/webhook/whatsapp`;
 
-  const copy = async () => {
+  /**
+   * The four values Meta's webhook config asks for, in the order it asks for them.
+   *
+   * Only these four: they are the fields stored as plaintext. The API key and App
+   * Secret are held encrypted and this form receives them still encrypted, so
+   * including them would put an `enc:v1:…` blob on the clipboard that looks like
+   * a credential and is rejected by Meta.
+   *
+   * Blank fields are dropped rather than emitted empty — a line reading
+   * "Phone Number ID:" with nothing after it reads as a failed copy rather than
+   * as a field nobody filled in.
+   */
+  const setupRows: [string, string][] = [
+    ["Callback URL", webhookUrl],
+    ["Verify token", verifyToken],
+    ["Phone Number ID", phoneNumberId],
+    ["Business Account ID", businessAccountId],
+  ];
+  const setupDetails = setupRows
+    .filter(([, value]) => value.trim())
+    .map(([label, value]) => `${label}: ${value.trim()}`)
+    .join("\n");
+
+  const copyText = async (key: "url" | "setup", text: string) => {
+    if (!text) return;
     try {
-      await navigator.clipboard.writeText(webhookUrl);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
+      await navigator.clipboard.writeText(text);
+      setCopied(key);
+      setTimeout(() => setCopied(null), 2000);
     } catch { /* ignore */ }
   };
 
@@ -204,10 +240,28 @@ export function WhatsAppTab() {
 
       {/* Credentials form */}
       <Card className="p-5">
-        <h2 className="font-semibold text-slate-900">Meta credentials</h2>
-        <p className="mt-0.5 text-sm text-slate-500">
-          Find these in Meta Business Suite → WhatsApp → API Setup.
-        </p>
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <h2 className="font-semibold text-slate-900">Meta credentials</h2>
+            <p className="mt-0.5 text-sm text-slate-500">
+              Find these in Meta Business Suite → WhatsApp → API Setup.
+            </p>
+          </div>
+          <Button
+            type="button"
+            variant="secondary"
+            size="sm"
+            onClick={() => copyText("setup", setupDetails)}
+            disabled={!setupDetails}
+            title="Copies the callback URL, verify token, Phone Number ID and Business Account ID. Secrets are not included."
+          >
+            {copied === "setup" ? (
+              <><Check className="h-4 w-4 text-emerald-600" /> Copied</>
+            ) : (
+              <><ClipboardList className="h-4 w-4" /> Copy setup details</>
+            )}
+          </Button>
+        </div>
 
         <div className="mt-5 space-y-4">
           <div className="grid gap-4 sm:grid-cols-2">
@@ -285,8 +339,8 @@ export function WhatsAppTab() {
                 value={webhookUrl}
                 className={cn(inputClass, "bg-slate-50 font-mono text-xs text-slate-600")}
               />
-              <Button type="button" variant="secondary" onClick={copy}>
-                {copied ? <><Check className="h-4 w-4 text-emerald-600" /> Copied</> : <><Copy className="h-4 w-4" /> Copy</>}
+              <Button type="button" variant="secondary" onClick={() => copyText("url", webhookUrl)}>
+                {copied === "url" ? <><Check className="h-4 w-4 text-emerald-600" /> Copied</> : <><Copy className="h-4 w-4" /> Copy</>}
               </Button>
             </div>
             <p className="mt-1.5 text-xs text-slate-500">
