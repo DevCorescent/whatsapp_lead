@@ -23,12 +23,19 @@ export interface ScoredPoint {
   payload?: Record<string, unknown> | null;
 }
 
+/** One page of a scroll: the points, plus the cursor to pass back for the next page. */
+export interface ScrollPage {
+  points: { id: string | number; payload?: Record<string, unknown> | null }[];
+  nextOffset: string | number | null;
+}
+
 interface QdrantRestClient {
   getCollections(): Promise<{ collections: { name: string }[] }>;
   createCollection(name: string, body: { vectors: { size: number; distance: string } }): Promise<void>;
   createPayloadIndex(name: string, body: { field_name: string; field_schema: string }): Promise<void>;
   upsert(name: string, body: { wait?: boolean; points: unknown[] }): Promise<void>;
   search(name: string, body: Record<string, unknown>): Promise<ScoredPoint[]>;
+  scroll(name: string, body: Record<string, unknown>): Promise<ScrollPage>;
   delete(name: string, body: { wait?: boolean; filter: unknown }): Promise<void>;
 }
 
@@ -94,6 +101,21 @@ function makeClient(): QdrantRestClient {
     async search(name, body) {
       const json = await call<{ result?: ScoredPoint[] }>(`/collections/${enc(name)}/points/search`, "POST", body);
       return json.result ?? [];
+    },
+    // Retrieve points by filter rather than by similarity — used to read a document's own
+    // chunks back out in order. `search` cannot do this: it needs a query vector and ranks by
+    // distance, so it would neither return every chunk nor keep them in document order.
+    async scroll(name, body) {
+      const json = await call<{
+        result?: {
+          points?: { id: string | number; payload?: Record<string, unknown> | null }[];
+          next_page_offset?: string | number | null;
+        };
+      }>(`/collections/${enc(name)}/points/scroll`, "POST", body);
+      return {
+        points: json.result?.points ?? [],
+        nextOffset: json.result?.next_page_offset ?? null,
+      };
     },
     async delete(name, body) {
       await call(`/collections/${enc(name)}/points/delete${waitQuery(body.wait)}`, "POST", { filter: body.filter });

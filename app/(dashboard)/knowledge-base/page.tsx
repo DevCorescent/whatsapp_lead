@@ -13,6 +13,9 @@ import {
   Link2,
   Layers,
   Sparkles,
+  ChevronDown,
+  HelpCircle,
+  RefreshCw,
 } from "lucide-react";
 import type { KnowledgeDoc } from "@prisma/client";
 import {
@@ -26,6 +29,7 @@ import {
   Skeleton,
   inputClass,
 } from "@/components/ui";
+import { readFaqState } from "@/lib/knowledgeFaq";
 import { cn, formatDate } from "@/lib/utils";
 
 
@@ -82,6 +86,114 @@ function readSize(doc: KnowledgeDoc): string {
     if (typeof raw === "string") return raw;
   }
   return "—";
+}
+
+/**
+ * The FAQs generated from one document, shown under that document.
+ *
+ * Read straight off `doc.metadata`, which the list already fetched — the ingest worker writes them
+ * once when the document is indexed, so the common case costs no extra request and no model call.
+ * The button is for what that leaves behind: documents indexed before FAQs existed, the occasional
+ * generation that failed, and a set the user wants rewritten.
+ */
+function DocFaqs({ doc }: { doc: KnowledgeDoc }) {
+  const queryClient = useQueryClient();
+  const [open, setOpen] = useState(false);
+  const { faqs, error, truncated } = readFaqState(doc.metadata);
+
+  const generate = useMutation({
+    mutationFn: async (force: boolean) => {
+      const res = await fetch(`/api/knowledge/${doc.id}/faqs`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ force }),
+      });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error((json as { error?: string }).error ?? "Could not generate FAQs");
+      return json;
+    },
+    onSuccess: () => {
+      setOpen(true);
+      queryClient.invalidateQueries({ queryKey: ["knowledge"] });
+    },
+  });
+
+  // Nothing to ask about until the document is actually in the index.
+  if (!doc.isIndexed) return null;
+
+  const failure = (generate.error as Error | null)?.message ?? error;
+
+  return (
+    <div className="mt-3 border-t border-slate-100 pt-3">
+      {faqs.length > 0 ? (
+        <>
+          <button
+            type="button"
+            onClick={() => setOpen((v) => !v)}
+            aria-expanded={open}
+            className="flex w-full items-center justify-between gap-2 text-left text-xs font-medium text-slate-700 hover:text-emerald-700"
+          >
+            <span className="inline-flex items-center gap-1.5">
+              <HelpCircle className="h-3.5 w-3.5 text-emerald-600" />
+              {faqs.length} FAQ{faqs.length === 1 ? "" : "s"} from this document
+            </span>
+            <ChevronDown
+              className={cn("h-3.5 w-3.5 shrink-0 text-slate-400 transition", open && "rotate-180")}
+            />
+          </button>
+
+          {open && (
+            <>
+              {/* Said plainly, because six confident FAQs off a 200-page manual otherwise read
+                  as the whole of what the document can answer. Retrieval still searches all of
+                  it — only these questions are drawn from the opening sections. */}
+              {truncated && (
+                <p className="mt-2 rounded-lg bg-amber-50 px-2.5 py-1.5 text-xs text-amber-800 ring-1 ring-inset ring-amber-600/20">
+                  This document is long — these questions come from its opening sections. The AI
+                  still searches the whole document when answering.
+                </p>
+              )}
+              <ul className="mt-2 space-y-2">
+                {faqs.map((faq, i) => (
+                  <li key={i} className="rounded-lg bg-slate-50 px-2.5 py-2">
+                    <p className="text-xs font-medium text-slate-800">{faq.question}</p>
+                    <p className="mt-0.5 text-xs leading-relaxed text-slate-600">{faq.answer}</p>
+                  </li>
+                ))}
+              </ul>
+              <button
+                type="button"
+                disabled={generate.isPending}
+                onClick={() => generate.mutate(true)}
+                className="mt-2 inline-flex items-center gap-1 text-xs font-medium text-slate-500 hover:text-emerald-700 disabled:opacity-50"
+              >
+                <RefreshCw className={cn("h-3 w-3", generate.isPending && "animate-spin")} />
+                {generate.isPending ? "Regenerating…" : "Regenerate"}
+              </button>
+            </>
+          )}
+        </>
+      ) : (
+        <button
+          type="button"
+          disabled={generate.isPending}
+          onClick={() => generate.mutate(false)}
+          className="inline-flex items-center gap-1.5 text-xs font-medium text-emerald-700 hover:text-emerald-800 disabled:opacity-50"
+        >
+          {generate.isPending ? (
+            <Loader2 className="h-3.5 w-3.5 animate-spin" />
+          ) : (
+            <HelpCircle className="h-3.5 w-3.5" />
+          )}
+          {generate.isPending ? "Reading the document…" : "Generate FAQs"}
+        </button>
+      )}
+
+      {failure && !generate.isPending && (
+        <p className="mt-1.5 text-xs text-rose-600">{failure}</p>
+      )}
+    </div>
+  );
 }
 
 export default function KnowledgeBasePage() {
@@ -161,7 +273,9 @@ export default function KnowledgeBasePage() {
           />
         </Card>
       ) : (
-        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+        // items-start so expanding one document's FAQs grows that card only, instead of
+        // stretching every other card in the row to match it.
+        <div className="grid items-start gap-4 sm:grid-cols-2 lg:grid-cols-3">
           {docs.map((doc) => {
             const isDeleting = deleteMutation.isPending && deleteMutation.variables === doc.id;
             return (
@@ -226,6 +340,8 @@ export default function KnowledgeBasePage() {
                   <span className="text-slate-400">{readSize(doc)}</span>
                 </div>
                 <p className="mt-1.5 text-xs text-slate-400">Uploaded {formatDate(doc.createdAt)}</p>
+
+                <DocFaqs doc={doc} />
               </Card>
             );
           })}

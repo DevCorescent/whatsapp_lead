@@ -3,9 +3,10 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { prisma } from "@/lib/prisma";
 import { guardCeiling, guardFeature, guardLimit } from "@/lib/billing/guard";
-import { resolveTenantPlan } from "@/lib/billing/usage";
+import { hasCapacity, incrementAiUsage, planAllows, resolveTenantPlan } from "@/lib/billing/usage";
 import { getBusinessScope } from "@/lib/business";
 import { extractDocumentText, ingestDocument, type DocType } from "@/lib/rag";
+import { generateDocFaqs } from "@/lib/knowledgeFaq.server";
 import { publishKnowledgeIngest } from "@/lib/queue";
 
 const createDocSchema = z.object({
@@ -221,6 +222,33 @@ async function storeAndQueue(params: {
       text: extracted,
       filename: name,
     });
+
+    // Same FAQs the queued worker generates, under the same plan gate and the same meter, so the
+    // local (SKIP_QUEUE) path produces an identical row and an identical bill. Failure only
+    // leaves the FAQ note behind — the document is still indexed.
+    let faqMeta: Record<string, unknown> = {};
+    if (chunkCount > 0 && (await planAllows(tenantId, "aiEnabled")) && (await hasCapacity(tenantId, "ai"))) {
+      try {
+        const settings = await prisma.tenantSettings.findUnique({
+          where: { tenantId },
+          select: { aiModel: true },
+        });
+        const { faqs, truncated } = await generateDocFaqs({
+          name,
+          content: extracted,
+          model: settings?.aiModel,
+        });
+        await incrementAiUsage(tenantId);
+        faqMeta = {
+          faqs,
+          faqsGeneratedAt: new Date().toISOString(),
+          ...(truncated && { faqsTruncated: true }),
+        };
+      } catch (error) {
+        faqMeta = { faqsError: error instanceof Error ? error.message : "FAQ generation failed" };
+      }
+    }
+
     await prisma.knowledgeDoc.update({
       where: { id: docId },
       data: {
@@ -230,7 +258,9 @@ async function storeAndQueue(params: {
         metadata: {
           status: chunkCount > 0 ? "INDEXED" : "FAILED",
           contentHash,
+          ...(size != null && { size }),
           ...(chunkCount === 0 && { error: "No readable text found in this document." }),
+          ...faqMeta,
         },
       },
     });

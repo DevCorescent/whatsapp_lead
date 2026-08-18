@@ -282,6 +282,100 @@ export async function retrieveContext(
   }
 }
 
+/**
+ * Reassemble a document's own text from the chunks stored against it.
+ *
+ * `KnowledgeDoc.content` only started being persisted when indexing moved to the queue — the
+ * upload route needed the extracted text to survive the response. Documents ingested before that
+ * have `content = null` even though they are fully indexed, and their text exists nowhere else but
+ * the `text` payload on their vectors. Anything that wants to read a whole document (FAQ
+ * generation, for one) has to be able to get it from there or those documents are permanently
+ * opaque to it.
+ *
+ * Not a retrieval function: no query, no scoring, no threshold. It scrolls by filter, so it
+ * returns every chunk, and sorts by the `chunkIndex` written at ingest so they come back in
+ * document order rather than in whatever order the store hands them over.
+ */
+export async function fetchDocumentText(
+  tenantId: string,
+  docId: string,
+  opts: { maxChars?: number } = {},
+): Promise<string> {
+  if (!process.env.QDRANT_URL) return "";
+
+  const maxChars = opts.maxChars ?? 60_000;
+  const chunks: { index: number; text: string }[] = [];
+  let offset: string | number | null = null;
+
+  try {
+    await ensureCollection();
+
+    // Paged, because a long PDF runs to hundreds of chunks and Qdrant caps a single page.
+    // Bounded by maxChars as well as by the cursor: reading a 500-page document into memory to
+    // then truncate it would be work done only to throw away.
+    do {
+      const page = await qdrant().scroll(KB_COLLECTION, {
+        // tenantId + docId, deliberately without businessId. Unlike `retrieveContext` — which
+        // searches across a whole knowledge base and therefore must be pinned to one business —
+        // this asks for one already-identified document, and the caller has already proved it
+        // owns that row by loading it under `where: { id, tenantId, businessId }`. Adding the
+        // key here would buy no isolation and would exclude the documents that need this most:
+        // points written before business scoping existed carry no businessId at all, so a `must`
+        // on it matches none of them.
+        filter: {
+          must: [
+            { key: "tenantId", match: { value: tenantId } },
+            { key: "docId", match: { value: docId } },
+          ],
+        },
+        limit: 128,
+        with_payload: true,
+        with_vector: false,
+        ...(offset != null && { offset }),
+      });
+
+      for (const point of page.points) {
+        const text = point.payload?.text;
+        const index = point.payload?.chunkIndex;
+        if (typeof text === "string" && text) {
+          chunks.push({ index: typeof index === "number" ? index : chunks.length, text });
+        }
+      }
+
+      offset = page.nextOffset;
+    } while (offset != null && chunks.reduce((n, c) => n + c.text.length, 0) < maxChars);
+  } catch (error) {
+    // The caller decides what an empty result means; a vector-store hiccup is not its problem.
+    console.error("[RAG fetchDocumentText]", error);
+    return "";
+  }
+
+  chunks.sort((a, b) => a.index - b.index);
+
+  // Chunks overlap by design (see chunkText), so consecutive ones repeat up to `overlap`
+  // characters. Joined raw, every boundary would duplicate a sentence — harmless for retrieval,
+  // but it reads as stuttering text to anything summarising the whole document. The repeated
+  // head is detected and dropped instead.
+  let out = "";
+  for (const chunk of chunks) {
+    if (!out) {
+      out = chunk.text;
+      continue;
+    }
+    let overlap = 0;
+    const max = Math.min(300, out.length, chunk.text.length);
+    for (let n = max; n > 20; n--) {
+      if (out.endsWith(chunk.text.slice(0, n))) {
+        overlap = n;
+        break;
+      }
+    }
+    out += (overlap ? "" : "\n") + chunk.text.slice(overlap);
+  }
+
+  return out.slice(0, maxChars);
+}
+
 // ─── Deletion ────────────────────────────────────────────────────────────────
 
 /** Remove all of a document's vectors (call when a KnowledgeDoc is deleted). */

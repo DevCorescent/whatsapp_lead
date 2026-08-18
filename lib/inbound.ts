@@ -32,6 +32,7 @@ import { prisma } from "@/lib/prisma";
 import { ensureDefaultBusiness, resolveWhatsAppCreds } from "@/lib/business";
 import { decryptSecret } from "@/lib/crypto";
 import { generateReply } from "@/lib/ai";
+import { resolveSystemPrompt } from "@/lib/aiInstructions";
 import { hasCapacity, incrementAiUsage, planAllows } from "@/lib/billing/usage";
 import { retrieveContext } from "@/lib/rag";
 import { pusher, tenantChannel, PusherEvent } from "@/lib/pusher";
@@ -221,6 +222,9 @@ async function resolveAutoReplyConfig(tenant: ResolvedTenant) {
         aiModel: true,
         aiPersonality: true,
         aiSystemPrompt: true,
+        aiInstructions: true,
+        aiTemperature: true,
+        aiMaxTokens: true,
         name: true,
       },
     }),
@@ -239,10 +243,29 @@ async function resolveAutoReplyConfig(tenant: ResolvedTenant) {
     autoReply,
     autoReplyDelay: business?.autoReplyDelay ?? tenant.autoReplyDelay ?? 0,
     aiModel: business?.aiModel || tenant.aiModel,
-    aiPersonality:
-      business?.aiSystemPrompt?.trim() ||
-      business?.aiPersonality?.trim() ||
-      tenant.aiPersonality,
+    // Sampling, as configured on the AI Settings page. Null falls back to the defaults in
+    // lib/ai.ts rather than to a second copy of them here.
+    aiTemperature: business?.aiTemperature ?? null,
+    aiMaxTokens: business?.aiMaxTokens ?? null,
+    /**
+     * The compiled system prompt for this business.
+     *
+     * A function rather than a string because the greeting rule depends on whether this is the
+     * conversation's first reply, which is a property of the thread and not of the business —
+     * and this config is resolved once per business, before any thread is in hand.
+     *
+     * The structured instruction set (AI Settings > Initial Instructions) is compiled in when the
+     * business has one, carrying the old free-text prompt as additional instructions rather than
+     * dropping it. A business that never configured the new fields keeps the exact prompt it had.
+     */
+    systemPromptFor: (isFirstReply?: boolean) =>
+      resolveSystemPrompt({
+        instructions: business?.aiInstructions,
+        systemPrompt: business?.aiSystemPrompt,
+        personality: business?.aiPersonality || tenant.aiPersonality,
+        businessName: business?.name,
+        isFirstReply,
+      }),
     businessName: business?.name ?? null,
   };
 }
@@ -1007,19 +1030,39 @@ export async function handleAutoReply(
     ? await retrieveContext(tenant.tenantId, tenant.businessId, lastCustomerMsg)
     : "";
 
-  const personality = cfg.aiPersonality?.trim() || DEFAULT_AI_PERSONALITY;
+  // Whether the business has said anything at all in this thread yet — the one fact the greeting
+  // rule turns on, and the one the model cannot establish for itself once the opening messages
+  // have fallen out of AI_HISTORY_LIMIT. Counted over the whole conversation, not the window,
+  // and over every outbound message rather than only the AI's: if a human agent has already
+  // replied, the customer has been greeted and the AI opening with a greeting reads as a
+  // different person starting the conversation over.
+  const priorOutbound = await prisma.message.count({
+    where: {
+      tenantId: tenant.tenantId,
+      conversationId: conversation.id,
+      direction: MessageDirection.OUTBOUND,
+      isNote: false,
+    },
+  });
+  const isFirstReply = priorOutbound === 0;
+
+  const personality = cfg.systemPromptFor(isFirstReply).trim() || DEFAULT_AI_PERSONALITY;
 
   // Identical inputs must not be paid for twice. Everything that can change the completion goes
-  // into the key — the workspace, the model, the persona, the retrieved knowledge and the tail of
-  // the thread — so a change to any of them misses rather than serving a reply drafted for
-  // different circumstances. tenantId is in there deliberately: without it, two workspaces sharing
-  // a persona would serve each other's cached replies to an identical greeting.
+  // into the key — the workspace, the model, the persona, the sampling, the retrieved knowledge
+  // and the tail of the thread — so a change to any of them misses rather than serving a reply
+  // drafted for different circumstances. tenantId is in there deliberately: without it, two
+  // workspaces sharing a persona would serve each other's cached replies to an identical greeting.
+  // The greeting state rides in via `personality`, which differs between a first reply and a
+  // later one — so a cached opening can never be replayed mid-conversation.
   const cacheKey = createHash("sha256")
     .update(
       [
         tenant.tenantId,
         cfg.aiModel ?? "",
         personality,
+        String(cfg.aiTemperature ?? ""),
+        String(cfg.aiMaxTokens ?? ""),
         knowledgeContext,
         JSON.stringify(history.slice(-3)),
       ].join("\0")
@@ -1050,7 +1093,10 @@ export async function handleAutoReply(
       // model call, so charging a credit for one would bill the tenant for work
       // that never happened.
       await cachedAiReply(cacheKey, async () => {
-        const draft = await generateReply(history, personality, knowledgeContext, cfg.aiModel);
+        const draft = await generateReply(history, personality, knowledgeContext, cfg.aiModel, {
+          temperature: cfg.aiTemperature,
+          maxTokens: cfg.aiMaxTokens,
+        });
         await incrementAiUsage(tenant.tenantId);
         return draft;
       })

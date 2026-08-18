@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { prisma } from "@/lib/prisma";
 import { aiProviderInfo } from "@/lib/ai";
+import { aiInstructionsSchema } from "@/lib/aiInstructions";
 import { guardFeature } from "@/lib/billing/guard";
 import { modelAllowed, resolveTenantPlan } from "@/lib/billing/usage";
 import { getBusinessScope } from "@/lib/business";
@@ -17,6 +18,9 @@ const patchSchema = z.object({
   aiTemperature: z.number().min(0).max(2).optional(),
   aiMaxTokens: z.number().int().min(1).max(4096).optional(),
   aiSystemPrompt: z.string().optional(),
+  // Every field inside is required — a partial object is rejected rather than
+  // merged, so the stored set can never be half-configured. See lib/aiInstructions.ts.
+  aiInstructions: aiInstructionsSchema.optional(),
   aiResponseTone: z.string().optional(),
   offHoursMessage: z.string().optional(),
 });
@@ -36,11 +40,19 @@ export async function GET() {
       }),
       prisma.business.findUnique({
         where: { id: businessId },
-        select: { aiTemperature: true, aiMaxTokens: true, aiSystemPrompt: true, aiResponseTone: true, offHoursMessage: true },
+        select: { aiTemperature: true, aiMaxTokens: true, aiSystemPrompt: true, aiInstructions: true, aiResponseTone: true, offHoursMessage: true, name: true },
       }),
     ]);
 
-    return NextResponse.json({ success: true, data: { ...settings, ...(business ?? {}), ...aiProviderInfo() } });
+    // `name` is lifted out to `businessName` — the settings page shows it in the
+    // instructions preview, and leaving it as a bare `name` on an AI-settings
+    // payload reads like a name for the settings themselves.
+    const { name: businessName, ...businessSettings } = business ?? { name: null };
+
+    return NextResponse.json({
+      success: true,
+      data: { ...settings, ...businessSettings, businessName, ...aiProviderInfo() },
+    });
   } catch (error) {
     console.error("[SETTINGS AI GET]", error);
     return NextResponse.json({ success: false, error: "Failed to fetch AI settings" }, { status: 500 });
@@ -63,7 +75,7 @@ export async function PATCH(req: NextRequest) {
     const parsed = patchSchema.safeParse(body);
     if (!parsed.success) return NextResponse.json({ success: false, error: parsed.error.issues[0].message }, { status: 400 });
 
-    const { aiEnabled, aiModel, autoReply, autoReplyDelay, aiPersonality, aiTemperature, aiMaxTokens, aiSystemPrompt, aiResponseTone, offHoursMessage } = parsed.data;
+    const { aiEnabled, aiModel, autoReply, autoReplyDelay, aiPersonality, aiTemperature, aiMaxTokens, aiSystemPrompt, aiInstructions, aiResponseTone, offHoursMessage } = parsed.data;
 
     // Switching AI on at all requires the plan to include it, otherwise the flag
     // is written, ignored by resolveAutoReplyConfig, and the settings page shows
@@ -92,7 +104,7 @@ export async function PATCH(req: NextRequest) {
       Object.entries({ aiEnabled, aiModel, autoReply, autoReplyDelay, aiPersonality }).filter(([, v]) => v !== undefined)
     );
     const businessData = Object.fromEntries(
-      Object.entries({ aiTemperature, aiMaxTokens, aiSystemPrompt, aiResponseTone, offHoursMessage }).filter(([, v]) => v !== undefined)
+      Object.entries({ aiTemperature, aiMaxTokens, aiSystemPrompt, aiInstructions, aiResponseTone, offHoursMessage }).filter(([, v]) => v !== undefined)
     );
 
     const [settings, business] = await Promise.all([
@@ -100,8 +112,8 @@ export async function PATCH(req: NextRequest) {
         ? prisma.tenantSettings.upsert({ where: { tenantId }, create: { tenantId, ...tenantData }, update: tenantData, select: { aiEnabled: true, aiModel: true, autoReply: true, autoReplyDelay: true, aiPersonality: true } })
         : prisma.tenantSettings.findUnique({ where: { tenantId }, select: { aiEnabled: true, aiModel: true, autoReply: true, autoReplyDelay: true, aiPersonality: true } }),
       Object.keys(businessData).length > 0
-        ? prisma.business.update({ where: { id: businessId }, data: businessData, select: { aiTemperature: true, aiMaxTokens: true, aiSystemPrompt: true, aiResponseTone: true, offHoursMessage: true } })
-        : prisma.business.findUnique({ where: { id: businessId }, select: { aiTemperature: true, aiMaxTokens: true, aiSystemPrompt: true, aiResponseTone: true, offHoursMessage: true } }),
+        ? prisma.business.update({ where: { id: businessId }, data: businessData, select: { aiTemperature: true, aiMaxTokens: true, aiSystemPrompt: true, aiInstructions: true, aiResponseTone: true, offHoursMessage: true } })
+        : prisma.business.findUnique({ where: { id: businessId }, select: { aiTemperature: true, aiMaxTokens: true, aiSystemPrompt: true, aiInstructions: true, aiResponseTone: true, offHoursMessage: true } }),
     ]);
 
     return NextResponse.json({ success: true, data: { ...(settings ?? {}), ...(business ?? {}) } });

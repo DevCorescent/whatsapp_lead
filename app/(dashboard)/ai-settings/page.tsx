@@ -12,6 +12,10 @@ import {
   FlaskConical,
   Bot,
   User,
+  ListChecks,
+  AlertCircle,
+  Eye,
+  EyeOff,
 } from "lucide-react";
 import {
   Avatar,
@@ -21,8 +25,23 @@ import {
   Modal,
   PageHeader,
   inputClass,
+  selectClass,
 } from "@/components/ui";
 import { Toggle } from "@/components/ui/Toggle";
+import {
+  DEFAULT_INSTRUCTIONS,
+  FIELD_LABELS,
+  LANGUAGES,
+  LENGTHS,
+  MODES,
+  REPETITIONS,
+  TONES,
+  buildSystemPrompt,
+  missingFields,
+  parseInstructions,
+  type AiInstructions,
+  type InstructionOption,
+} from "@/lib/aiInstructions";
 import { cn } from "@/lib/utils";
 
 // OpenRouter model ids (provider/model). "" = defer to the workspace default
@@ -58,9 +77,10 @@ const WEEKDAYS = [
   { value: 0, label: "S", full: "Sunday" },
 ];
 
-const DEFAULT_PROMPT = `You are a helpful WhatsApp sales assistant for our business.
-Answer in the customer's language, keep replies under 3 sentences, and always end with a question that moves the conversation forward.
-If you don't know an answer, say so and offer to connect a human agent.`;
+// The free-text prompt is now *additional* instructions — everything it used to have to say about
+// language, length and fallback is a mandatory field in the Initial Instructions card above it, so
+// the default here is empty rather than a paragraph that would duplicate (and contradict) them.
+const DEFAULT_PROMPT = "";
 
 const PROMPT_LIMIT = 2000;
 
@@ -115,6 +135,45 @@ function ToggleRow({
 
 const sliderClass = "h-1.5 w-full cursor-pointer appearance-none rounded-full bg-slate-200 accent-emerald-600";
 
+/** A required select, rendered from one of the option tables in lib/aiInstructions. */
+function InstructionSelect({
+  id,
+  label,
+  options,
+  value,
+  error,
+  onChange,
+}: {
+  id: string;
+  label: string;
+  options: InstructionOption[];
+  value: string;
+  error?: string;
+  onChange: (v: string) => void;
+}) {
+  const selected = options.find((o) => o.value === value);
+  return (
+    <Field label={label} htmlFor={id} required error={error}>
+      <select
+        id={id}
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        className={cn(selectClass, error && "ring-rose-400 focus:ring-rose-500")}
+      >
+        {options.map((o) => (
+          <option key={o.value} value={o.value}>
+            {o.label}
+            {o.hint ? ` — ${o.hint}` : ""}
+          </option>
+        ))}
+      </select>
+      {/* The directive is what actually reaches the model, so it is shown rather than
+          paraphrased — the setting and its effect stay the same sentence. */}
+      {selected && <p className="mt-1 text-xs text-slate-500">{selected.directive}</p>}
+    </Field>
+  );
+}
+
 const INITIAL = {
   aiEnabled: true,
   model: "", // "" = workspace default
@@ -125,6 +184,7 @@ const INITIAL = {
   offHoursOnly: false,
   personality: PERSONALITIES[0],
   systemPrompt: DEFAULT_PROMPT,
+  instructions: DEFAULT_INSTRUCTIONS as AiInstructions,
   timezone: "Asia/Kolkata",
   startTime: "09:00",
   endTime: "18:00",
@@ -148,6 +208,7 @@ export default function AISettingsPage() {
         autoReplyDelay: number; aiPersonality: string | null;
         aiTemperature: number | null; aiMaxTokens: number | null;
         aiSystemPrompt: string | null; offHoursMessage: string | null;
+        aiInstructions: unknown; businessName: string | null;
         provider: "openrouter" | "groq"; defaultModel: string;
       };
     },
@@ -181,6 +242,10 @@ export default function AISettingsPage() {
         temperature: aiData.aiTemperature ?? f.temperature,
         maxTokens: aiData.aiMaxTokens ?? f.maxTokens,
         systemPrompt: aiData.aiSystemPrompt ?? f.systemPrompt,
+        // A business that has never saved the structured fields comes back null; it starts on the
+        // defaults, which are themselves a complete valid set, so the form is never in the
+        // "mandatory field is empty" state just because nobody has visited this page yet.
+        instructions: parseInstructions(aiData.aiInstructions) ?? f.instructions,
         offHoursMessage: aiData.offHoursMessage ?? f.offHoursMessage,
       }));
     }
@@ -220,6 +285,7 @@ export default function AISettingsPage() {
           temperature: aiData.aiTemperature ?? INITIAL.temperature,
           maxTokens: aiData.aiMaxTokens ?? INITIAL.maxTokens,
           systemPrompt: aiData.aiSystemPrompt ?? INITIAL.systemPrompt,
+          instructions: parseInstructions(aiData.aiInstructions) ?? INITIAL.instructions,
           offHoursMessage: aiData.offHoursMessage ?? INITIAL.offHoursMessage,
           timezone: generalData.timezone ?? INITIAL.timezone,
           startTime: generalData.businessHoursStart ?? INITIAL.startTime,
@@ -237,6 +303,7 @@ export default function AISettingsPage() {
       form.temperature !== savedSnapshot.temperature ||
       form.maxTokens !== savedSnapshot.maxTokens ||
       form.systemPrompt !== savedSnapshot.systemPrompt ||
+      JSON.stringify(form.instructions) !== JSON.stringify(savedSnapshot.instructions) ||
       form.offHoursMessage !== savedSnapshot.offHoursMessage ||
       form.timezone !== savedSnapshot.timezone ||
       form.startTime !== savedSnapshot.startTime ||
@@ -244,8 +311,24 @@ export default function AISettingsPage() {
       JSON.stringify(form.businessDays) !== JSON.stringify(savedSnapshot.businessDays)
     : false;
 
+  // Every instruction field is mandatory, so this is checked here and again in the PATCH route.
+  // Blocking the save is the point: a half-written instruction set is what produced the vague,
+  // drifting replies this section exists to fix, and silently saving one would just move the
+  // problem to the customer's chat window.
+  const instructionErrors = missingFields(form.instructions);
+  const instructionsValid = Object.keys(instructionErrors).length === 0;
+
+  const setInstruction = <K extends keyof AiInstructions>(key: K, value: AiInstructions[K]) =>
+    setForm((f) => ({ ...f, instructions: { ...f.instructions, [key]: value } }));
+
   const saveMutation = useMutation({
     mutationFn: async () => {
+      if (!instructionsValid) {
+        const names = (Object.keys(instructionErrors) as (keyof AiInstructions)[])
+          .map((k) => FIELD_LABELS[k])
+          .join(", ");
+        throw new Error(`Complete the required instruction fields first: ${names}.`);
+      }
       // Two parallel PATCHes — AI model/personality settings go to /api/settings/ai
       // (which saves to TenantSettings + Business); business-hours go to /api/settings
       // (which saves to TenantSettings). Both endpoints are idempotent.
@@ -262,6 +345,7 @@ export default function AISettingsPage() {
             aiTemperature: form.temperature,
             aiMaxTokens: form.maxTokens,
             aiSystemPrompt: form.systemPrompt,
+            aiInstructions: form.instructions,
             offHoursMessage: form.offHoursMessage,
           }),
         }),
@@ -299,6 +383,166 @@ export default function AISettingsPage() {
         title="AI Settings"
         description="Control how the AI assistant replies to customers on WhatsApp."
       />
+
+      {/* ── Initial Instructions (mandatory) ─────────────────────────────────
+          Full width and first on the page: these are the rules every reply is
+          checked against, and the cards below only tune how they are delivered. */}
+      <Card className="mb-5 p-5">
+        <div className="flex items-start gap-3 border-b border-slate-100 pb-4">
+          <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-emerald-50 text-emerald-600">
+            <ListChecks className="h-5 w-5" />
+          </span>
+          <div className="min-w-0">
+            <h2 className="font-semibold text-slate-900">Initial Instructions</h2>
+            <p className="mt-0.5 text-sm text-slate-500">
+              The rules the AI must follow on every reply. All fields are required — the more exact
+              they are, the more accurate the replies.
+            </p>
+          </div>
+        </div>
+
+        {!instructionsValid && (
+          <p className="mt-4 flex items-start gap-2 rounded-lg bg-rose-50 px-3 py-2 text-xs text-rose-700 ring-1 ring-inset ring-rose-600/20">
+            <AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+            <span>
+              Fill in every required field before saving:{" "}
+              <strong>
+                {(Object.keys(instructionErrors) as (keyof AiInstructions)[])
+                  .map((k) => FIELD_LABELS[k])
+                  .join(", ")}
+              </strong>
+              .
+            </span>
+          </p>
+        )}
+
+        <div className="mt-4 grid gap-4 lg:grid-cols-2">
+          <div className="space-y-4 lg:col-span-2">
+            <Field
+              label={FIELD_LABELS.role}
+              htmlFor="ins-role"
+              required
+              error={instructionErrors.role}
+            >
+              <textarea
+                id="ins-role"
+                rows={3}
+                maxLength={600}
+                value={form.instructions.role}
+                onChange={(e) => setInstruction("role", e.target.value)}
+                placeholder="You are the WhatsApp assistant for …"
+                className={cn(
+                  inputClass,
+                  "resize-y",
+                  instructionErrors.role && "ring-rose-400 focus:ring-rose-500",
+                )}
+              />
+              <p className="mt-1 text-xs text-slate-500">
+                Who the assistant is and what it is allowed to speak about.
+              </p>
+            </Field>
+
+            <Field
+              label={FIELD_LABELS.greeting}
+              htmlFor="ins-greeting"
+              required
+              error={instructionErrors.greeting}
+            >
+              <input
+                id="ins-greeting"
+                maxLength={300}
+                value={form.instructions.greeting}
+                onChange={(e) => setInstruction("greeting", e.target.value)}
+                placeholder="Hi! Thanks for reaching out 👋 How can I help you today?"
+                className={cn(
+                  inputClass,
+                  instructionErrors.greeting && "ring-rose-400 focus:ring-rose-500",
+                )}
+              />
+              <p className="mt-1 text-xs text-slate-500">
+                Sent once, on the first reply of a conversation — never repeated afterwards.
+              </p>
+            </Field>
+          </div>
+
+          <InstructionSelect
+            id="ins-mode"
+            label={FIELD_LABELS.mode}
+            options={MODES}
+            value={form.instructions.mode}
+            error={instructionErrors.mode}
+            onChange={(v) => setInstruction("mode", v)}
+          />
+          <InstructionSelect
+            id="ins-tone"
+            label={FIELD_LABELS.tone}
+            options={TONES}
+            value={form.instructions.tone}
+            error={instructionErrors.tone}
+            onChange={(v) => setInstruction("tone", v)}
+          />
+          <InstructionSelect
+            id="ins-language"
+            label={FIELD_LABELS.language}
+            options={LANGUAGES}
+            value={form.instructions.language}
+            error={instructionErrors.language}
+            onChange={(v) => setInstruction("language", v)}
+          />
+          <InstructionSelect
+            id="ins-length"
+            label={FIELD_LABELS.responseLength}
+            options={LENGTHS}
+            value={form.instructions.responseLength}
+            error={instructionErrors.responseLength}
+            onChange={(v) => setInstruction("responseLength", v)}
+          />
+          <div className="lg:col-span-2">
+            <InstructionSelect
+              id="ins-repetition"
+              label={FIELD_LABELS.repetition}
+              options={REPETITIONS}
+              value={form.instructions.repetition}
+              error={instructionErrors.repetition}
+              onChange={(v) => setInstruction("repetition", v)}
+            />
+          </div>
+
+          <div className="lg:col-span-2">
+            <Field
+              label={FIELD_LABELS.fallback}
+              htmlFor="ins-fallback"
+              required
+              error={instructionErrors.fallback}
+            >
+              <textarea
+                id="ins-fallback"
+                rows={2}
+                maxLength={400}
+                value={form.instructions.fallback}
+                onChange={(e) => setInstruction("fallback", e.target.value)}
+                placeholder="Say you'll check with the team and offer to connect a human agent. Never guess."
+                className={cn(
+                  inputClass,
+                  "resize-y",
+                  instructionErrors.fallback && "ring-rose-400 focus:ring-rose-500",
+                )}
+              />
+              <p className="mt-1 text-xs text-slate-500">
+                Used whenever the answer is not in the knowledge base — this is what stops the AI
+                inventing prices and policies.
+              </p>
+            </Field>
+          </div>
+        </div>
+
+        <CompiledPromptPreview
+          instructions={form.instructions}
+          valid={instructionsValid}
+          businessName={aiData?.businessName ?? null}
+          additionalPrompt={form.systemPrompt}
+        />
+      </Card>
 
       <div className="grid gap-5 lg:grid-cols-2">
         {/* ── AI Assistant ─────────────────────────────────────────────────── */}
@@ -455,17 +699,24 @@ export default function AISettingsPage() {
             </select>
           </Field>
 
-          <Field label="System prompt" htmlFor="ai-prompt">
+          <Field label="Additional instructions" htmlFor="ai-prompt">
             <textarea
               id="ai-prompt"
               rows={8}
               maxLength={PROMPT_LIMIT}
               value={form.systemPrompt}
               onChange={(e) => set("systemPrompt", e.target.value)}
+              placeholder={
+                "Optional. Anything specific to your business that the fields above don't cover —\n" +
+                "e.g. \"Always mention free delivery above ₹999.\"\n" +
+                "Role, greeting, tone, language, length and repetition are set in Initial Instructions."
+              }
               className={cn(inputClass, "resize-y font-mono text-xs leading-relaxed")}
             />
             <div className="mt-1 flex items-center justify-between">
-              <p className="text-xs text-slate-500">Prepended to every AI conversation.</p>
+              <p className="text-xs text-slate-500">
+                Added after the mandatory rules — it can extend them, never override them.
+              </p>
               <p
                 className={cn(
                   "text-xs tabular-nums",
@@ -576,6 +827,11 @@ export default function AISettingsPage() {
               </span>
             ) : saveMutation.isPending ? (
               <span className="text-slate-500">Saving…</span>
+            ) : !instructionsValid ? (
+              <span className="text-rose-600">
+                {Object.keys(instructionErrors).length} required instruction field
+                {Object.keys(instructionErrors).length === 1 ? "" : "s"} still to fill in.
+              </span>
             ) : dirty ? (
               <span className="text-amber-600">You have unsaved changes.</span>
             ) : (
@@ -592,7 +848,7 @@ export default function AISettingsPage() {
               Reset
             </Button>
             <Button
-              disabled={!dirty || saveMutation.isPending}
+              disabled={!dirty || !instructionsValid || saveMutation.isPending}
               onClick={() => saveMutation.mutate()}
             >
               <Save className="h-4 w-4" />
@@ -608,6 +864,81 @@ export default function AISettingsPage() {
         personality={form.personality}
         model={form.model || aiData?.defaultModel || "the workspace model"}
       />
+    </div>
+  );
+}
+
+/**
+ * The exact system prompt these fields compile to.
+ *
+ * Built with the same `buildSystemPrompt` the server calls, so what is shown here is what the
+ * model is sent — not a description of it. It is what makes "mandatory" legible: you can see the
+ * numbered rule your greeting or repetition choice turned into.
+ */
+function CompiledPromptPreview({
+  instructions,
+  valid,
+  businessName,
+  additionalPrompt,
+}: {
+  instructions: AiInstructions;
+  valid: boolean;
+  businessName: string | null;
+  additionalPrompt: string;
+}) {
+  const [open, setOpen] = useState(false);
+  // The greeting rule is not one rule but two, chosen per message from whether the business has
+  // already spoken in that thread. Showing only one of them would misrepresent what gets sent,
+  // so both are one click apart.
+  const [firstReply, setFirstReply] = useState(true);
+
+  return (
+    <div className="mt-4 border-t border-slate-100 pt-4">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <button
+          type="button"
+          onClick={() => setOpen((v) => !v)}
+          className="inline-flex items-center gap-1.5 text-xs font-medium text-emerald-700 hover:text-emerald-800"
+        >
+          {open ? <EyeOff className="h-3.5 w-3.5" /> : <Eye className="h-3.5 w-3.5" />}
+          {open ? "Hide" : "Preview"} the instructions the AI receives
+        </button>
+
+        {open && (
+          <div className="flex overflow-hidden rounded-lg ring-1 ring-inset ring-slate-200">
+            {[
+              { label: "First reply", value: true },
+              { label: "Later reply", value: false },
+            ].map((tab) => (
+              <button
+                key={tab.label}
+                type="button"
+                onClick={() => setFirstReply(tab.value)}
+                className={cn(
+                  "px-2.5 py-1 text-xs font-medium transition",
+                  firstReply === tab.value
+                    ? "bg-emerald-600 text-white"
+                    : "bg-white text-slate-500 hover:bg-slate-50",
+                )}
+              >
+                {tab.label}
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {open && (
+        <pre className="mt-2 max-h-80 overflow-auto whitespace-pre-wrap rounded-lg bg-slate-900 p-3 font-mono text-[11px] leading-relaxed text-slate-100">
+          {valid
+            ? buildSystemPrompt(instructions, {
+                businessName,
+                additionalPrompt,
+                isFirstReply: firstReply,
+              })
+            : "Complete every required field to see the compiled instructions."}
+        </pre>
+      )}
     </div>
   );
 }

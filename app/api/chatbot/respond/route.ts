@@ -3,6 +3,7 @@ import { z } from "zod";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { generateReply } from "@/lib/ai";
+import { resolveSystemPrompt } from "@/lib/aiInstructions";
 import { guardFeature, guardLimit } from "@/lib/billing/guard";
 import { incrementAiUsage, planAllows } from "@/lib/billing/usage";
 import { retrieveContext } from "@/lib/rag";
@@ -49,6 +50,28 @@ export async function POST(req: NextRequest) {
 
     if (!conversation) return NextResponse.json({ success: false, error: "Conversation not found" }, { status: 404 });
 
+    // The business owns the persona; the tenant row is only the fallback. Looked up after the
+    // conversation because its businessId is what scopes the lookup — a tenant running several
+    // businesses must not answer in another one's voice.
+    const business = await prisma.business.findUnique({
+      where: { id: conversation.businessId },
+      select: {
+        aiInstructions: true,
+        aiSystemPrompt: true,
+        aiPersonality: true,
+        aiTemperature: true,
+        aiMaxTokens: true,
+        name: true,
+      },
+    });
+
+    // Has the business said anything in this thread yet? The greeting rule turns on this, and
+    // the model cannot answer it from the 20-message window alone. Counted over every outbound
+    // message: a thread a human agent already answered has been greeted.
+    const priorOutbound = await prisma.message.count({
+      where: { tenantId, conversationId: conversation.id, direction: "OUTBOUND", isNote: false },
+    });
+
     // Build flow instructions if a flow is attached
     let flowInstructions = "";
     if (flowId) {
@@ -62,8 +85,17 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    const personality = settings?.aiPersonality ?? "You are a helpful WhatsApp business assistant.";
-    const systemPrompt = `${personality}${flowInstructions}\n\nRespond concisely and professionally in the same language as the customer.`;
+    // The same compiled instruction block the WhatsApp auto-reply uses, so a suggestion drafted
+    // here reads like the replies the customer has already been getting. The flow's own text is
+    // appended after it: a flow directs one conversation, it does not replace the business rules.
+    const personality = resolveSystemPrompt({
+      instructions: business?.aiInstructions,
+      systemPrompt: business?.aiSystemPrompt,
+      personality: business?.aiPersonality || settings?.aiPersonality,
+      businessName: business?.name,
+      isFirstReply: priorOutbound === 0,
+    });
+    const systemPrompt = `${personality}${flowInstructions}`;
 
     const messages = conversation.messages
       .filter((m) => m.content)
@@ -82,7 +114,10 @@ export async function POST(req: NextRequest) {
       ? await retrieveContext(tenantId, conversation.businessId, lastCustomerMsg)
       : "";
 
-    const reply = await generateReply(messages, systemPrompt, knowledgeContext, settings?.aiModel);
+    const reply = await generateReply(messages, systemPrompt, knowledgeContext, settings?.aiModel, {
+      temperature: business?.aiTemperature,
+      maxTokens: business?.aiMaxTokens,
+    });
     await incrementAiUsage(tenantId);
     return NextResponse.json({ success: true, data: { reply } });
   } catch (error) {

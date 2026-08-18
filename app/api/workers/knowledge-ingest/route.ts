@@ -26,6 +26,9 @@ import type { Prisma } from "@prisma/client";
 import { verifyQStashSignature } from "@/lib/qstash-verify";
 import { prisma } from "@/lib/prisma";
 import { ingestDocument, deleteDocumentVectors } from "@/lib/rag";
+import { mergeFaqMetadata } from "@/lib/knowledgeFaq";
+import { generateDocFaqs } from "@/lib/knowledgeFaq.server";
+import { hasCapacity, incrementAiUsage, planAllows } from "@/lib/billing/usage";
 import type { KnowledgeIngestJob } from "@/lib/queue";
 
 function mergeMetadata(metadata: unknown, extra: Record<string, unknown>): Prisma.InputJsonValue {
@@ -34,6 +37,58 @@ function mergeMetadata(metadata: unknown, extra: Record<string, unknown>): Prism
   }
 
   return { ...(metadata as Record<string, unknown>), ...extra } as Prisma.InputJsonValue;
+}
+
+/**
+ * Generate and store one document's FAQs, swallowing every failure.
+ *
+ * Re-reads `metadata` instead of taking the copy the caller already has: the row was updated to
+ * INDEXED a moment ago, and merging into the stale object would write that status back out.
+ *
+ * Gated and metered exactly as the manual route is. Without the gate, a plan that includes the
+ * knowledge base but not AI would get model calls it is not entitled to; without the meter, the
+ * same work would be billed when a user pressed the button and free when the worker did it on
+ * upload — so importing fifty documents would spend fifty uncounted completions.
+ */
+async function writeFaqs(docId: string, tenantId: string, name: string, content: string) {
+  try {
+    if (!(await planAllows(tenantId, "aiEnabled"))) return;
+    if (!(await hasCapacity(tenantId, "ai"))) {
+      console.log(`[WORKER KB] Skipping FAQs for ${docId} — AI credits exhausted`);
+      return;
+    }
+
+    const settings = await prisma.tenantSettings.findUnique({
+      where: { tenantId },
+      select: { aiModel: true },
+    });
+    const { faqs, truncated } = await generateDocFaqs({ name, content, model: settings?.aiModel });
+    await incrementAiUsage(tenantId);
+
+    const fresh = await prisma.knowledgeDoc.findUnique({
+      where: { id: docId },
+      select: { metadata: true },
+    });
+    await prisma.knowledgeDoc.update({
+      where: { id: docId },
+      data: { metadata: mergeFaqMetadata(fresh?.metadata, { faqs, truncated }) },
+    });
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : "FAQ generation failed";
+    console.error(`[WORKER KB] FAQ generation failed for ${docId}:`, error);
+    try {
+      const fresh = await prisma.knowledgeDoc.findUnique({
+        where: { id: docId },
+        select: { metadata: true },
+      });
+      await prisma.knowledgeDoc.update({
+        where: { id: docId },
+        data: { metadata: mergeFaqMetadata(fresh?.metadata, { error: reason }) },
+      });
+    } catch {
+      // The document is indexed; not being able to record why its FAQs are missing changes nothing.
+    }
+  }
 }
 
 export async function POST(req: NextRequest) {
@@ -99,6 +154,13 @@ export async function POST(req: NextRequest) {
       where: { id: job.docId },
       data: { chunkCount, vectorIds, isIndexed: true, metadata: mergeMetadata(doc.metadata, { status: "INDEXED" }) },
     });
+
+    // Draft this document's FAQs while its text is already in hand, so the card shows what the
+    // document can answer as soon as it turns green rather than waiting for someone to press a
+    // button. Deliberately after the INDEXED write and inside its own try: the document is
+    // indexed and usable whether or not the FAQ call succeeds, and a model outage must not make
+    // this a non-2xx that sends QStash round again to re-embed a document that is already done.
+    await writeFaqs(job.docId, job.tenantId, doc.name, doc.content ?? "");
 
     return NextResponse.json({ ok: true, chunkCount });
   } catch (error) {

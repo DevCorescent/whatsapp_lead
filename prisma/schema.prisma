@@ -171,6 +171,9 @@ model Business {
   autoReplyDelay        Int            @default(3)
   aiModel               String?
   aiSystemPrompt        String?
+  // Structured, mandatory initial instructions (role/greeting/mode/tone/repetition...).
+  // See lib/aiInstructions.ts — null means this business still runs on aiSystemPrompt alone.
+  aiInstructions        Json?
   aiPersonality         String?
   aiResponseTone        String?
   aiTemperature         Float          @default(0.7)
