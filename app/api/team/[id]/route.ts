@@ -9,6 +9,15 @@ const updateSchema = z.object({
   isActive: z.boolean().optional(),
   name: z.string().min(1).optional(),
   phone: z.string().nullable().optional(),
+  /**
+   * This agent's per-period share of the workspace AI credits.
+   *
+   * Null clears the cap and returns them to the shared pool — the difference
+   * between "no allowance left" and "no personal allowance set" is the whole
+   * point of the column, so it has to be settable back to null rather than to 0.
+   * Zero is a real value here and means "no AI at all for this agent".
+   */
+  aiCreditLimit: z.number().int().nonnegative().max(1_000_000).nullable().optional(),
 }).strict();
 
 export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
@@ -41,6 +50,8 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
         role: true,
         isActive: true,
         phone: true,
+        aiCreditLimit: true,
+        aiCreditsUsed: true,
         updatedAt: true,
       },
     });

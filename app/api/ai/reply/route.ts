@@ -3,7 +3,7 @@ import { z } from "zod";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { generateReplyStream } from "@/lib/ai";
-import { guardFeature, guardLimit } from "@/lib/billing/guard";
+import { guardAgentAi, guardFeature, guardLimit } from "@/lib/billing/guard";
 import { incrementAiUsage, planAllows } from "@/lib/billing/usage";
 import { retrieveContext } from "@/lib/rag";
 
@@ -14,11 +14,11 @@ const schema = z.object({
 export async function POST(req: NextRequest) {
   const session = await auth();
   if (!session?.user) return NextResponse.json({ success: false, error: "Unauthorized" }, { status: 401 });
-  const { tenantId } = session.user;
+  const { tenantId, id: userId } = session.user;
 
   // An agent is waiting on this one, so both refusals are 403s that open the
   // upgrade dialog rather than the silent skip the auto-reply worker takes.
-  const denied = (await guardFeature(tenantId, "aiEnabled")) ?? (await guardLimit(tenantId, "ai"));
+  const denied = (await guardFeature(tenantId, "aiEnabled")) ?? (await guardLimit(tenantId, "ai")) ?? (await guardAgentAi(tenantId, userId));
   if (denied) return denied;
 
   try {
@@ -60,21 +60,30 @@ export async function POST(req: NextRequest) {
     // Ungrounded rather than refused on a tier without the knowledge base — the
     // suggestion is still useful, it just has nothing to cite.
     const lastCustomerMsg = [...messages].reverse().find((m) => m.role === "user")?.content ?? "";
-    const knowledgeContext = (await planAllows(tenantId, "ragEnabled"))
+    const retrieval = (await planAllows(tenantId, "ragEnabled"))
       ? await retrieveContext(tenantId, conversation.businessId, lastCustomerMsg)
-      : "";
+      : { sources: [] };
+    const knowledgeContext = retrieval.context;
 
     const systemPrompt = "You are a helpful WhatsApp CRM assistant. Suggest a concise, professional reply to the customer's last message.";
     const streamIterable = await generateReplyStream(messages, systemPrompt, knowledgeContext, settings?.aiModel);
 
     // Charged once the model has accepted the request. The stream below can still
     // be interrupted mid-flight, but the tokens are spent either way.
-    await incrementAiUsage(tenantId);
+    await incrementAiUsage(tenantId, 1, userId);
 
     const encoder = new TextEncoder();
     const readable = new ReadableStream({
       async start(controller) {
         try {
+          // Sent ahead of the first token, on its own frame. The composer can show
+          // which documents the draft is grounded in while it is still being
+          // written, and a client that only reads `chunk` ignores this safely.
+          if (retrieval.sources.length > 0) {
+            const frame = "data: " + JSON.stringify({ sources: retrieval.sources }) + "\n\n";
+            controller.enqueue(encoder.encode(frame));
+          }
+
           for await (const chunk of streamIterable) {
             controller.enqueue(encoder.encode(`data: ${JSON.stringify({ chunk })}\n\n`));
           }

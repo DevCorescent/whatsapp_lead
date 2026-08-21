@@ -31,6 +31,8 @@ export async function GET(req: NextRequest) {
         isActive: true,
         lastLoginAt: true,
         createdAt: true,
+        aiCreditLimit: true,
+        aiCreditsUsed: true,
         _count: {
           select: {
             assignedConvs: { where: { status: { in: ["OPEN", "ASSIGNED"] } } },

@@ -9,6 +9,7 @@ import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { getStripe, isStripeConfigured, appBaseUrl } from "@/lib/stripe";
 import { getOrCreateStripeCustomer } from "@/lib/billing/subscription";
+import { findPurchasablePlan } from "@/lib/billing/plans";
 
 const EDIT_ROLES = ["SUPER_ADMIN", "TENANT_OWNER", "ADMIN"];
 const schema = z.object({ planId: z.string().min(1) });
@@ -25,7 +26,11 @@ export async function POST(req: NextRequest) {
   if (!parsed.success) return NextResponse.json({ success: false, error: parsed.error.issues[0].message }, { status: 400 });
 
   try {
-    const plan = await prisma.plan.findFirst({ where: { id: parsed.data.planId, isActive: true } });
+    // Not `findFirst({ id, isActive })`: a planId is not a secret, and a bare id
+    // lookup would let any tenant buy another customer's private custom tier at
+    // whatever was negotiated for them. findPurchasablePlan applies the
+    // visibility rule and returns null for "not yours" as well as "no such plan".
+    const plan = await findPurchasablePlan(tenantId, parsed.data.planId);
     if (!plan) return NextResponse.json({ success: false, error: "Plan not found" }, { status: 404 });
 
     const current = await prisma.subscription.findUnique({ where: { tenantId } });

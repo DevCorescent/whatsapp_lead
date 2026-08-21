@@ -34,9 +34,17 @@ import { decryptSecret } from "@/lib/crypto";
 import { generateReply } from "@/lib/ai";
 import { resolveSystemPrompt } from "@/lib/aiInstructions";
 import { hasCapacity, incrementAiUsage, planAllows } from "@/lib/billing/usage";
-import { retrieveContext } from "@/lib/rag";
+import { retrieveContext, type KnowledgeSource } from "@/lib/rag";
+import { recordFaqTap } from "@/lib/faqInteraction";
+import {
+  finishFlowRun,
+  readRunId,
+  recordFlowStep,
+  RUN_ID_VAR,
+  startFlowRun,
+} from "@/lib/flowRun";
 import { pusher, tenantChannel, PusherEvent } from "@/lib/pusher";
-import { markMessageAsRead, sendTextMessage } from "@/lib/whatsapp";
+import { markMessageAsRead, sendInteractiveMessage, sendTextMessage } from "@/lib/whatsapp";
 import { runFlowStep, type FlowVariables } from "@/lib/chatbot/engine";
 import { toFlowDocument } from "@/lib/chatbot/types";
 import { cachedAiReply } from "@/lib/cache";
@@ -675,7 +683,17 @@ async function saveOutboundMessage(
   tenantId: string,
   conversationId: string,
   content: string,
-  waMessageId: string | null
+  waMessageId: string | null,
+  /**
+   * The knowledge documents the reply was grounded in, recorded on the message.
+   *
+   * Written at send time because it cannot be recovered later: retrieval depends
+   * on the index as it stood at that moment, and re-running the search a week on
+   * — after a document was edited, replaced or deleted — answers a different
+   * question. When an AI reply turns out to be wrong, this is the only record of
+   * which file told it so.
+   */
+  sources: KnowledgeSource[] = []
 ): Promise<Message> {
   return prisma.$transaction(async (tx) => {
     const saved = await tx.message.create({
@@ -688,6 +706,16 @@ async function saveOutboundMessage(
         type: MessageType.TEXT,
         content,
         isAiGenerated: true,
+        ...(sources.length > 0 && {
+          metadata: {
+            knowledgeSources: sources.map((s) => ({
+              docId: s.docId,
+              name: s.name,
+              score: s.score,
+              chunks: s.chunks,
+            })),
+          },
+        }),
       },
     });
 
@@ -722,6 +750,8 @@ async function executeFlow(
   conversation: Conversation & { activeFlowId?: string | null; activeNodeId?: string | null; flowVars?: Prisma.JsonValue },
   contact: Contact,
   inboundText: string | null,
+  /** The tapped row id, when the customer chose from a menu rather than typing. */
+  inboundReplyId: string | null = null,
 ): Promise<boolean> {
   const flowCreds = await resolveWhatsAppCreds(tenant.businessId);
   if (!flowCreds.phoneNumberId || !flowCreds.apiKey) return false;
@@ -800,16 +830,59 @@ async function executeFlow(
     return false;
   }
 
+  // Opened before the first step, not after the last. A customer who walks away
+  // mid-tree never reaches an "ended" branch, so a row written only at the end
+  // would lose exactly the people worth knowing about.
+  let runId = readRunId(vars);
+  if (!runId) {
+    runId = await startFlowRun({
+      tenantId: tenant.tenantId,
+      businessId: tenant.businessId,
+      contactId: contact.id,
+      conversationId: conversation.id,
+      flowId: flow.id,
+      flowName: flow.name,
+    });
+    if (runId) vars[RUN_ID_VAR] = runId;
+  }
+
   const doc = toFlowDocument(flow.nodes, flow.edges);
   const result = await runFlowStep(doc, {
     fromNodeId,
     input: isResuming ? (inboundText ?? "") : undefined,
+    // The tapped row id, so a menu can match a choice exactly rather than
+    // guessing from the title Meta truncated to 24 characters.
+    replyId: inboundReplyId,
     variables: vars,
   });
 
-  // Send every message action to the customer.
+  // Send every outbound action to the customer.
   let sentCount = 0;
   for (const action of result.actions) {
+    if (action.type === "menu" && action.menu) {
+      try {
+        await sendInteractiveMessage(
+          flowCreds.phoneNumberId,
+          flowCreds.apiKey,
+          contact.phone,
+          action.menu.interactive,
+        );
+        sentCount += 1;
+      } catch (err) {
+        // Fall back to the numbered plain-text rendering. A menu that cannot be
+        // drawn is still answerable by typing "2", and losing the turn entirely
+        // would strand the customer mid-tree with no way forward.
+        console.error("[FLOW] Failed to send menu, falling back to text:", err);
+        try {
+          await sendTextMessage(flowCreds.phoneNumberId, flowCreds.apiKey, contact.phone, action.menu.text);
+          sentCount += 1;
+        } catch (textErr) {
+          console.error("[FLOW] Text fallback also failed:", textErr);
+        }
+      }
+      continue;
+    }
+
     if ((action.type === "message" || action.type === "ai") && action.text) {
       try {
         await sendTextMessage(flowCreds.phoneNumberId, flowCreds.apiKey, contact.phone, action.text);
@@ -820,6 +893,22 @@ async function executeFlow(
     }
   }
 
+  // The branch taken and the answers so far, written before the session state is
+  // touched — the clear below is what used to destroy them.
+  if (runId) {
+    await recordFlowStep({
+      runId,
+      tenantId: tenant.tenantId,
+      contactId: contact.id,
+      choice: result.menuChoice,
+      variables: result.variables,
+      lastNodeId: result.stoppedAtNodeId,
+      lastNodeLabel:
+        (doc.nodes.find((n) => n.id === result.stoppedAtNodeId)?.data as { label?: string } | undefined)
+          ?.label ?? null,
+    });
+  }
+
   // Persist or clear session state.
   if (result.status === "awaiting_input" && result.awaitingQuestionId) {
     await prisma.conversation.update({
@@ -827,10 +916,16 @@ async function executeFlow(
       data: {
         activeFlowId: flow.id,
         activeNodeId: result.awaitingQuestionId,
-        flowVars: result.variables as Prisma.InputJsonValue,
+        // runId rides along in the variables, so the next inbound message finds
+        // the same open run without another column on the conversation.
+        flowVars: { ...result.variables, [RUN_ID_VAR]: runId } as Prisma.InputJsonValue,
       },
     });
     return true;
+  }
+
+  if (runId) {
+    await finishFlowRun({ runId, variables: result.variables, handoff: result.handoff });
   }
 
   await prisma.conversation.update({
@@ -1026,9 +1121,10 @@ export async function handleAutoReply(
   // billing tier. Retrieval is also the expensive half (embedding + vector search),
   // so not running it is the saving the gate exists to make.
   const lastCustomerMsg = [...history].reverse().find((m) => m.role === "user")?.content ?? "";
-  const knowledgeContext = (await planAllows(tenant.tenantId, "ragEnabled"))
+  const retrieval = (await planAllows(tenant.tenantId, "ragEnabled"))
     ? await retrieveContext(tenant.tenantId, tenant.businessId, lastCustomerMsg)
-    : "";
+    : { sources: [] };
+  const knowledgeContext = retrieval.context ?? "";
 
   // Whether the business has said anything at all in this thread yet — the one fact the greeting
   // rule turns on, and the one the model cannot establish for itself once the opening messages
@@ -1160,7 +1256,8 @@ export async function handleAutoReply(
     tenant.tenantId,
     conversation.id,
     reply,
-    waMessageId
+    waMessageId,
+    retrieval.sources
   );
 
   await broadcastMessage(tenant.tenantId, outbound);
@@ -1402,6 +1499,48 @@ export async function processIncomingMessage(
     await markInboundAsRead(scopedTenant, message.id);
     await broadcastMessage(scopedTenant.tenantId, saved);
 
+    // ── FAQ menu tap ──────────────────────────────────────────────────────────
+    // A row id we minted comes back verbatim, so this is an exact match rather
+    // than a guess at what the truncated title meant. Handled before the keyword
+    // and AI branches below: the customer picked this question off a menu, and
+    // the curated answer beats anything a model would draft for it.
+    const tap = await recordFaqTap({
+      tenantId: scopedTenant.tenantId,
+      businessId,
+      contactId: contact.id,
+      conversationId: conversation.id,
+      replyId: message.interactive?.list_reply?.id ?? message.interactive?.button_reply?.id,
+      replyTitle:
+        message.interactive?.list_reply?.title ?? message.interactive?.button_reply?.title,
+    });
+
+    if (tap?.answer && scopedTenant.waPhoneNumberId && scopedTenant.waApiKey) {
+      try {
+        const reply = await sendTextMessage(
+          scopedTenant.waPhoneNumberId,
+          scopedTenant.waApiKey,
+          message.from,
+          tap.answer,
+        );
+        const answerMsg = await saveOutboundMessage(
+          scopedTenant.tenantId,
+          conversation.id,
+          tap.answer,
+          reply.messages?.[0]?.id ?? null,
+        );
+        await broadcastMessage(scopedTenant.tenantId, answerMsg);
+      } catch (error) {
+        // The tap is already recorded; failing to deliver the answer leaves the
+        // question in the inbox for an agent, which is the same outcome as any
+        // other unanswered message.
+        console.error("[FAQ TAP] Failed to send the curated answer:", error);
+      }
+      // Answered from the knowledge the tenant approved — no model call, no AI
+      // credit, and no second reply talking over it. Returned with the same
+      // shape as the opt-out branch: the message was handled, not dropped.
+      return { tenant: scopedTenant, contact, conversation, message: saved };
+    }
+
     // ── Opt-out / opt-in keyword handling ──────────────────────────────────────
     // Normalise to letters-only uppercase so "Stop.", "STOP!" etc. all match.
     const msgKeyword = extractContent(message)?.trim().toUpperCase().replace(/[^A-Z]/g, "") ?? "";
@@ -1457,6 +1596,7 @@ export async function processIncomingMessage(
       },
       contact,
       extractContent(message),
+      message.interactive?.list_reply?.id ?? message.interactive?.button_reply?.id ?? null,
     );
     if (!flowHandled) {
       await dispatchAutoReply(scopedTenant, conversation, contact, message.id);

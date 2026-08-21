@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   UserCog,
@@ -176,6 +176,7 @@ export default function TeamPage() {
                   <th className="px-4 py-3 font-medium">Status</th>
                   <th className="px-4 py-3 font-medium">Last login</th>
                   <th className="px-4 py-3 font-medium">Conversations</th>
+                  <th className="px-4 py-3 font-medium">AI allowance</th>
                   <th className="px-4 py-3 text-right font-medium">Actions</th>
                 </tr>
               </thead>
@@ -211,6 +212,9 @@ export default function TeamPage() {
                         <MessagesSquare className="h-3.5 w-3.5 text-slate-400" />
                         {formatCompact(m._count?.assignedConvs ?? 0)}
                       </span>
+                    </td>
+                    <td className="px-4 py-3">
+                      <AiAllowance limit={m.aiCreditLimit} used={m.aiCreditsUsed} />
                     </td>
                     <td className="px-4 py-3">
                       <div className="flex items-center justify-end gap-1">
@@ -404,16 +408,29 @@ function InviteModal({ open, onClose }: { open: boolean; onClose: () => void }) 
 function ChangeRoleModal({ member, onClose }: { member: Member | null; onClose: () => void }) {
   const queryClient = useQueryClient();
   const [role, setRole] = useState<UserRole>(member?.role ?? "AGENT");
+  // Held as a string so the field can be empty, which is what "no cap" means.
+  // A number state would force 0 to stand for both "unlimited" and "none".
+  const [creditLimit, setCreditLimit] = useState("");
   const [error, setError] = useState<string | null>(null);
 
-  useEffect(() => { if (member) setRole(member.role); }, [member]);
+  // Re-seeded during render when a different member is opened, rather than in an
+  // effect. An effect would paint the previous member's values for one frame and
+  // then correct them, which on a modal is a visible flicker of someone else's
+  // settings.
+  const [seenId, setSeenId] = useState<string | null>(null);
+  if (member && member.id !== seenId) {
+    setSeenId(member.id);
+    setRole(member.role);
+    setCreditLimit(member.aiCreditLimit === null ? "" : String(member.aiCreditLimit));
+  }
 
   const save = useMutation({
     mutationFn: async () => {
+      const trimmed = creditLimit.trim();
       const res = await fetch(`/api/team/${member!.id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ role }),
+        body: JSON.stringify({ role, aiCreditLimit: trimmed === "" ? null : Number(trimmed) }),
       });
       const json = await res.json();
       if (!res.ok) throw new Error(json.error ?? "Failed");
@@ -424,13 +441,40 @@ function ChangeRoleModal({ member, onClose }: { member: Member | null; onClose: 
   });
 
   return (
-    <Modal open={!!member} onClose={onClose} title="Change Role" description={`Update ${member?.name ?? ""}'s role.`}>
+    <Modal
+      open={!!member}
+      onClose={onClose}
+      title="Member settings"
+      description={`Role and AI allowance for ${member?.name ?? ""}.`}
+    >
       <div className="space-y-4">
         <Field label="Role" htmlFor="change-role">
           <select id="change-role" value={role} onChange={(e) => setRole(e.target.value as UserRole)} className={inputClass}>
             {INVITABLE_ROLES.map((r) => <option key={r} value={r}>{ROLE_LABEL[r]}</option>)}
           </select>
         </Field>
+
+        <Field label="AI requests per billing period" htmlFor="change-credits">
+          <input
+            id="change-credits"
+            type="number"
+            min={0}
+            value={creditLimit}
+            onChange={(e) => setCreditLimit(e.target.value)}
+            placeholder="No personal cap"
+            className={inputClass}
+          />
+          <p className="mt-1 text-xs text-slate-500">
+            {/* Empty and 0 are different answers, and the placeholder has to say
+                so — one shares the workspace pool, the other blocks AI outright. */}
+            Leave empty to let them draw on the workspace allowance. Set a number to cap this
+            person; <strong>0</strong> switches AI off for them entirely.
+            {member && member.aiCreditsUsed > 0 && (
+              <> They have used <strong>{member.aiCreditsUsed}</strong> this period.</>
+            )}
+          </p>
+        </Field>
+
         {error && <p className="rounded-lg bg-rose-50 px-3 py-2 text-xs text-rose-700">{error}</p>}
         <div className="flex justify-end gap-2">
           <Button variant="secondary" onClick={onClose}>Cancel</Button>
@@ -438,5 +482,39 @@ function ChangeRoleModal({ member, onClose }: { member: Member | null; onClose: 
         </div>
       </div>
     </Modal>
+  );
+}
+
+/**
+ * One agent's share of the workspace AI credits.
+ *
+ * "No cap" is the common case and is deliberately quiet — most workspaces will
+ * never set one, and a column shouting "unlimited" on every row would suggest
+ * something had been configured when nothing had.
+ */
+function AiAllowance({ limit, used }: { limit: number | null; used: number }) {
+  if (limit === null) {
+    return <span className="text-slate-400">Shared pool</span>;
+  }
+  if (limit === 0) {
+    return <span className="font-medium text-slate-500">AI off</span>;
+  }
+
+  const spent = Math.min(100, Math.round((used / limit) * 100));
+  return (
+    <span className="inline-flex items-center gap-2">
+      <span className="tabular-nums text-slate-700">
+        {used}/{limit}
+      </span>
+      <span className="h-1.5 w-12 overflow-hidden rounded-full bg-slate-100">
+        <span
+          className={cn(
+            "block h-full rounded-full",
+            spent >= 100 ? "bg-rose-500" : spent >= 80 ? "bg-amber-500" : "bg-emerald-500",
+          )}
+          style={{ width: `${spent}%` }}
+        />
+      </span>
+    </span>
   );
 }

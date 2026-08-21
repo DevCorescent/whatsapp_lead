@@ -1,4 +1,5 @@
 import { randomUUID } from "crypto";
+import { prisma } from "@/lib/prisma";
 import * as cheerio from "cheerio";
 import mammoth from "mammoth";
 import { extractText, getDocumentProxy } from "unpdf";
@@ -234,28 +235,66 @@ export async function ingestDocument(params: {
 
 // ─── Retrieval ───────────────────────────────────────────────────────────────
 
+/** Default breadth of a retrieval. Exported so the tuning UI can show the real value. */
+export const RETRIEVAL_LIMIT = 6;
+
 /**
- * Embed the query, search this tenant's vectors, and return the joined text of
- * the top matches — ready to pass as `knowledgeContext` to generateReply().
- * Returns undefined when nothing relevant is found.
+ * Default cutoff. jina-embeddings-v3 cosine scores run low — relevant chunks land
+ * around 0.35-0.55 — so 0.4 was dropping legitimately relevant context and 0.3
+ * keeps recall higher. Exported for the same reason: a number this consequential
+ * should be visible to whoever is wondering why a document went unused.
  */
-export async function retrieveContext(
+export const RETRIEVAL_SCORE_THRESHOLD = 0.3;
+
+/** One matching chunk, as the vector store returned it. */
+export interface RetrievedChunk {
+  docId: string;
+  chunkIndex: number;
+  score: number;
+  text: string;
+}
+
+/** A document that contributed to an answer, with its best-matching score. */
+export interface KnowledgeSource {
+  docId: string;
+  name: string;
+  /** Highest chunk score from this document — how strongly it matched. */
+  score: number;
+  /** How many of the retrieved chunks came from it. */
+  chunks: number;
+}
+
+export interface KnowledgeRetrieval {
+  /** Joined text ready to pass as `knowledgeContext`, or undefined if nothing matched. */
+  context?: string;
+  /** The documents behind that text, best match first. Empty when nothing matched. */
+  sources: KnowledgeSource[];
+}
+
+/**
+ * Embed the query and return the matching chunks, unjoined.
+ *
+ * Split out of `retrieveContext` because two callers want different things from
+ * the same search: an AI reply wants one blob of text to ground on, and the
+ * knowledge-base tester wants the individual chunks with their scores so a human
+ * can see what the AI would have been handed and why. Running the search twice
+ * in two shapes is how those two answers drift apart.
+ */
+export async function searchKnowledge(
   tenantId: string,
   businessId: string,
   query: string,
   opts: { limit?: number; scoreThreshold?: number } = {},
-): Promise<string | undefined> {
-  if (!query.trim() || !process.env.QDRANT_URL) return undefined;
+): Promise<RetrievedChunk[]> {
+  if (!query.trim() || !process.env.QDRANT_URL) return [];
 
   try {
     await ensureCollection();
     const vector = await embedQuery(query);
     const results = await qdrant().search(KB_COLLECTION, {
       vector,
-      limit: opts.limit ?? 6,
-      // jina-embeddings-v3 cosine scores run low; relevant chunks land ~0.35-0.55,
-      // so 0.4 was dropping legitimately relevant context. 0.3 keeps recall higher.
-      score_threshold: opts.scoreThreshold ?? 0.3,
+      limit: opts.limit ?? RETRIEVAL_LIMIT,
+      score_threshold: opts.scoreThreshold ?? RETRIEVAL_SCORE_THRESHOLD,
       // Both keys, always. The knowledge-base UI has been business-scoped for a while, but this
       // filter was still tenant-only — so a customer messaging business A could be answered from
       // business B's documents, which is the leak the UI scoping was meant to prevent. `must` is
@@ -269,17 +308,107 @@ export async function retrieveContext(
       with_payload: true,
     });
 
-    const context = results
-      .map((r) => (r.payload?.text as string | undefined))
-      .filter(Boolean)
-      .join("\n\n---\n\n");
-
-    return context || undefined;
+    return results
+      .map((r) => ({
+        docId: String(r.payload?.docId ?? ""),
+        chunkIndex: typeof r.payload?.chunkIndex === "number" ? r.payload.chunkIndex : 0,
+        score: typeof r.score === "number" ? r.score : 0,
+        text: String(r.payload?.text ?? ""),
+      }))
+      .filter((c) => c.text);
   } catch (error) {
     // RAG is an enhancement — never let a vector-store hiccup break the reply.
-    console.error("[RAG retrieveContext]", error);
-    return undefined;
+    console.error("[RAG searchKnowledge]", error);
+    return [];
   }
+}
+
+/**
+ * Collapse chunks onto the documents they came from, best match first.
+ *
+ * A document is scored by its BEST chunk rather than its average or its total.
+ * Averaging punishes a long document for the passages that did not match — which
+ * is most of them, by construction — and summing would rank a document that
+ * matched weakly five times above one that answered the question outright.
+ *
+ * A chunk whose id is not in `names` drops out. That covers both a document
+ * deleted since indexing and, more importantly, an id the caller did not
+ * authorise: the lookup that builds this map is tenant-scoped, so filtering here
+ * is what stops another workspace's filename reaching a citation.
+ *
+ * Pure, and exported, because this is the part with judgement in it.
+ */
+export function groupChunksByDoc(
+  chunks: RetrievedChunk[],
+  names: Map<string, string>,
+): KnowledgeSource[] {
+  const byDoc = new Map<string, KnowledgeSource>();
+
+  for (const chunk of chunks) {
+    const name = names.get(chunk.docId);
+    if (!name) continue;
+
+    const existing = byDoc.get(chunk.docId);
+    if (existing) {
+      existing.chunks += 1;
+      existing.score = Math.max(existing.score, chunk.score);
+    } else {
+      byDoc.set(chunk.docId, { docId: chunk.docId, name, score: chunk.score, chunks: 1 });
+    }
+  }
+
+  return [...byDoc.values()].sort((a, b) => b.score - a.score);
+}
+
+/**
+ * Resolve retrieved chunks to the documents they came from.
+ *
+ * Scoped by tenantId, so a payload carrying a docId from elsewhere resolves to
+ * nothing rather than leaking another workspace's filename into a citation.
+ */
+async function resolveSources(
+  tenantId: string,
+  chunks: RetrievedChunk[],
+): Promise<KnowledgeSource[]> {
+  const docIds = [...new Set(chunks.map((c) => c.docId).filter(Boolean))];
+  if (docIds.length === 0) return [];
+
+  try {
+    const docs = await prisma.knowledgeDoc.findMany({
+      where: { id: { in: docIds }, tenantId },
+      select: { id: true, name: true },
+    });
+    return groupChunksByDoc(chunks, new Map(docs.map((d) => [d.id, d.name])));
+  } catch (error) {
+    // A citation is a nice-to-have layered on an answer that already works.
+    console.error("[RAG resolveSources]", error);
+    return [];
+  }
+}
+
+/**
+ * Search this tenant's vectors and return the joined text of the top matches —
+ * ready to pass as `knowledgeContext` to generateReply() — alongside the
+ * documents it came from.
+ *
+ * The sources are the point of the return shape. Joined into one string, the
+ * document identity was thrown away, so a wrong AI answer could not be traced
+ * back to the file that caused it. With several documents indexed, "the
+ * knowledge base said so" is not something anyone can act on.
+ */
+export async function retrieveContext(
+  tenantId: string,
+  businessId: string,
+  query: string,
+  opts: { limit?: number; scoreThreshold?: number } = {},
+): Promise<KnowledgeRetrieval> {
+  const chunks = await searchKnowledge(tenantId, businessId, query, opts);
+  if (chunks.length === 0) return { sources: [] };
+
+  return {
+    context: chunks.map((c) => c.text).join("\n\n---\n\n"),
+    sources: await resolveSources(tenantId, chunks),
+  };
 }
 
 /**

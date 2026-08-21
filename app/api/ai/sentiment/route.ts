@@ -24,7 +24,7 @@ import { z } from "zod";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { detectSentiment } from "@/lib/ai";
-import { guardFeature, guardLimit } from "@/lib/billing/guard";
+import { guardAgentAi, guardFeature, guardLimit } from "@/lib/billing/guard";
 import { incrementAiUsage } from "@/lib/billing/usage";
 
 /** Matches the sibling AI routes: strict, so nothing can ride along into a Prisma predicate. */
@@ -46,9 +46,9 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ success: false, error: "Unauthorized" }, { status: 401 });
   }
 
-  const { tenantId } = session.user;
+  const { tenantId, id: userId } = session.user;
 
-  const denied = (await guardFeature(tenantId, "aiEnabled")) ?? (await guardLimit(tenantId, "ai"));
+  const denied = (await guardFeature(tenantId, "aiEnabled")) ?? (await guardLimit(tenantId, "ai")) ?? (await guardAgentAi(tenantId, userId));
   if (denied) return denied;
 
   try {
@@ -103,7 +103,7 @@ export async function POST(req: NextRequest) {
       .join("\n");
 
     const sentiment = await detectSentiment(text);
-    await incrementAiUsage(tenantId);
+    await incrementAiUsage(tenantId, 1, userId);
 
     return NextResponse.json({ success: true, data: { sentiment } });
   } catch (error) {

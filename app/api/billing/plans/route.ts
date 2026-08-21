@@ -1,10 +1,14 @@
 // ROUTE : /api/billing/plans  (GET) — active plans for the plan-selection page,
 // plus the tenant's current plan id so the UI can badge it. Any authenticated
 // tenant member may read.
+//
+// "Active plans" means the ones THIS tenant may reach: the public catalogue plus
+// its own custom tier, never another customer's. listPlansFor owns that rule —
+// see lib/billing/plans.ts for why it is not filtered inline here.
 
 import { NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
-import { prisma } from "@/lib/prisma";
+import { listPlansFor } from "@/lib/billing/plans";
 import { isStripeConfigured } from "@/lib/stripe";
 
 export async function GET() {
@@ -13,17 +17,14 @@ export async function GET() {
   const { tenantId } = session.user;
 
   try {
-    const [plans, subscription] = await Promise.all([
-      prisma.plan.findMany({ where: { isActive: true }, orderBy: { sortOrder: "asc" } }),
-      prisma.subscription.findUnique({ where: { tenantId }, select: { planId: true, status: true } }),
-    ]);
+    const { plans, currentPlanId, status } = await listPlansFor(tenantId);
 
     return NextResponse.json({
       success: true,
       data: {
         plans,
-        currentPlanId: subscription?.planId ?? null,
-        status: subscription?.status ?? null,
+        currentPlanId,
+        status,
         billingEnabled: isStripeConfigured(),
       },
     });

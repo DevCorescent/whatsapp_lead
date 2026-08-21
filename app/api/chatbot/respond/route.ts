@@ -4,7 +4,7 @@ import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { generateReply } from "@/lib/ai";
 import { resolveSystemPrompt } from "@/lib/aiInstructions";
-import { guardFeature, guardLimit } from "@/lib/billing/guard";
+import { guardAgentAi, guardFeature, guardLimit } from "@/lib/billing/guard";
 import { incrementAiUsage, planAllows } from "@/lib/billing/usage";
 import { retrieveContext } from "@/lib/rag";
 
@@ -16,9 +16,9 @@ const schema = z.object({
 export async function POST(req: NextRequest) {
   const session = await auth();
   if (!session?.user) return NextResponse.json({ success: false, error: "Unauthorized" }, { status: 401 });
-  const { tenantId } = session.user;
+  const { tenantId, id: userId } = session.user;
 
-  const denied = (await guardFeature(tenantId, "aiEnabled")) ?? (await guardLimit(tenantId, "ai"));
+  const denied = (await guardFeature(tenantId, "aiEnabled")) ?? (await guardLimit(tenantId, "ai")) ?? (await guardAgentAi(tenantId, userId));
   if (denied) return denied;
 
   try {
@@ -110,16 +110,17 @@ export async function POST(req: NextRequest) {
 
     // RAG: pull only the chunks relevant to the customer's latest message.
     const lastCustomerMsg = [...messages].reverse().find((m) => m.role === "user")?.content ?? "";
-    const knowledgeContext = (await planAllows(tenantId, "ragEnabled"))
+    const retrieval = (await planAllows(tenantId, "ragEnabled"))
       ? await retrieveContext(tenantId, conversation.businessId, lastCustomerMsg)
-      : "";
+      : { sources: [] };
+    const knowledgeContext = retrieval.context;
 
     const reply = await generateReply(messages, systemPrompt, knowledgeContext, settings?.aiModel, {
       temperature: business?.aiTemperature,
       maxTokens: business?.aiMaxTokens,
     });
-    await incrementAiUsage(tenantId);
-    return NextResponse.json({ success: true, data: { reply } });
+    await incrementAiUsage(tenantId, 1, userId);
+    return NextResponse.json({ success: true, data: { reply, sources: retrieval.sources } });
   } catch (error) {
     console.error("[CHATBOT RESPOND]", error);
     return NextResponse.json({ success: false, error: "Chatbot response failed" }, { status: 500 });

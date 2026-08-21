@@ -1,8 +1,9 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { Download, Search, Upload, UserPlus } from "lucide-react";
+import { Search, Upload, UserPlus } from "lucide-react";
 import { useContactSources, useContacts } from "@/hooks/useContacts";
+import { ExportButton } from "@/components/ExportButton";
 import { Button, Card, PageHeader, inputClass } from "@/components/ui";
 import { AddContactModal } from "@/components/contacts/AddContactModal";
 import { ImportContactsModal } from "@/components/contacts/ImportContactsModal";
@@ -86,10 +87,7 @@ export default function ContactsPage() {
               <Upload className="h-4 w-4" />
               Import
             </Button>
-            <Button variant="secondary" onClick={() => window.location.assign("/api/contacts/export")}>
-              <Download className="h-4 w-4" />
-              Export CSV
-            </Button>
+            <ExportButton resource="contacts" />
             <Button onClick={() => setModalOpen(true)}>
               <UserPlus className="h-4 w-4" />
               Add Contact

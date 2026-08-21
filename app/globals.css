@@ -55,3 +55,53 @@ input[type="range"] {
     background: transparent;
   }
 }
+
+/* ─── Flow builder canvas ─────────────────────────────────────────────────────
+ *
+ * Two problems, solved together.
+ *
+ * React Flow ships its cursor rules inside a stylesheet imported by a client
+ * component, while Tailwind's preflight loads from the root — so preflight wins
+ * on the pane and the cursor falls back to whatever the parent set.
+ *
+ * And the cursors those rules ask for are the wrong colour here: on Windows
+ * `grab` and `grabbing` render as WHITE gloves, which on a near-white canvas
+ * are invisible. A semantically correct cursor nobody can see is not a cursor.
+ *
+ * So the shapes are drawn here — dark slate body, thick white halo — which reads
+ * against the pale canvas and against a dark node it crosses. Every one is
+ * straight lines and closed polygons rather than a traced hand, because a
+ * malformed icon at 26px is worse than the glove was. Each keeps the system
+ * cursor as a fallback, so a browser that refuses the SVG still gets the meaning.
+ */
+.react-flow__pane {
+  cursor: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='26' height='26' viewBox='0 0 24 24'%3E%3Cpath d='M4 2 L4 19.5 L8.8 15 L11.9 21.6 L14.7 20.3 L11.7 13.9 L18 13.7 Z' fill='rgb(15,23,42)' stroke='rgb(255,255,255)' stroke-width='1.4' stroke-linejoin='round'/%3E%3C/svg%3E") 4 2, default;
+}
+/* Dragging the empty canvas pans it — the four-way arrow is the shape that says
+   so, and unlike the closed glove it is visible while you are doing it. */
+.react-flow__pane:active,
+.react-flow__pane.dragging {
+  cursor: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='26' height='26' viewBox='0 0 24 24'%3E%3Cg fill='rgb(255,255,255)' stroke='rgb(255,255,255)' stroke-width='4.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M12 2.5v19M2.5 12h19'/%3E%3Cpath d='M12 1.4l3 3.4h-6zM12 22.6l3-3.4h-6zM1.4 12l3.4-3v6zM22.6 12l-3.4-3v6z'/%3E%3C/g%3E%3Cg fill='rgb(15,23,42)' stroke='rgb(15,23,42)' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M12 2.5v19M2.5 12h19'/%3E%3Cpath d='M12 1.4l3 3.4h-6zM12 22.6l3-3.4h-6zM1.4 12l3.4-3v6zM22.6 12l-3.4-3v6z'/%3E%3C/g%3E%3C/svg%3E") 13 13, grabbing;
+}
+/* Shift-drag draws a selection box: a different gesture, a different shape. */
+.react-flow__pane.selection {
+  cursor: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='26' height='26' viewBox='0 0 24 24'%3E%3Cg stroke='rgb(255,255,255)' stroke-width='4.5' stroke-linecap='round' fill='none'%3E%3Cpath d='M12 2.5v19M2.5 12h19'/%3E%3C/g%3E%3Cg stroke='rgb(15,23,42)' stroke-width='1.7' stroke-linecap='round' fill='none'%3E%3Cpath d='M12 2.5v19M2.5 12h19'/%3E%3C/g%3E%3C/svg%3E") 13 13, crosshair;
+}
+.react-flow__node {
+  cursor: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='26' height='26' viewBox='0 0 24 24'%3E%3Cg fill='rgb(255,255,255)' stroke='rgb(255,255,255)' stroke-width='4.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M12 2.5v19M2.5 12h19'/%3E%3Cpath d='M12 1.4l3 3.4h-6zM12 22.6l3-3.4h-6zM1.4 12l3.4-3v6zM22.6 12l-3.4-3v6z'/%3E%3C/g%3E%3Cg fill='rgb(15,23,42)' stroke='rgb(15,23,42)' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M12 2.5v19M2.5 12h19'/%3E%3Cpath d='M12 1.4l3 3.4h-6zM12 22.6l3-3.4h-6zM1.4 12l3.4-3v6zM22.6 12l-3.4-3v6z'/%3E%3C/g%3E%3C/svg%3E") 13 13, grab;
+}
+.react-flow__node.dragging,
+.react-flow__node:active {
+  cursor: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='26' height='26' viewBox='0 0 24 24'%3E%3Cg fill='rgb(255,255,255)' stroke='rgb(255,255,255)' stroke-width='4.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M12 2.5v19M2.5 12h19'/%3E%3Cpath d='M12 1.4l3 3.4h-6zM12 22.6l3-3.4h-6zM1.4 12l3.4-3v6zM22.6 12l-3.4-3v6z'/%3E%3C/g%3E%3Cg fill='rgb(15,23,42)' stroke='rgb(15,23,42)' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M12 2.5v19M2.5 12h19'/%3E%3Cpath d='M12 1.4l3 3.4h-6zM12 22.6l3-3.4h-6zM1.4 12l3.4-3v6zM22.6 12l-3.4-3v6z'/%3E%3C/g%3E%3C/svg%3E") 13 13, grabbing;
+}
+/* The dots an edge is dragged from. */
+.react-flow__handle {
+  cursor: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='26' height='26' viewBox='0 0 24 24'%3E%3Cg stroke='rgb(255,255,255)' stroke-width='4.5' stroke-linecap='round' fill='none'%3E%3Cpath d='M12 2.5v19M2.5 12h19'/%3E%3C/g%3E%3Cg stroke='rgb(15,23,42)' stroke-width='1.7' stroke-linecap='round' fill='none'%3E%3Cpath d='M12 2.5v19M2.5 12h19'/%3E%3C/g%3E%3C/svg%3E") 13 13, crosshair;
+}
+.react-flow__edge,
+.react-flow__edge .react-flow__edge-path {
+  cursor: pointer;
+}
+.react-flow__resize-control.handle {
+  cursor: nwse-resize;
+}

@@ -13,6 +13,7 @@ import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { getStripe, isStripeConfigured } from "@/lib/stripe";
 import { syncStripeSubscription } from "@/lib/billing/subscription";
+import { findPurchasablePlan } from "@/lib/billing/plans";
 import { getUsage } from "@/lib/billing/usage";
 import { isUnlimited, planLimits } from "@/lib/billing/tiers";
 
@@ -31,8 +32,10 @@ export async function POST(req: NextRequest) {
   if (!parsed.success) return NextResponse.json({ success: false, error: parsed.error.issues[0].message }, { status: 400 });
 
   try {
+    // Visibility-filtered for the same reason as checkout: without it this route
+    // is a second way to move onto another customer's private tier.
     const [target, sub] = await Promise.all([
-      prisma.plan.findFirst({ where: { id: parsed.data.planId, isActive: true } }),
+      findPurchasablePlan(tenantId, parsed.data.planId),
       prisma.subscription.findUnique({ where: { tenantId } }),
     ]);
     if (!target) return NextResponse.json({ success: false, error: "Plan not found" }, { status: 404 });
@@ -44,7 +47,14 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ success: false, error: "You are already on this plan." }, { status: 400 });
     }
     if (!target.stripePriceId) {
-      return NextResponse.json({ success: false, error: "To move to the Free plan, cancel your subscription instead." }, { status: 400 });
+      // A custom tier is invoiced offline and has no Stripe price, so there is no
+      // subscription item to swap. Saying "cancel instead" would be wrong advice
+      // — cancelling drops them to free rather than onto the agreed plan.
+      const message =
+        target.visibility === "PRIVATE"
+          ? "This is a custom plan — contact your account manager to move onto it."
+          : "To move to the Free plan, cancel your subscription instead.";
+      return NextResponse.json({ success: false, error: message }, { status: 400 });
     }
 
     // Prevent downgrading below what the tenant is already using.

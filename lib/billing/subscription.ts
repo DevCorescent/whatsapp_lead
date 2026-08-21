@@ -87,7 +87,27 @@ export async function syncStripeSubscription(sub: Stripe.Subscription): Promise<
   const status = mapStripeStatus(sub.status);
 
   // Resolve the plan from the Stripe price id; fall back to the existing plan.
-  const existing = await prisma.subscription.findUnique({ where: { tenantId }, select: { planId: true } });
+  const existing = await prisma.subscription.findUnique({
+    where: { tenantId },
+    select: { planId: true, planLockedAt: true },
+  });
+
+  // A super-admin has put this workspace on an offline-invoiced custom tier, and
+  // this event is about a Stripe subscription that is no longer what they are
+  // on. Nothing is written — not the plan, not the period, not the status.
+  //
+  // Skipping the whole sync rather than just the planId is deliberate. Every
+  // field here describes the Stripe subscription, and copying its dates and
+  // status onto a manually negotiated arrangement would misreport the
+  // arrangement just as badly as changing the plan would. Returning null also
+  // stops the caller resetting the AI credits on invoice.paid, which would hand
+  // the tenant a fresh allowance on a period they are not billed for.
+  if (existing?.planLockedAt) {
+    console.log(
+      `[BILLING SYNC] Skipping ${sub.id} for tenant ${tenantId} — plan was set by an admin at ${existing.planLockedAt.toISOString()}`,
+    );
+    return null;
+  }
   const plan = priceId
     ? await prisma.plan.findFirst({ where: { stripePriceId: priceId }, select: { id: true } })
     : null;

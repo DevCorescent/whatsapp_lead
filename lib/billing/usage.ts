@@ -333,6 +333,14 @@ export async function assertWithinLimit(
       throw new Error(
         `${resource} is a per-request ceiling — use assertBelowCeiling, not assertWithinLimit.`,
       );
+
+    // Belongs to one agent, not to the workspace, so it cannot be answered from
+    // the tenant alone. Same reasoning as above: a silent pass here would mean
+    // per-agent caps quietly never applied.
+    case "aiUser":
+      throw new Error(
+        "aiUser is a per-agent allowance — use assertAgentAiCredits, not assertWithinLimit.",
+      );
   }
 
   if (isUnlimited(limit)) return;
@@ -344,14 +352,122 @@ export async function assertWithinLimit(
   }
 }
 
-/** Record consumed AI credits for the current period. Best-effort; never throws. */
-export async function incrementAiUsage(tenantId: string, amount = 1): Promise<void> {
+/**
+ * Record consumed AI credits for the current period. Best-effort; never throws.
+ *
+ * `userId` attributes the spend to an agent as well as to the workspace. It is
+ * optional because the auto-reply path has no user behind it — a customer's
+ * message triggered that, not a person clicking — and billing an absent agent
+ * would be worse than not attributing it at all.
+ */
+export async function incrementAiUsage(
+  tenantId: string,
+  amount = 1,
+  userId?: string | null,
+): Promise<void> {
   try {
     await prisma.subscription.updateMany({
       where: { tenantId },
       data: { aiCreditsUsed: { increment: amount } },
     });
+
+    if (userId) {
+      // Scoped to the tenant as well as the id: a session is trusted for who it
+      // says it is, not for which workspace it can decrement.
+      await prisma.user.updateMany({
+        where: { id: userId, tenantId },
+        data: { aiCreditsUsed: { increment: amount } },
+      });
+    }
   } catch (error) {
     console.error("[BILLING] Failed to record AI usage:", error);
   }
+}
+
+// ─── Per-agent AI allowance ──────────────────────────────────────────────────
+//
+// The plan's AI credits are a workspace pool. Nothing stopped one agent
+// draining a month of it on AI Suggest before their colleagues logged in, and
+// nothing attributed the spend to them afterwards — `incrementAiUsage` was not
+// even passed a userId.
+//
+// A per-agent cap is opt-in: `User.aiCreditLimit` is null by default, which
+// means "draw on the pool", exactly as every account behaved before.
+
+export interface AgentAiBudget {
+  /** Null when this agent has no personal cap. */
+  limit: number | null;
+  used: number;
+  /** The billing period the counter belongs to. */
+  periodStart: Date | null;
+}
+
+/**
+ * This agent's allowance, resetting the counter if it belongs to a period that
+ * has since ended.
+ *
+ * Reset lazily on read rather than by a nightly job. A cron would have to know
+ * every tenant's billing window, and would zero the wrong agents each time a
+ * super-admin re-dated a custom plan; reading it when it is used cannot drift
+ * from the period that is actually in force.
+ */
+export async function resolveAgentAiBudget(
+  tenantId: string,
+  userId: string,
+): Promise<AgentAiBudget> {
+  const [user, subscription] = await Promise.all([
+    prisma.user.findFirst({
+      where: { id: userId, tenantId },
+      select: { aiCreditLimit: true, aiCreditsUsed: true, aiCreditsPeriodStart: true },
+    }),
+    prisma.subscription.findUnique({
+      where: { tenantId },
+      select: { currentPeriodStart: true },
+    }),
+  ]);
+
+  if (!user) return { limit: null, used: 0, periodStart: null };
+
+  const period = subscription?.currentPeriodStart ?? null;
+  const stale =
+    period !== null &&
+    (user.aiCreditsPeriodStart === null || user.aiCreditsPeriodStart.getTime() !== period.getTime());
+
+  if (stale) {
+    await prisma.user.update({
+      where: { id: userId },
+      data: { aiCreditsUsed: 0, aiCreditsPeriodStart: period },
+    });
+    return { limit: user.aiCreditLimit, used: 0, periodStart: period };
+  }
+
+  return {
+    limit: user.aiCreditLimit,
+    used: user.aiCreditsUsed,
+    periodStart: user.aiCreditsPeriodStart,
+  };
+}
+
+/**
+ * Assert this agent may make one more AI request.
+ *
+ * Throws the same LimitError every other cap throws, under the `aiUser`
+ * resource, so the existing upgrade dialog renders it with a usage bar and no
+ * new client code. The copy differs because the remedy does: an agent cannot
+ * upgrade their way out of a cap their own admin set.
+ */
+export async function assertAgentAiCredits(
+  tenantId: string,
+  userId: string,
+  increment = 1,
+): Promise<void> {
+  const budget = await resolveAgentAiBudget(tenantId, userId);
+  if (budget.limit === null || isUnlimited(budget.limit)) return;
+  if (budget.used + increment <= budget.limit) return;
+
+  const { planName } = await resolveTenantPlan(tenantId);
+  throw new LimitError(
+    { resource: "aiUser", used: budget.used, limit: budget.limit, planName },
+    `You've used your allowance of ${budget.limit} ${RESOURCE_LABEL.aiUser}.`,
+  );
 }

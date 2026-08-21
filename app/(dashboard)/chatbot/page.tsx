@@ -34,6 +34,7 @@ import {
   useDuplicateFlow,
 } from "@/hooks/useFlows";
 import { FlowBuilder } from "@/components/chatbot/FlowBuilder";
+import { ExportButton } from "@/components/ExportButton";
 
 export default function ChatbotPage() {
   const { data, isLoading, isError } = useFlows();
@@ -122,10 +123,16 @@ export default function ChatbotPage() {
         title="Chatbot"
         description="Automate replies with keyword-triggered conversation flows."
         action={
-          <Button onClick={() => setOpen(true)}>
-            <Plus className="h-4 w-4" />
-            New Flow
-          </Button>
+          <div className="flex items-center gap-2">
+            {/* Where the flows are is where you want what customers answered in
+                them. Their choices and typed replies live nowhere else — the
+                conversation's own flowVars is cleared the moment a flow ends. */}
+            <ExportButton resource="ivr-responses" label="Export responses" />
+            <Button onClick={() => setOpen(true)}>
+              <Plus className="h-4 w-4" />
+              New Flow
+            </Button>
+          </div>
         }
       />
 

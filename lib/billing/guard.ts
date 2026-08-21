@@ -22,7 +22,12 @@ import {
   type LimitResource,
   type PlanFeature,
 } from "@/lib/billing/limits";
-import { assertBelowCeiling, assertFeature, assertWithinLimit } from "@/lib/billing/usage";
+import {
+  assertAgentAiCredits,
+  assertBelowCeiling,
+  assertFeature,
+  assertWithinLimit,
+} from "@/lib/billing/usage";
 
 /**
  * Convert a thrown plan refusal into its 403. Anything else propagates: a
@@ -47,6 +52,26 @@ export async function guardLimit(
 ): Promise<NextResponse | null> {
   try {
     await assertWithinLimit(tenantId, resource, increment);
+    return null;
+  } catch (error) {
+    return refusalResponse(error);
+  }
+}
+
+/**
+ * Check whether this agent has personal AI allowance left.
+ *
+ * Runs alongside `guardLimit(tenantId, "ai")`, not instead of it: the workspace
+ * pool and the agent's share are two different ceilings, and either can be the
+ * one that stops a request.
+ */
+export async function guardAgentAi(
+  tenantId: string,
+  userId: string,
+  increment = 1,
+): Promise<NextResponse | null> {
+  try {
+    await assertAgentAiCredits(tenantId, userId, increment);
     return null;
   } catch (error) {
     return refusalResponse(error);

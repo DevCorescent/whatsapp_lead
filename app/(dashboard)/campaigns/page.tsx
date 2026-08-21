@@ -28,6 +28,7 @@ import {
   SkeletonRows,
   inputClass,
 } from "@/components/ui";
+import { ExportButton } from "@/components/ExportButton";
 import { cn, formatCompact, formatDate } from "@/lib/utils";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -226,10 +227,13 @@ export default function CampaignsPage() {
         title="Campaigns"
         description="Broadcast WhatsApp templates to a segment and track delivery in real time."
         action={
-          <Button onClick={() => setOpen(true)}>
-            <Plus className="h-4 w-4" />
-            Create Campaign
-          </Button>
+          <div className="flex items-center gap-2">
+            <ExportButton resource="campaigns" />
+            <Button onClick={() => setOpen(true)}>
+              <Plus className="h-4 w-4" />
+              Create Campaign
+            </Button>
+          </div>
         }
       />
 

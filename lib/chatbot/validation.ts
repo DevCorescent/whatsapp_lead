@@ -22,6 +22,12 @@ export interface ValidationIssue {
     | "set_variable_incomplete"
     | "duplicate_variable"
     | "condition_no_routes"
+    | "menu_no_options"
+    | "menu_option_no_label"
+    | "menu_duplicate_labels"
+    | "menu_too_many_options"
+    | "menu_option_unwired"
+    | "menu_no_prompt"
     | "dead_end"
     | "empty_flow";
   severity: ValidationSeverity;
@@ -163,6 +169,64 @@ export function validateFlow(doc: FlowDocument): ValidationResult {
       const d = node.data as { routes?: unknown[] };
       if (!Array.isArray(d.routes) || d.routes.length === 0) {
         issues.push({ code: "condition_no_routes", severity: "error", message: `Condition "${labelOf(node)}" has no routes.`, nodeId: node.id });
+      }
+    }
+    if (node.type === "menu") {
+      const d = node.data as {
+        prompt?: string;
+        options?: { id?: string; label?: string }[];
+        showBack?: boolean;
+        showHome?: boolean;
+        showAgent?: boolean;
+      };
+      const options = (d.options ?? []).filter((o) => o?.id);
+
+      if (options.length === 0) {
+        issues.push({ code: "menu_no_options", severity: "error", message: `Menu "${labelOf(node)}" has no options.`, nodeId: node.id });
+      }
+      if (!d.prompt?.trim()) {
+        // A warning, not an error. The menu still sends with a default prompt —
+        // it just says nothing about what the customer is choosing between.
+        issues.push({ code: "menu_no_prompt", severity: "warning", message: `Menu "${labelOf(node)}" has no prompt, so customers will not know what they are picking.`, nodeId: node.id });
+      }
+
+      const unlabelled = options.filter((o) => !o.label?.trim());
+      if (unlabelled.length > 0) {
+        issues.push({ code: "menu_option_no_label", severity: "error", message: `Menu "${labelOf(node)}" has ${unlabelled.length} option(s) with no label.`, nodeId: node.id });
+      }
+
+      // Two rows reading the same thing cannot be told apart by a customer, and
+      // a typed reply matching the label would pick whichever came first.
+      const seen = new Set<string>();
+      const duplicate = options.some((o) => {
+        const key = (o.label ?? "").trim().toLowerCase();
+        if (!key) return false;
+        if (seen.has(key)) return true;
+        seen.add(key);
+        return false;
+      });
+      if (duplicate) {
+        issues.push({ code: "menu_duplicate_labels", severity: "error", message: `Menu "${labelOf(node)}" has two options with the same label.`, nodeId: node.id });
+      }
+
+      // WhatsApp caps a list at ten rows, and the navigation rows occupy slots
+      // the author did not add by hand.
+      const nav = (d.showBack ? 1 : 0) + (d.showHome ? 1 : 0) + (d.showAgent ? 1 : 0);
+      if (options.length + nav > 10) {
+        issues.push({ code: "menu_too_many_options", severity: "error", message: `Menu "${labelOf(node)}" has ${options.length + nav} rows including the ways out. WhatsApp sends at most 10.`, nodeId: node.id });
+      }
+
+      // Each option id is an edge handle; one with no edge silently falls through
+      // to whatever the node's default output is, which is rarely intended.
+      const wired = new Set(outgoing(doc.edges, node.id).map((e) => e.sourceHandle));
+      const unwired = options.filter((o) => !wired.has(o.id!));
+      if (unwired.length > 0 && wired.size > 0) {
+        issues.push({
+          code: "menu_option_unwired",
+          severity: "warning",
+          message: `Menu "${labelOf(node)}": ${unwired.map((o) => o.label).join(", ")} lead nowhere.`,
+          nodeId: node.id,
+        });
       }
     }
     if (node.type === "template") {

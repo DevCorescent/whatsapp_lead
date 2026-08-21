@@ -50,6 +50,8 @@ export interface PlanDTO {
   stripePriceId: string | null;
   features: string[];
   sortOrder: number;
+  /** PRIVATE marks a custom tier. Only ever this tenant's own — see lib/billing/plans.ts. */
+  visibility: "PUBLIC" | "PRIVATE";
 }
 
 export interface PlansResponse {

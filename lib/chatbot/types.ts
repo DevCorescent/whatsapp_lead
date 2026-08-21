@@ -13,6 +13,7 @@ export type NodeKind =
   | "message"
   | "template"
   | "question"
+  | "menu"
   | "condition"
   | "api"
   | "delay"
@@ -45,6 +46,83 @@ export interface QuestionNodeData {
   /** Variable the answer is stored under, referenced later as {{variable}}. */
   variable?: string;
   validation?: QuestionValidation;
+}
+
+// ─── Menu (IVR) ───────────────────────────────────────────────────────────────
+
+/**
+ * One choice in a menu.
+ *
+ * `id` does three jobs at once, which is why it must be stable: it is the edge
+ * handle in the builder, the row id sent to WhatsApp, and what comes back when
+ * the customer taps. Renaming a label must never move a branch.
+ */
+export interface MenuOption {
+  id: string;
+  label: string;
+  /** Sub-line under the label. List rendering only — buttons have no room. */
+  description?: string;
+  /** Extra words that also select this option when the customer types instead of taps. */
+  keywords?: string[];
+  /**
+   * What choosing this option says about the person choosing it.
+   *
+   * Same scale as a FAQ question's — see lib/leadSignal.ts — because they are
+   * the same event: the customer picked a commercial question off a list.
+   * Absent means "none", the right default for an option nobody has classified.
+   */
+  intent?: "none" | "interest" | "buying";
+}
+
+/** How a menu is put on the wire. */
+export type MenuRender = "auto" | "buttons" | "list";
+
+/** What happens when the customer keeps replying with something unrecognised. */
+export type MenuFallback = "repeat" | "branch" | "handoff";
+
+export interface MenuNodeData {
+  label?: string;
+  /** The question above the options. */
+  prompt?: string;
+  /** Small print under the options. WhatsApp shows it greyed. */
+  footer?: string;
+  options?: MenuOption[];
+
+  /**
+   * auto sends buttons at three options or fewer and a list above that, which is
+   * exactly where WhatsApp's own limit falls. Forcing one or the other is for
+   * when the shape matters more than the count — three options that must look
+   * like a list because the next menu is one.
+   */
+  render?: MenuRender;
+  /** Label on the button that opens a list. WhatsApp caps this at 20 characters. */
+  listButtonText?: string;
+  /** Heading above the rows inside the list sheet. */
+  listSectionTitle?: string;
+
+  /** Variable the chosen option's label is stored under, for later {{...}} use. */
+  saveAs?: string;
+
+  /** Sent when the reply matches no option. */
+  invalidMessage?: string;
+  /** How many unrecognised replies to tolerate before taking the fallback. */
+  maxAttempts?: number;
+  /**
+   * repeat  — ask again forever, never giving up on the customer.
+   * branch  — leave via the "No match" handle after maxAttempts.
+   * handoff — hand to a human after maxAttempts.
+   */
+  fallback?: MenuFallback;
+
+  /** Offer a row that returns to the previous menu. */
+  showBack?: boolean;
+  backLabel?: string;
+  /** Offer a row that returns to the first menu in the flow. */
+  showHome?: boolean;
+  homeLabel?: string;
+  /** Offer a row that ends the flow and fetches a person. */
+  showAgent?: boolean;
+  agentLabel?: string;
 }
 
 export type ConditionOperator =
@@ -142,6 +220,7 @@ export interface NodeDataMap {
   message: MessageNodeData;
   template: TemplateNodeData;
   question: QuestionNodeData;
+  menu: MenuNodeData;
   condition: ConditionNodeData;
   api: ApiNodeData;
   delay: DelayNodeData;
@@ -202,6 +281,7 @@ export const NODE_KINDS: NodeKindMeta[] = [
   { kind: "message", label: "Message", hint: "Send text or media", accent: "bg-emerald-50 text-emerald-700", chip: "bg-emerald-100 text-emerald-700", creatable: true, hasInput: true, hasOutput: true },
   { kind: "template", label: "Send Template", hint: "Send a WhatsApp approved template", accent: "bg-cyan-50 text-cyan-700", chip: "bg-cyan-100 text-cyan-700", creatable: true, hasInput: true, hasOutput: true },
   { kind: "question", label: "Question", hint: "Ask and store the reply", accent: "bg-sky-50 text-sky-700", chip: "bg-sky-100 text-sky-700", creatable: true, hasInput: true, hasOutput: true },
+  { kind: "menu", label: "Menu", hint: "Offer tappable options and branch on the choice", accent: "bg-fuchsia-50 text-fuchsia-700", chip: "bg-fuchsia-100 text-fuchsia-700", creatable: true, hasInput: true, hasOutput: true },
   { kind: "condition", label: "Condition", hint: "Branch on a variable", accent: "bg-amber-50 text-amber-800", chip: "bg-amber-100 text-amber-800", creatable: true, hasInput: true, hasOutput: true },
   { kind: "api", label: "API Call", hint: "Call an external URL", accent: "bg-violet-50 text-violet-700", chip: "bg-violet-100 text-violet-700", creatable: true, hasInput: true, hasOutput: true },
   { kind: "delay", label: "Delay", hint: "Wait before continuing", accent: "bg-orange-50 text-orange-700", chip: "bg-orange-100 text-orange-700", creatable: true, hasInput: true, hasOutput: true },
@@ -222,6 +302,25 @@ export function defaultNodeData<K extends NodeKind>(kind: K): NodeDataMap[K] {
       return { text: "", typingDelay: 0 } as NodeDataMap[K];
     case "question":
       return { question: "", variable: "", validation: "none" } as NodeDataMap[K];
+    case "menu":
+      // Two options rather than none: an empty menu is not a thing anyone wants,
+      // and the first edit is always renaming a placeholder rather than working
+      // out that options exist at all.
+      return {
+        prompt: "",
+        options: [
+          { id: "o1", label: "Option 1" },
+          { id: "o2", label: "Option 2" },
+        ],
+        render: "auto",
+        listButtonText: "Choose",
+        maxAttempts: 2,
+        fallback: "repeat",
+        invalidMessage: "Sorry, I did not catch that. Please pick one of the options.",
+        showBack: false,
+        showHome: false,
+        showAgent: false,
+      } as NodeDataMap[K];
     case "condition":
       return {
         routes: [{ id: "r1", label: "Route 1", operator: "eq", value: "" }],

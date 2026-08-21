@@ -1,6 +1,6 @@
 "use client";
 
-import { Copy, Trash2, X } from "lucide-react";
+import { ChevronDown, ChevronUp, Copy, Trash2, X } from "lucide-react";
 import { Button, Field, inputClass } from "@/components/ui";
 import { cn } from "@/lib/utils";
 import { NODE_META } from "@/lib/chatbot/types";
@@ -11,6 +11,8 @@ import type {
   AiNodeData,
   ConditionNodeData,
   ConditionRoute,
+  MenuNodeData,
+  MenuOption,
   DelayNodeData,
   FlowNode,
   HandoffNodeData,
@@ -22,6 +24,7 @@ import type {
   SetVariableNodeData,
 } from "@/lib/chatbot/types";
 import { NODE_ICON } from "./nodeMeta";
+import { INTENT_CHOICES, INTENT_POINTS } from "@/lib/intent";
 
 const labelCls = "mb-1.5 block text-sm font-medium text-slate-700";
 
@@ -80,6 +83,7 @@ export function PropertiesPanel({
         {node.type === "message" && <MessageFields data={data as MessageNodeData} set={set} />}
         {node.type === "template" && <TemplateFields data={data as TemplateNodeData} set={set} />}
         {node.type === "question" && <QuestionFields data={data as QuestionNodeData} set={set} />}
+        {node.type === "menu" && <MenuFields data={data as MenuNodeData} set={set} />}
         {node.type === "condition" && <ConditionFields data={data as ConditionNodeData} set={set} />}
         {node.type === "api" && <ApiFields data={data as ApiNodeData} set={set} />}
         {node.type === "delay" && <DelayFields data={data as DelayNodeData} set={set} />}
@@ -186,6 +190,355 @@ function QuestionFields({ data, set }: { data: QuestionNodeData; set: Setter }) 
         </select>
       </div>
     </>
+  );
+}
+
+
+/**
+ * Everything a menu can be tuned to do.
+ *
+ * Grouped by the question the author is answering: what does it say, what can
+ * they pick, how does it look, where can they escape to, and what happens when
+ * they reply with something nobody expected. That last group is the one every
+ * IVR gets wrong by leaving it at "repeat forever".
+ */
+function MenuFields({ data, set }: { data: MenuNodeData; set: Setter }) {
+  const options = data.options ?? [];
+
+  const update = (i: number, patch: Partial<MenuOption>) =>
+    set({ options: options.map((o, idx) => (idx === i ? { ...o, ...patch } : o)) });
+
+  const add = () =>
+    set({
+      options: [
+        ...options,
+        // Time-based id, never positional: the id is the edge handle, so
+        // reusing "o3" after deleting the third option would silently inherit
+        // the deleted option's wire.
+        { id: `o${Date.now().toString(36)}`, label: `Option ${options.length + 1}` },
+      ],
+    });
+
+  const remove = (i: number) => set({ options: options.filter((_, idx) => idx !== i) });
+
+  const move = (i: number, delta: number) => {
+    const next = [...options];
+    const target = i + delta;
+    if (target < 0 || target >= next.length) return;
+    [next[i], next[target]] = [next[target], next[i]];
+    set({ options: next });
+  };
+
+  const navCount = (data.showBack ? 1 : 0) + (data.showHome ? 1 : 0) + (data.showAgent ? 1 : 0);
+  const total = options.length + navCount;
+  const mode = data.render === "list" ? "list" : data.render === "buttons" && total <= 3 ? "buttons" : total <= 3 ? "buttons" : "list";
+
+  return (
+    <div className="space-y-4">
+      <label className="block">
+        <span className={labelCls}>Prompt</span>
+        <textarea
+          className={cn(inputClass, "min-h-20 text-sm")}
+          value={data.prompt ?? ""}
+          onChange={(e) => set({ prompt: e.target.value })}
+          placeholder="What would you like help with?"
+        />
+        <span className="mt-1 block text-xs text-slate-500">
+          Supports {"{{variable}}"} from earlier in the flow.
+        </span>
+      </label>
+
+      <label className="block">
+        <span className={labelCls}>Footer (optional)</span>
+        <input
+          className={cn(inputClass, "h-9 text-sm")}
+          value={data.footer ?? ""}
+          onChange={(e) => set({ footer: e.target.value })}
+          placeholder="Reply with a number if the buttons do not show"
+        />
+      </label>
+
+      {/* ── Options ─────────────────────────────────────────────────────── */}
+      <div className="space-y-2">
+        <span className={labelCls}>Options</span>
+        {options.map((o, i) => (
+          <div key={o.id} className="space-y-2 rounded-lg border border-slate-200 p-2.5">
+            <div className="flex items-center gap-1.5">
+              <span className="w-5 shrink-0 text-center text-xs font-semibold tabular-nums text-slate-400">
+                {i + 1}
+              </span>
+              <input
+                className={cn(inputClass, "h-8 text-xs")}
+                value={o.label}
+                onChange={(e) => update(i, { label: e.target.value })}
+                placeholder="Option label"
+              />
+              <button
+                onClick={() => move(i, -1)}
+                disabled={i === 0}
+                aria-label="Move option up"
+                className="rounded p-1 text-slate-400 hover:bg-slate-100 disabled:opacity-30"
+              >
+                <ChevronUp className="h-3.5 w-3.5" />
+              </button>
+              <button
+                onClick={() => move(i, 1)}
+                disabled={i === options.length - 1}
+                aria-label="Move option down"
+                className="rounded p-1 text-slate-400 hover:bg-slate-100 disabled:opacity-30"
+              >
+                <ChevronDown className="h-3.5 w-3.5" />
+              </button>
+              <button
+                onClick={() => remove(i)}
+                aria-label="Remove option"
+                className="rounded p-1 text-slate-400 hover:bg-rose-50 hover:text-rose-600"
+              >
+                <Trash2 className="h-3.5 w-3.5" />
+              </button>
+            </div>
+
+            {mode === "list" && (
+              <input
+                className={cn(inputClass, "h-8 text-xs")}
+                value={o.description ?? ""}
+                onChange={(e) => update(i, { description: e.target.value })}
+                placeholder="Sub-line (list view only)"
+              />
+            )}
+
+            <input
+              className={cn(inputClass, "h-8 text-xs")}
+              value={(o.keywords ?? []).join(", ")}
+              onChange={(e) =>
+                update(i, {
+                  keywords: e.target.value.split(",").map((k) => k.trim()).filter(Boolean),
+                })
+              }
+              placeholder="Also matches when typed: price, pricing, cost"
+            />
+
+            {/* What picking this says about the customer. Same scale as a FAQ
+                question's, because it is the same event — they chose a
+                commercial question off a list. */}
+            <div className="flex flex-wrap items-center gap-1.5">
+              <span className="text-[11px] text-slate-500">Signals:</span>
+              {INTENT_CHOICES.map((choice) => {
+                const active = (o.intent ?? "none") === choice.value;
+                return (
+                  <button
+                    key={choice.value}
+                    type="button"
+                    title={choice.hint}
+                    aria-pressed={active}
+                    onClick={() => update(i, { intent: choice.value })}
+                    className={cn(
+                      "rounded-full px-2 py-0.5 text-[11px] font-medium transition",
+                      active
+                        ? choice.value === "buying"
+                          ? "bg-emerald-600 text-white"
+                          : choice.value === "interest"
+                            ? "bg-amber-500 text-white"
+                            : "bg-slate-200 text-slate-700"
+                        : "bg-white text-slate-500 ring-1 ring-inset ring-slate-200 hover:bg-slate-50",
+                    )}
+                  >
+                    {choice.label}
+                    {active && INTENT_POINTS[choice.value] > 0 && (
+                      <span className="ml-1 opacity-80">+{INTENT_POINTS[choice.value]}</span>
+                    )}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        ))}
+        <button
+          onClick={add}
+          className="w-full rounded-lg border border-dashed border-slate-300 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50"
+        >
+          + Add option
+        </button>
+        <p className="text-xs text-slate-500">
+          {/* The single most common way to get a 400 back from Meta, so it is
+              stated as a live count rather than left in the docs. */}
+          {total} option{total === 1 ? "" : "s"} — sending as{" "}
+          <strong>{mode === "buttons" ? "buttons" : "a list"}</strong>.
+          {mode === "list" && total > 10 && " Only the first 10 will be sent."}
+        </p>
+      </div>
+
+      {/* ── Appearance ──────────────────────────────────────────────────── */}
+      <div className="grid grid-cols-2 gap-2">
+        <label className="block">
+          <span className={labelCls}>Send as</span>
+          <select
+            className={cn(inputClass, "h-9 text-sm")}
+            value={data.render ?? "auto"}
+            onChange={(e) => set({ render: e.target.value as MenuNodeData["render"] })}
+          >
+            <option value="auto">Auto (buttons up to 3)</option>
+            <option value="buttons">Buttons</option>
+            <option value="list">List</option>
+          </select>
+        </label>
+        <label className="block">
+          <span className={labelCls}>Save choice as</span>
+          <input
+            className={cn(inputClass, "h-9 text-sm")}
+            value={data.saveAs ?? ""}
+            onChange={(e) => set({ saveAs: e.target.value.replace(/[^\w]/g, "") })}
+            placeholder="chosen_topic"
+          />
+        </label>
+      </div>
+
+      {mode === "list" && (
+        <div className="grid grid-cols-2 gap-2">
+          <label className="block">
+            <span className={labelCls}>List button</span>
+            <input
+              className={cn(inputClass, "h-9 text-sm")}
+              value={data.listButtonText ?? ""}
+              onChange={(e) => set({ listButtonText: e.target.value })}
+              placeholder="Choose"
+            />
+          </label>
+          <label className="block">
+            <span className={labelCls}>Section title</span>
+            <input
+              className={cn(inputClass, "h-9 text-sm")}
+              value={data.listSectionTitle ?? ""}
+              onChange={(e) => set({ listSectionTitle: e.target.value })}
+              placeholder="Options"
+            />
+          </label>
+        </div>
+      )}
+
+      {/* ── Escape routes ───────────────────────────────────────────────── */}
+      <div className="space-y-2 rounded-lg border border-slate-200 p-3">
+        <span className={labelCls}>Ways out</span>
+        <p className="-mt-1 mb-1 text-xs text-slate-500">
+          {/* The thing that separates a usable IVR from a trap. Added
+              automatically as extra rows, and resolved by the engine — they need
+              no wiring on the canvas. */}
+          Added as extra rows. A tree you can only go down is a trap.
+        </p>
+        <NavToggle
+          checked={!!data.showBack}
+          onChange={(v) => set({ showBack: v })}
+          label="Back"
+          hint="Returns to the previous menu. Hidden on the first one."
+          value={data.backLabel ?? ""}
+          onValue={(v) => set({ backLabel: v })}
+          placeholder="◀ Back"
+        />
+        <NavToggle
+          checked={!!data.showHome}
+          onChange={(v) => set({ showHome: v })}
+          label="Main menu"
+          hint="Jumps back to the first menu. Hidden on the first one."
+          value={data.homeLabel ?? ""}
+          onValue={(v) => set({ homeLabel: v })}
+          placeholder="🏠 Main menu"
+        />
+        <NavToggle
+          checked={!!data.showAgent}
+          onChange={(v) => set({ showAgent: v })}
+          label="Talk to a person"
+          hint="Ends the flow and assigns the conversation to an agent."
+          value={data.agentLabel ?? ""}
+          onValue={(v) => set({ agentLabel: v })}
+          placeholder="💬 Talk to a person"
+        />
+      </div>
+
+      {/* ── When nothing matches ────────────────────────────────────────── */}
+      <div className="space-y-2 rounded-lg border border-slate-200 p-3">
+        <span className={labelCls}>When the reply matches nothing</span>
+        <input
+          className={cn(inputClass, "h-9 text-sm")}
+          value={data.invalidMessage ?? ""}
+          onChange={(e) => set({ invalidMessage: e.target.value })}
+          placeholder="Sorry, I did not catch that."
+        />
+        <div className="grid grid-cols-2 gap-2">
+          <label className="block">
+            <span className={labelCls}>Tries allowed</span>
+            <input
+              type="number"
+              min={1}
+              max={5}
+              className={cn(inputClass, "h-9 text-sm")}
+              value={data.maxAttempts ?? 2}
+              onChange={(e) => set({ maxAttempts: Math.max(1, Number(e.target.value) || 1) })}
+            />
+          </label>
+          <label className="block">
+            <span className={labelCls}>Then</span>
+            <select
+              className={cn(inputClass, "h-9 text-sm")}
+              value={data.fallback ?? "repeat"}
+              onChange={(e) => set({ fallback: e.target.value as MenuNodeData["fallback"] })}
+            >
+              <option value="repeat">Keep asking</option>
+              <option value="branch">Take the No match branch</option>
+              <option value="handoff">Hand to an agent</option>
+            </select>
+          </label>
+        </div>
+        <p className="text-xs text-slate-500">
+          Customers can always reply with the option number, its exact wording, or any keyword you
+          listed — not only by tapping.
+        </p>
+      </div>
+    </div>
+  );
+}
+
+/** A "way out" row: switch it on, then optionally rename what it says. */
+function NavToggle({
+  checked,
+  onChange,
+  label,
+  hint,
+  value,
+  onValue,
+  placeholder,
+}: {
+  checked: boolean;
+  onChange: (v: boolean) => void;
+  label: string;
+  hint: string;
+  value: string;
+  onValue: (v: string) => void;
+  placeholder: string;
+}) {
+  return (
+    <div className="space-y-1.5">
+      <label className="flex cursor-pointer items-start gap-2">
+        <input
+          type="checkbox"
+          checked={checked}
+          onChange={(e) => onChange(e.target.checked)}
+          className="mt-0.5 h-4 w-4 shrink-0 rounded border-slate-300 text-[#0B6E4F] focus:ring-emerald-200"
+        />
+        <span>
+          <span className="text-sm font-medium text-slate-800">{label}</span>
+          <span className="block text-xs text-slate-500">{hint}</span>
+        </span>
+      </label>
+      {checked && (
+        <input
+          className={cn(inputClass, "ml-6 h-8 text-xs")}
+          style={{ width: "calc(100% - 1.5rem)" }}
+          value={value}
+          onChange={(e) => onValue(e.target.value)}
+          placeholder={placeholder}
+        />
+      )}
+    </div>
   );
 }
 

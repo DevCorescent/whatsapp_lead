@@ -23,7 +23,14 @@ export default function PlansPage() {
   const plans = data?.plans ?? [];
   const currentPlanId = data?.currentPlanId ?? null;
   const currentPlan = plans.find((p) => p.id === currentPlanId) ?? null;
-  const hasActivePaid = Boolean(currentPlan && currentPlan.priceMonthly > 0 && data?.status === "ACTIVE");
+  // stripePriceId, not just a non-zero price. A workspace on a custom tier pays
+  // against an invoice rather than a Stripe subscription, so there is no
+  // subscription item to swap and /api/billing/change would refuse — sending it
+  // there would dead-end the one customer most likely to be calling their rep.
+  // Checkout is the right path: it creates the Stripe subscription they lack.
+  const hasActivePaid = Boolean(
+    currentPlan && currentPlan.priceMonthly > 0 && currentPlan.stripePriceId && data?.status === "ACTIVE",
+  );
 
   const choose = async (plan: PlanDTO) => {
     setBusyId(plan.id);
@@ -103,12 +110,19 @@ export default function PlansPage() {
               <Card key={plan.id} className={cn("flex flex-col p-5", isCurrent && "ring-2 ring-emerald-500")}>
                 <div className="flex items-center justify-between">
                   <h3 className="text-lg font-semibold text-slate-900">{plan.displayName || plan.name}</h3>
-                  {isCurrent && (
-                    <Badge className="bg-emerald-50 text-emerald-700 ring-emerald-600/20">
-                      <Sparkles className="mr-1 h-3 w-3" />
-                      Current
-                    </Badge>
-                  )}
+                  <span className="flex items-center gap-1.5">
+                    {/* A tier built for this workspace alone. It appears here
+                        only because they are on it — see listPlansFor. */}
+                    {plan.visibility === "PRIVATE" && (
+                      <Badge className="bg-violet-50 text-violet-700 ring-violet-600/20">Custom</Badge>
+                    )}
+                    {isCurrent && (
+                      <Badge className="bg-emerald-50 text-emerald-700 ring-emerald-600/20">
+                        <Sparkles className="mr-1 h-3 w-3" />
+                        Current
+                      </Badge>
+                    )}
+                  </span>
                 </div>
 
                 <p className="mt-2">

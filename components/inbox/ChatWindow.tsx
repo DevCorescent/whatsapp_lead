@@ -18,6 +18,8 @@ import {
   Reply,
   Send,
   Smile,
+  BookOpen,
+  HelpCircle,
   Sparkles,
   StickyNote,
   Trash2,
@@ -31,6 +33,7 @@ import { useSendMessage, useSetConversationAiActive } from "@/hooks/useMessages"
 import type { InteractivePayload } from "@/lib/validators/message";
 import { useQuickReplies, type QuickReply } from "@/hooks/useQuickReplies";
 import { contactName, type InboxConversation, type InboxMessage } from "./ConversationList";
+import { FaqMenuPicker } from "./FaqMenuPicker";
 import { AttachmentDropOverlay } from "./AttachmentDropOverlay";
 import { AttachmentPreviewModal } from "./AttachmentPreviewModal";
 import { useAttachmentComposer } from "./useAttachmentComposer";
@@ -133,6 +136,16 @@ export function ChatWindow({
   }, [showEmoji]);
 
   const [isAiGenerating, setIsAiGenerating] = useState(false);
+  /**
+   * Documents the current AI draft was grounded in.
+   *
+   * Held only while the draft is in the composer. Once sent it is an ordinary
+   * agent message — a human read it, edited it and chose to send it, so it is
+   * theirs, and citing the knowledge base under it would be attributing their
+   * words to a document.
+   */
+  const [aiSources, setAiSources] = useState<string[]>([]);
+  const [showFaqMenu, setShowFaqMenu] = useState(false);
   const sendMessage = useSendMessage();
   const setAiActive = useSetConversationAiActive();
 
@@ -197,6 +210,7 @@ export function ChatWindow({
       return;
     }
     setDraft("");
+    setAiSources([]);
     setShowEmoji(false);
     setReplyTo(null);
   }
@@ -260,6 +274,7 @@ export function ChatWindow({
     if (!conversationId || isAiGenerating) return;
     setIsAiGenerating(true);
     setDraft("");
+    setAiSources([]);
 
     try {
       const res = await fetch("/api/ai/reply", {
@@ -288,8 +303,17 @@ export function ChatWindow({
           const payload = line.slice(6);
           if (payload === "[DONE]") break;
           try {
-            const parsed = JSON.parse(payload) as { chunk?: string; error?: string };
+            const parsed = JSON.parse(payload) as {
+              chunk?: string;
+              error?: string;
+              sources?: { name?: string }[];
+            };
             if (parsed.error) throw new Error(parsed.error);
+            // Arrives on its own frame ahead of the first token, so the agent can
+            // see what the draft is grounded in while it is still being written.
+            if (parsed.sources) {
+              setAiSources(parsed.sources.map((s) => s?.name ?? "").filter(Boolean));
+            }
             if (parsed.chunk) setDraft((d) => d + parsed.chunk);
           } catch {
             // ignore malformed SSE frames
@@ -587,6 +611,19 @@ export function ChatWindow({
               className={cn("text-emerald-600 hover:bg-emerald-50", isAiGenerating && "animate-pulse")}
             />
             <ComposerIcon
+              icon={HelpCircle}
+              label="Send a FAQ question menu"
+              active={showFaqMenu}
+              onClick={() => setShowFaqMenu((v) => !v)}
+              className="text-emerald-600 hover:bg-emerald-50"
+            />
+            {showFaqMenu && conversationId && (
+              <FaqMenuPicker
+                conversationId={conversationId}
+                onClose={() => setShowFaqMenu(false)}
+              />
+            )}
+            <ComposerIcon
               icon={LayoutList}
               label="Send interactive message (buttons or list)"
               active={showInteractive}
@@ -634,6 +671,13 @@ export function ChatWindow({
                 </button>
               ))}
             </div>
+          )}
+
+          {aiSources.length > 0 && draft && (
+            <p className="mb-1.5 flex items-center gap-1.5 text-[11px] text-slate-500">
+              <BookOpen className="h-3 w-3 shrink-0 text-emerald-600" />
+              Drafted from {aiSources.join(", ")}
+            </p>
           )}
 
           <input
@@ -808,6 +852,8 @@ function MessageBubble({
 
         <MessageBody message={message} tone={outbound ? "outbound" : "inbound"} />
 
+        <KnowledgeCitation message={message} outbound={outbound} />
+
         <div
           className={cn(
             "mt-1 flex items-center justify-end gap-1",
@@ -820,6 +866,48 @@ function MessageBubble({
       </div>
       {outbound && replyBtn}
     </div>
+  );
+}
+
+/**
+ * Which knowledge documents an AI reply was grounded in.
+ *
+ * Recorded on the message at send time (see saveOutboundMessage in lib/inbound.ts)
+ * rather than looked up now: retrieval depends on the index as it stood at that
+ * moment, so re-running the search after a document was edited or deleted would
+ * answer a different question.
+ *
+ * Shown because an AI reply is otherwise unattributable. When one turns out to be
+ * wrong, the useful question is which of the workspace's documents told it that —
+ * and without this line the answer is unavailable to anyone.
+ */
+function KnowledgeCitation({
+  message,
+  outbound,
+}: {
+  message: InboxMessage;
+  outbound: boolean;
+}) {
+  const raw = (message.metadata as { knowledgeSources?: unknown } | null | undefined)
+    ?.knowledgeSources;
+  if (!Array.isArray(raw) || raw.length === 0) return null;
+
+  const names = raw
+    .map((s) => (s && typeof s === "object" ? String((s as { name?: unknown }).name ?? "") : ""))
+    .filter(Boolean);
+  if (names.length === 0) return null;
+
+  return (
+    <p
+      className={cn(
+        "mt-1.5 border-t pt-1.5 text-[10px] leading-relaxed",
+        outbound ? "border-white/20 text-white/70" : "border-slate-100 text-slate-400",
+      )}
+      title={names.join(", ")}
+    >
+      <BookOpen className="mr-1 inline h-3 w-3 align-[-2px]" />
+      Answered from {names.join(", ")}
+    </p>
   );
 }
 

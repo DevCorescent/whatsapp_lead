@@ -36,6 +36,10 @@ interface QdrantRestClient {
   upsert(name: string, body: { wait?: boolean; points: unknown[] }): Promise<void>;
   search(name: string, body: Record<string, unknown>): Promise<ScoredPoint[]>;
   scroll(name: string, body: Record<string, unknown>): Promise<ScrollPage>;
+  setPayload(
+    name: string,
+    body: { wait?: boolean; payload: Record<string, unknown>; filter: unknown },
+  ): Promise<void>;
   delete(name: string, body: { wait?: boolean; filter: unknown }): Promise<void>;
 }
 
@@ -116,6 +120,16 @@ function makeClient(): QdrantRestClient {
         points: json.result?.points ?? [],
         nextOffset: json.result?.next_page_offset ?? null,
       };
+    },
+    // Merge keys into the payload of every point matching a filter, leaving the
+    // vectors and the rest of the payload untouched. Used to add a field to
+    // points that were written before that field existed — re-embedding them to
+    // change one string would cost the whole corpus again.
+    async setPayload(name, body) {
+      await call(`/collections/${enc(name)}/points/payload${waitQuery(body.wait)}`, "POST", {
+        payload: body.payload,
+        filter: body.filter,
+      });
     },
     async delete(name, body) {
       await call(`/collections/${enc(name)}/points/delete${waitQuery(body.wait)}`, "POST", { filter: body.filter });

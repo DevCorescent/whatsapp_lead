@@ -1,8 +1,9 @@
 "use client";
 
 import { useMemo, useRef, useState } from "react";
-import { AlertTriangle, Download, LayoutGrid, List, Plus, Search, Upload, X } from "lucide-react";
+import { AlertTriangle, LayoutGrid, List, Plus, Search, Upload, X } from "lucide-react";
 import type { LeadScoreLabel } from "@prisma/client";
+import { ExportButton } from "@/components/ExportButton";
 import { useLeads } from "@/hooks/useLeads";
 import { useLeadStages } from "@/hooks/useLeadStages";
 import {
@@ -150,10 +151,7 @@ export default function LeadsPage() {
               <Upload className="h-4 w-4" />
               Import
             </Button>
-            <Button variant="secondary" onClick={() => window.location.assign("/api/leads/export")}>
-              <Download className="h-4 w-4" />
-              Export CSV
-            </Button>
+            <ExportButton resource="leads" />
             <Button onClick={() => openAddModal(defaultStageId)}>
               <Plus className="h-4 w-4" />
               Add Lead

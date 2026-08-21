@@ -112,6 +112,13 @@ enum BillingCycle {
   ANNUAL
 }
 
+// Whether a plan is sold or granted. PRIVATE is the custom-plan marker: a tier a
+// super-admin negotiated for one customer, kept off every self-serve surface.
+enum PlanVisibility {
+  PUBLIC
+  PRIVATE
+}
+
 enum BusinessStatus {
   ACTIVE
   INACTIVE
@@ -130,22 +137,26 @@ model Tenant {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  users          User[]
-  businesses     Business[]
-  contacts       Contact[]
-  conversations  Conversation[]
-  leads          Lead[]
-  pipelineStages PipelineStage[]
-  campaigns      Campaign[]
-  templates      MessageTemplate[]
-  chatbotFlows   ChatbotFlow[]
-  tickets        Ticket[]
-  knowledgeDocs  KnowledgeDoc[]
-  tags           Tag[]
-  subscription   Subscription?
-  settings       TenantSettings?
-  auditLogs      AuditLog[]
-  quickReplies   QuickReply[]
+  users            User[]
+  businesses       Business[]
+  contacts         Contact[]
+  conversations    Conversation[]
+  leads            Lead[]
+  pipelineStages   PipelineStage[]
+  campaigns        Campaign[]
+  templates        MessageTemplate[]
+  chatbotFlows     ChatbotFlow[]
+  tickets          Ticket[]
+  knowledgeDocs    KnowledgeDoc[]
+  knowledgeFaqSets KnowledgeFaqSet[]
+  faqInteractions  FaqInteraction[]
+  flowRuns         FlowRun[]
+  tags             Tag[]
+  subscription     Subscription?
+  customPlans      Plan[]            @relation("CustomPlans")
+  settings         TenantSettings?
+  auditLogs        AuditLog[]
+  quickReplies     QuickReply[]
 
   @@map("tenants")
 }
@@ -182,18 +193,21 @@ model Business {
   createdAt             DateTime       @default(now())
   updatedAt             DateTime       @updatedAt
 
-  tenant        Tenant            @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  contacts      Contact[]
-  conversations Conversation[]
-  messages      Message[]
-  leads         Lead[]
-  campaigns     Campaign[]
-  templates     MessageTemplate[]
-  chatbotFlows  ChatbotFlow[]
-  tickets       Ticket[]
-  knowledgeDocs KnowledgeDoc[]
-  tags          Tag[]
-  quickReplies  QuickReply[]
+  tenant           Tenant            @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  contacts         Contact[]
+  conversations    Conversation[]
+  messages         Message[]
+  leads            Lead[]
+  campaigns        Campaign[]
+  templates        MessageTemplate[]
+  chatbotFlows     ChatbotFlow[]
+  tickets          Ticket[]
+  knowledgeDocs    KnowledgeDoc[]
+  knowledgeFaqSets KnowledgeFaqSet[]
+  faqInteractions  FaqInteraction[]
+  flowRuns         FlowRun[]
+  tags             Tag[]
+  quickReplies     QuickReply[]
 
   @@unique([slug, tenantId])
   @@index([tenantId])
@@ -247,8 +261,27 @@ model User {
   phone       String?
   isActive    Boolean   @default(true)
   lastLoginAt DateTime?
-  createdAt   DateTime  @default(now())
-  updatedAt   DateTime  @updatedAt
+
+  /// This agent's own share of the workspace AI allowance, per billing period.
+  ///
+  /// Null means no personal cap: they draw on the tenant pool until the plan
+  /// runs out, which is how every account behaved before this existed and stays
+  /// the default. A number caps them individually so one agent cannot spend the
+  /// month on AI Suggest before anyone else logs in.
+  aiCreditLimit Int?
+
+  /// Requests this agent has made in the period named by aiCreditsPeriodStart.
+  aiCreditsUsed Int @default(0)
+
+  /// Which billing period aiCreditsUsed belongs to.
+  ///
+  /// Carried so the counter can reset itself on first use in a new period rather
+  /// than needing a cron: a nightly job that reset agent counters would have to
+  /// know each tenant's billing window, and would zero the wrong ones every time
+  /// a super-admin re-dated a custom plan.
+  aiCreditsPeriodStart DateTime?
+  createdAt            DateTime  @default(now())
+  updatedAt            DateTime  @updatedAt
 
   tenant          Tenant               @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   assignedConvs   Conversation[]       @relation("AssignedAgent")
@@ -299,13 +332,15 @@ model Contact {
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
 
-  businessId    String
-  business      Business          @relation(fields: [businessId], references: [id], onDelete: Cascade)
-  tenant        Tenant            @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  conversations Conversation[]
-  leads         Lead[]
-  tags          ContactTag[]
-  campaignsSent CampaignContact[]
+  businessId      String
+  business        Business          @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  tenant          Tenant            @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  conversations   Conversation[]
+  leads           Lead[]
+  tags            ContactTag[]
+  campaignsSent   CampaignContact[]
+  faqInteractions FaqInteraction[]
+  flowRuns        FlowRun[]
 
   @@unique([phone, businessId])
   @@index([tenantId])
@@ -366,13 +401,15 @@ model Conversation {
   activeNodeId String?
   flowVars     Json?
 
-  businessId String
-  business   Business  @relation(fields: [businessId], references: [id], onDelete: Cascade)
-  tenant     Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  contact    Contact   @relation(fields: [contactId], references: [id])
-  assignedTo User?     @relation("AssignedAgent", fields: [assignedToId], references: [id])
-  messages   Message[]
-  ticket     Ticket?
+  businessId      String
+  business        Business         @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  tenant          Tenant           @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  contact         Contact          @relation(fields: [contactId], references: [id])
+  assignedTo      User?            @relation("AssignedAgent", fields: [assignedToId], references: [id])
+  messages        Message[]
+  ticket          Ticket?
+  faqInteractions FaqInteraction[]
+  flowRuns        FlowRun[]
 
   @@index([tenantId, status])
   @@index([businessId, status])
@@ -625,8 +662,9 @@ model ChatbotFlow {
   updatedAt   DateTime @updatedAt
 
   businessId String
-  business   Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
-  tenant     Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  business   Business  @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  tenant     Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  flowRuns   FlowRun[]
 
   @@index([businessId])
   @@map("chatbot_flows")
@@ -682,6 +720,151 @@ model KnowledgeDoc {
 
   @@index([businessId])
   @@map("knowledge_docs")
+}
+
+/// A set of FAQs drawn from SEVERAL documents at once.
+///
+/// Single-document FAQs live on KnowledgeDoc.metadata, written by the ingest
+/// worker as part of indexing. That has no room for a question whose answer
+/// spans two files — "what does the warranty cover and how do I claim it" is in
+/// the policy PDF and the claims form — and no row to hang a name on. This is
+/// that row.
+///
+/// docIds is a plain String[] rather than a relation: a set is a saved question
+/// list, not a container, and deleting a document it drew on must not delete the
+/// questions or block the delete. Ids that no longer resolve are filtered on
+/// read and reported as "1 document was removed".
+model KnowledgeFaqSet {
+  id         String   @id @default(cuid())
+  tenantId   String
+  businessId String
+  name       String
+  docIds     String[]
+
+  /// DocFaq[] — see lib/knowledgeFaq.ts. Json for the same reason the
+  /// per-document FAQs are: the list is read and written whole, never queried
+  /// into, and a row per question would buy ordering pain and nothing else.
+  faqs Json @default("[]")
+
+  /// FaqStyle — see lib/knowledgeFaq.ts. How answers in this set are written:
+  /// length, tone, audience, language. Stored rather than passed per click so a
+  /// question re-answered next month still matches the twenty beside it.
+  style Json?
+
+  /// The corpus was longer than the generator's cap, so the questions come from
+  /// the opening sections of each document rather than all of them.
+  truncated Boolean @default(false)
+  error     String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  business Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  tenant   Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId, businessId])
+  @@map("knowledge_faq_sets")
+}
+
+/// A customer tapping one of your FAQ questions in WhatsApp.
+///
+/// The most direct intent signal the product can collect. A contact who taps
+/// "How do I pay?" has told you something a page view never could — they chose
+/// the question, from a list, inside their own conversation.
+///
+/// Recorded from the row id we set when sending the list, never by matching the
+/// text back: Meta truncates a row title to 24 characters, so two questions
+/// about pricing would collide on any fuzzy match.
+model FaqInteraction {
+  id             String  @id @default(cuid())
+  tenantId       String
+  businessId     String
+  contactId      String
+  conversationId String?
+  /// The question as it was sent, in full — not the truncated row title.
+  question       String
+  /// "document" or "set", and the id of the collection it came from.
+  sourceKind     String
+  sourceId       String
+
+  /// The intent weight the question carried WHEN IT WAS TAPPED.
+  ///
+  /// Copied onto the row rather than read back from the collection, because the
+  /// collection is editable: reclassifying a question next month must not
+  /// silently rewrite what last month's taps are said to have meant.
+  intent    String   @default("none")
+  points    Int      @default(0)
+  createdAt DateTime @default(now())
+
+  tenant       Tenant        @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  business     Business      @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  contact      Contact       @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  conversation Conversation? @relation(fields: [conversationId], references: [id], onDelete: SetNull)
+
+  @@index([tenantId, businessId, createdAt(sort: Desc)])
+  @@index([contactId])
+  @@map("faq_interactions")
+}
+
+/// Whether a customer who entered a flow ever came out the other side.
+///
+/// There is no ABANDONED value on purpose. Abandonment is not an event anyone
+/// observes — the customer simply stops replying — so it cannot be written at
+/// the moment it happens without a cron guessing when "stopped" began. A run
+/// left IN_PROGRESS with no activity for a day IS abandoned, and deriving it at
+/// read time is both simpler and always current.
+enum FlowRunStatus {
+  IN_PROGRESS
+  COMPLETED
+  HANDOFF
+}
+
+/// One customer's journey through one chatbot flow.
+///
+/// Written because the conversation row cannot hold it: activeNodeId is
+/// overwritten at every step and flowVars is set to null the moment the flow
+/// ends, so the answers a customer gave — which menu branch, which address they
+/// typed — were destroyed exactly when they became worth keeping.
+///
+/// A run, not a tap. A flow is a session with a path through it, and the useful
+/// questions are about the whole journey: what did they choose, what did they
+/// tell us, and where did they give up.
+model FlowRun {
+  id             String        @id @default(cuid())
+  tenantId       String
+  businessId     String
+  contactId      String
+  conversationId String?
+  flowId         String?
+  /// Denormalised so a run survives its flow being deleted or renamed — the
+  /// export is a historical record, not a live join.
+  flowName       String
+  status         FlowRunStatus @default(IN_PROGRESS)
+
+  /// Ordered [{ nodeId, label, chose }] — the branches taken, in order.
+  path      Json @default("[]")
+  /// The flow's saveAs variables, snapshotted as they change. This is the
+  /// qualification data: what the customer picked and what they typed.
+  variables Json @default("{}")
+
+  /// Where the run currently stands, for drop-off analysis.
+  lastNodeId    String?
+  lastNodeLabel String?
+
+  startedAt DateTime  @default(now())
+  endedAt   DateTime?
+  updatedAt DateTime  @updatedAt
+
+  tenant       Tenant        @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  business     Business      @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  contact      Contact       @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  conversation Conversation? @relation(fields: [conversationId], references: [id], onDelete: SetNull)
+  flow         ChatbotFlow?  @relation(fields: [flowId], references: [id], onDelete: SetNull)
+
+  @@index([tenantId, businessId, startedAt(sort: Desc)])
+  @@index([flowId, status])
+  @@index([contactId])
+  @@map("flow_runs")
 }
 
 // ─── PLAN ────────────────────────────────────────────────────────────────────
@@ -740,6 +923,24 @@ model Plan {
   // get right, and a ribbon on two cards is a cosmetic bug, not a corrupt row.
   isPopular Boolean @default(false)
 
+  // A PRIVATE plan is a custom, negotiated tier. It never appears on the pricing
+  // page and no self-serve path will sell it — it exists only because a
+  // super-admin built it and assigned it. PUBLIC is the default so every plan
+  // that already exists stays on the pricing page across this migration.
+  visibility PlanVisibility @default(PUBLIC)
+
+  // The tenant a private plan was negotiated for. Null on a public plan, and
+  // permitted on a private one too: an unowned private tier can be assigned to
+  // several tenants (one agency deal, many workspaces), where an owned one is
+  // locked to its tenant and every purchase path refuses it for anyone else.
+  //
+  // SetNull rather than Cascade. Deleting a tenant must not try to delete a Plan
+  // row as well — Subscription.plan has no cascade, so that delete would be
+  // restricted and would take the whole tenant delete down with it. The plan is
+  // left behind as an unowned private tier for an admin to clear up.
+  ownerTenantId String?
+  ownerTenant   Tenant? @relation("CustomPlans", fields: [ownerTenantId], references: [id], onDelete: SetNull)
+
   stripePriceId String?
   aiEnabled     Boolean  @default(false)
   ragEnabled    Boolean  @default(false)
@@ -753,6 +954,8 @@ model Plan {
 
   subscriptions Subscription[]
 
+  @@index([visibility])
+  @@index([ownerTenantId])
   @@map("plans")
 }
 
@@ -768,12 +971,25 @@ model Subscription {
   cancelledAt        DateTime?
   cancelAtPeriodEnd  Boolean            @default(false)
   aiCreditsUsed      Int                @default(0)
+
+  /// Set when a super-admin assigned this plan by hand and Stripe cannot know
+  /// about it — an offline-invoiced custom tier with no Stripe price.
+  ///
+  /// While it is set, syncStripeSubscription leaves the row alone. Without it a
+  /// leftover Stripe subscription silently undoes the assignment: the webhook
+  /// resolves planId from the Stripe price and writes the OLD plan back on the
+  /// next invoice.paid, so a negotiated tier would quietly revert within a
+  /// billing cycle and reset the AI credits on its way out.
+  ///
+  /// Cleared automatically when a plan WITH a Stripe price is assigned, because
+  /// at that point Stripe is the source of truth again.
+  planLockedAt       DateTime?
   razorpaySubId      String?
   razorpayCustomerId String?
   stripeSubId        String?
   stripeCustomerId   String?
-  createdAt          DateTime           @default(now())
-  updatedAt          DateTime           @updatedAt
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
 
   tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   plan   Plan   @relation(fields: [planId], references: [id])

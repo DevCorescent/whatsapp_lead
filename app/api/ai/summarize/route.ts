@@ -22,7 +22,7 @@ import { z } from "zod";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { summarizeConversation } from "@/lib/ai";
-import { guardFeature, guardLimit } from "@/lib/billing/guard";
+import { guardAgentAi, guardFeature, guardLimit } from "@/lib/billing/guard";
 import { incrementAiUsage } from "@/lib/billing/usage";
 
 /**
@@ -118,9 +118,9 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  const { tenantId } = session.user;
+  const { tenantId, id: userId } = session.user;
 
-  const denied = (await guardFeature(tenantId, "aiEnabled")) ?? (await guardLimit(tenantId, "ai"));
+  const denied = (await guardFeature(tenantId, "aiEnabled")) ?? (await guardLimit(tenantId, "ai")) ?? (await guardAgentAi(tenantId, userId));
   if (denied) return denied;
 
   try {
@@ -155,7 +155,7 @@ export async function POST(req: NextRequest) {
     }
 
     const summary = await summarizeConversation(transcript);
-    await incrementAiUsage(tenantId);
+    await incrementAiUsage(tenantId, 1, userId);
 
     return NextResponse.json({
       success: true,

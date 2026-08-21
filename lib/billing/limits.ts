@@ -29,6 +29,7 @@ export type LimitResource =
   | "campaigns"
   | "storage"
   | "ai"
+  | "aiUser"
   | "businesses"
   | "knowledgeDocs"
   | "messagesPerDay"
@@ -54,6 +55,7 @@ export const RESOURCE_LABEL: Record<LimitResource, string> = {
   campaigns: "campaigns this billing period",
   storage: "MB of knowledge storage",
   ai: "AI requests this billing period",
+  aiUser: "AI requests on your personal allowance",
   businesses: "businesses",
   knowledgeDocs: "knowledge base documents",
   messagesPerDay: "messages per day",
@@ -71,6 +73,7 @@ export const RESOURCE_TITLE: Record<LimitResource, string> = {
   campaigns: "Campaign limit reached",
   storage: "Knowledge storage is full",
   ai: "AI credits used up",
+  aiUser: "You've used your AI allowance",
   businesses: "Business limit reached",
   knowledgeDocs: "Knowledge base is full",
   messagesPerDay: "Daily message limit reached",
@@ -92,6 +95,10 @@ export const RESOURCE_HINT: Record<LimitResource, string> = {
   campaigns: "Your campaign allowance resets next billing period. Upgrade to run more now.",
   storage: "Upgrade for more storage, or remove documents you no longer need.",
   ai: "Your AI credits reset next billing period. Upgrade for a larger allowance.",
+  // The only limit an upgrade does not fix. This one is a cap your own workspace
+  // owner set, so the dialog has to send you to a person, not to a pricing page.
+  aiUser:
+    "This is your personal share of the workspace's AI credits, not the plan limit. It resets next billing period — ask an owner or admin to raise it in Team.",
   businesses:
     "Each business is a separate WhatsApp number with its own inbox, contacts and AI settings. Upgrade to run more of them from one account.",
   knowledgeDocs:

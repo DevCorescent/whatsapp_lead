@@ -6,11 +6,21 @@ import type {
   FlowDocument,
   FlowNode,
   HandoffNodeData,
+  MenuNodeData,
   MessageNodeData,
   QuestionNodeData,
   TemplateNodeData,
   SetVariableNodeData,
 } from "./types";
+import {
+  matchMenuReply,
+  menuOptions,
+  MENU_ATTEMPTS_VAR,
+  MENU_STACK_VAR,
+  readMenuAttempts,
+  readMenuStack,
+  renderMenu,
+} from "./menu";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Flow execution engine.
@@ -28,7 +38,19 @@ import type {
 // ChatbotFlow model without any schema change.
 // ─────────────────────────────────────────────────────────────────────────────
 
+/**
+ * Flow variables. Values stay strings — that is what a customer types and what
+ * {{placeholder}} substitution puts back, and widening the map would make every
+ * existing render site handle a shape it never receives.
+ *
+ * The menu engine's own bookkeeping lives under `__`-prefixed keys and is
+ * serialised into that same string space (the navigation stack as JSON), so
+ * nothing here has to know it exists. See readMenuStack in menu.ts.
+ */
 export type FlowVariables = Record<string, string>;
+
+/** Reserved output handle a menu leaves by when the customer keeps missing. */
+export const MENU_NO_MATCH_HANDLE = "no_match";
 
 export interface EngineExecutors {
   /** Perform an API-call node. Returns the value stored under its `saveAs`. */
@@ -44,7 +66,15 @@ interface AiPrompt {
   saveAs?: string;
 }
 
-export type EngineActionType = "message" | "typing" | "delay" | "api" | "ai" | "handoff" | "template";
+export type EngineActionType =
+  | "message"
+  | "typing"
+  | "delay"
+  | "api"
+  | "ai"
+  | "handoff"
+  | "template"
+  | "menu";
 
 export interface EngineAction {
   type: EngineActionType;
@@ -59,13 +89,31 @@ export interface EngineAction {
   api?: { method?: string; url?: string; saveAs?: string };
   /** Template details. */
   template?: { templateName?: string; language?: string; headerVar?: string; bodyVars?: string[] };
+  /** The interactive payload and its plain-text fallback, for a menu action. */
+  menu?: { interactive: Record<string, unknown>; text: string; mode: "buttons" | "list" };
 }
 
 export type EngineStatus = "awaiting_input" | "ended" | "dead_end" | "error";
 
+/** What the customer picked, when this step resolved a menu. */
+export interface MenuChoice {
+  nodeId: string;
+  nodeLabel: string;
+  optionId: string;
+  label: string;
+  intent: "none" | "interest" | "buying";
+}
+
 export interface EngineStepResult {
   actions: EngineAction[];
   variables: FlowVariables;
+  /**
+   * Set when this step began by resolving a menu answer. Surfaced rather than
+   * inferred by the caller: only the engine knows which of tap, number, label or
+   * keyword matched, and re-deriving it outside would be a second matcher to
+   * keep in step with this one.
+   */
+  menuChoice?: MenuChoice;
   /** Node the run stopped on (the Question awaiting input, or the End/dead-end node). */
   stoppedAtNodeId: string | null;
   /** When awaiting input, the question node whose answer feeds the next step. */
@@ -79,6 +127,14 @@ export interface RunOptions {
   fromNodeId?: string;
   /** The user's latest reply — stored under the awaiting question's variable. */
   input?: string;
+  /**
+   * The id of a tapped button or list row, when the reply was a tap.
+   *
+   * Kept separate from `input`: the title Meta echoes alongside it is truncated
+   * to 24 characters, so on a menu of similarly-worded options the text alone
+   * cannot identify what was chosen. The id can.
+   */
+  replyId?: string | null;
   variables?: FlowVariables;
   executors?: EngineExecutors;
   /** Guard against pathological graphs. */
@@ -148,7 +204,15 @@ export async function runFlowStep(doc: FlowDocument, opts: RunOptions = {}): Pro
   // If we're resuming after a question, the caller passes fromNodeId = that question
   // and the user's input; store it, then continue from the question's output.
   let currentId: string | null = start.id;
-  if (opts.fromNodeId && start.type === "question" && opts.input !== undefined) {
+  let menuChoice: MenuChoice | undefined;
+  if (opts.fromNodeId && start.type === "menu" && opts.input !== undefined) {
+    // A menu resume can go five ways — down a branch, back, home, to a human, or
+    // round again — so it is resolved before the walk rather than inside it.
+    const resumed = resumeMenu(doc, start, variables, { input: opts.input, replyId: opts.replyId });
+    menuChoice = resumed.choice;
+    if (resumed.result) return { ...resumed.result, menuChoice };
+    currentId = resumed.nextId;
+  } else if (opts.fromNodeId && start.type === "question" && opts.input !== undefined) {
     const q = start.data as QuestionNodeData;
     if (q.variable) variables[q.variable] = opts.input;
     currentId = nextNodeId(doc, start.id);
@@ -244,15 +308,34 @@ export async function runFlowStep(doc: FlowDocument, opts: RunOptions = {}): Pro
       case "handoff": {
         const d = node.data as HandoffNodeData;
         actions.push({ type: "handoff", nodeId: node.id, handoff: { team: d.team, queue: d.queue, department: d.department, note: d.note } });
-        return { actions, variables, stoppedAtNodeId: node.id, awaitingQuestionId: null, status: "ended", handoff: true };
+        return { actions, variables, menuChoice, stoppedAtNodeId: node.id, awaitingQuestionId: null, status: "ended", handoff: true };
       }
       case "question": {
         const d = node.data as QuestionNodeData;
         actions.push({ type: "message", nodeId: node.id, text: renderTemplate(d.question, variables) });
-        return { actions, variables, stoppedAtNodeId: node.id, awaitingQuestionId: node.id, status: "awaiting_input", handoff: false };
+        return { actions, variables, menuChoice, stoppedAtNodeId: node.id, awaitingQuestionId: node.id, status: "awaiting_input", handoff: false };
+      }
+      case "menu": {
+        // Arriving at a menu is a fresh ask: the attempt counter belongs to the
+        // last menu, not this one, and carrying it over would fail a customer on
+        // their first look at a screen they have never seen.
+        variables[MENU_ATTEMPTS_VAR] = "0";
+        pushMenuStack(variables, node.id);
+        actions.push(menuAction(node, variables));
+        return {
+          actions,
+          variables,
+          // A choice made earlier in this same step still belongs on the result:
+          // picking "Track my order" and landing on the order menu is one turn.
+          menuChoice,
+          stoppedAtNodeId: node.id,
+          awaitingQuestionId: node.id,
+          status: "awaiting_input",
+          handoff: false,
+        };
       }
       case "end":
-        return { actions, variables, stoppedAtNodeId: node.id, awaitingQuestionId: null, status: "ended", handoff: false };
+        return { actions, variables, menuChoice, stoppedAtNodeId: node.id, awaitingQuestionId: null, status: "ended", handoff: false };
       case "start":
         currentId = nextNodeId(doc, node.id);
         break;
@@ -265,9 +348,162 @@ export async function runFlowStep(doc: FlowDocument, opts: RunOptions = {}): Pro
   return {
     actions,
     variables,
+    menuChoice,
     stoppedAtNodeId: currentId,
     awaitingQuestionId: null,
     status: currentId ? "dead_end" : "ended",
     handoff: false,
+  };
+}
+
+// ─── Menu helpers ─────────────────────────────────────────────────────────────
+
+/** Record that the customer is now standing on this menu, for Back to pop. */
+function pushMenuStack(variables: FlowVariables, nodeId: string): void {
+  const stack = readMenuStack(variables);
+  // Re-showing the same menu — a retry after an unrecognised reply — must not
+  // stack it twice, or Back would return to the screen you are already on.
+  if (stack[stack.length - 1] === nodeId) return;
+  variables[MENU_STACK_VAR] = JSON.stringify([...stack, nodeId].slice(-20));
+}
+
+/** Build the outbound action for a menu node, prompt and footer rendered. */
+function menuAction(node: FlowNode, variables: FlowVariables): EngineAction {
+  const d = node.data as MenuNodeData;
+  const stack = readMenuStack(variables);
+  const options = menuOptions(d, { hasHistory: stack.length > 1 });
+
+  const rendered = renderMenu({
+    nodeId: node.id,
+    data: d,
+    options,
+    prompt: renderTemplate(d.prompt, variables),
+    footer: d.footer ? renderTemplate(d.footer, variables) : undefined,
+  });
+
+  return {
+    type: "menu",
+    nodeId: node.id,
+    text: rendered.text,
+    menu: { interactive: rendered.interactive, text: rendered.text, mode: rendered.mode },
+  };
+}
+
+/**
+ * Resolve a reply to a menu.
+ *
+ * Returns either the node to continue from, or a finished result when the menu
+ * itself answers the reply — re-asking after an unrecognised answer, or handing
+ * over to a person.
+ */
+function resumeMenu(
+  doc: FlowDocument,
+  node: FlowNode,
+  variables: FlowVariables,
+  opts: { input?: string; replyId?: string | null },
+): { nextId: string | null; result?: EngineStepResult; choice?: MenuChoice } {
+  const d = node.data as MenuNodeData;
+  const stack = readMenuStack(variables);
+  const options = menuOptions(d, { hasHistory: stack.length > 1 });
+
+  const match = matchMenuReply({
+    nodeId: node.id,
+    options,
+    replyId: opts.replyId,
+    text: opts.input ?? "",
+  });
+
+  if (match.kind === "option" && match.option) {
+    variables[MENU_ATTEMPTS_VAR] = "0";
+    if (d.saveAs) variables[d.saveAs] = match.option.label;
+    // The option id IS the edge handle — see MenuOption. An option wired to
+    // nothing falls through to the node's default output rather than dead-ending.
+    return {
+      nextId: nextNodeId(doc, node.id, match.option.id) ?? nextNodeId(doc, node.id),
+      choice: {
+        nodeId: node.id,
+        nodeLabel: d.label || "Menu",
+        optionId: match.option.id,
+        label: match.option.label,
+        intent: match.option.intent ?? "none",
+      },
+    };
+  }
+
+  if (match.kind === "back") {
+    // Pop twice: the top of the stack is this menu, the one below is where Back
+    // goes. Re-entering that node pushes it again on the way in.
+    const previous = stack[stack.length - 2];
+    variables[MENU_STACK_VAR] = JSON.stringify(stack.slice(0, -2));
+    variables[MENU_ATTEMPTS_VAR] = "0";
+    return { nextId: previous ?? node.id };
+  }
+
+  if (match.kind === "home") {
+    const firstMenu = stack[0] ?? doc.nodes.find((n) => n.type === "menu")?.id ?? null;
+    variables[MENU_STACK_VAR] = "[]";
+    variables[MENU_ATTEMPTS_VAR] = "0";
+    return { nextId: firstMenu };
+  }
+
+  if (match.kind === "agent") {
+    return {
+      nextId: null,
+      result: {
+        actions: [{ type: "handoff", nodeId: node.id, handoff: { note: "Customer asked for a person from a menu" } }],
+        variables,
+        stoppedAtNodeId: node.id,
+        awaitingQuestionId: null,
+        status: "ended",
+        handoff: true,
+      },
+    };
+  }
+
+  // Nothing matched.
+  const attempts = readMenuAttempts(variables) + 1;
+  variables[MENU_ATTEMPTS_VAR] = String(attempts);
+  const limit = Math.max(1, d.maxAttempts ?? 2);
+  const fallback = d.fallback ?? "repeat";
+
+  if (attempts > limit && fallback !== "repeat") {
+    if (fallback === "handoff") {
+      return {
+        nextId: null,
+        result: {
+          actions: [{ type: "handoff", nodeId: node.id, handoff: { note: "Customer could not pick a menu option" } }],
+          variables,
+          stoppedAtNodeId: node.id,
+          awaitingQuestionId: null,
+          status: "ended",
+          handoff: true,
+        },
+      };
+    }
+    // branch — leave via the reserved "No match" handle, if one is wired.
+    const out = nextNodeId(doc, node.id, MENU_NO_MATCH_HANDLE);
+    if (out) {
+      variables[MENU_ATTEMPTS_VAR] = "0";
+      return { nextId: out };
+    }
+  }
+
+  // Ask again, saying what went wrong first. Repeating the menu with no
+  // explanation reads as the bot ignoring them.
+  const actions: EngineAction[] = [];
+  const invalid = renderTemplate(d.invalidMessage, variables).trim();
+  if (invalid) actions.push({ type: "message", nodeId: node.id, text: invalid });
+  actions.push(menuAction(node, variables));
+
+  return {
+    nextId: null,
+    result: {
+      actions,
+      variables,
+      stoppedAtNodeId: node.id,
+      awaitingQuestionId: node.id,
+      status: "awaiting_input",
+      handoff: false,
+    },
   };
 }

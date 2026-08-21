@@ -32,7 +32,10 @@ async function main() {
     "What are your support hours?",
   ]) {
     console.log(`? "${q}"`);
-    const ctx = await retrieveContext(TENANT_ID, BUSINESS_ID, q, { limit: 2, scoreThreshold: 0.3 });
+    const { context: ctx } = await retrieveContext(TENANT_ID, BUSINESS_ID, q, {
+      limit: 2,
+      scoreThreshold: 0.3,
+    });
     console.log(ctx ? `  → ${ctx.replace(/\n+/g, " ").slice(0, 140)}...\n` : "  → (no context)\n");
   }
 

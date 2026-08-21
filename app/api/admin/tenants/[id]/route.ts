@@ -14,7 +14,7 @@ export async function GET(req: NextRequest, { params }: Params) {
   const tenant = await prisma.tenant.findUnique({
     where: { id },
     include: {
-      subscription: { include: { plan: true } },
+      subscription: { include: { plan: { include: { ownerTenant: { select: { id: true, name: true } } } } } },
       settings: true,
       _count: { select: { users: true, contacts: true, leads: true, conversations: true } },
     },
@@ -44,31 +44,24 @@ export async function PATCH(req: NextRequest, { params }: Params) {
 
   const { isActive, name, planId } = body as { isActive?: boolean; name?: string; planId?: string };
 
-  const updated = await prisma.$transaction(async (tx) => {
-    const t = await tx.tenant.update({
-      where: { id },
-      data: {
-        ...(name !== undefined && { name }),
-        ...(isActive !== undefined && { isActive }),
-      },
-    });
+  // Plan changes moved to PUT ./subscription. They were only ever half-done here
+  // — the upsert hardcoded ACTIVE and a thirty-day window, so assigning a plan
+  // through this route silently overwrote a negotiated period end and could not
+  // express a trial or an annual cycle at all. Refused loudly rather than
+  // quietly ignored, so a caller still sending planId finds out.
+  if (planId !== undefined) {
+    return NextResponse.json(
+      { success: false, error: "Use PUT /api/admin/tenants/[id]/subscription to change the plan." },
+      { status: 400 },
+    );
+  }
 
-    if (planId) {
-      await tx.subscription.upsert({
-        where: { tenantId: id },
-        update: { planId },
-        create: {
-          tenantId: id,
-          planId,
-          status: "ACTIVE",
-          billingCycle: "MONTHLY",
-          currentPeriodStart: new Date(),
-          currentPeriodEnd: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000),
-        },
-      });
-    }
-
-    return t;
+  const updated = await prisma.tenant.update({
+    where: { id },
+    data: {
+      ...(name !== undefined && { name }),
+      ...(isActive !== undefined && { isActive }),
+    },
   });
 
   return NextResponse.json({ success: true, data: updated });

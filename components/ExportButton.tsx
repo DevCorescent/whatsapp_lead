@@ -15,7 +15,7 @@ export function ExportButton({
   label = "Export CSV",
   variant = "secondary",
 }: {
-  resource: "contacts" | "leads" | "campaigns" | "analytics";
+  resource: "contacts" | "leads" | "campaigns" | "analytics" | "faq-interest" | "ivr-responses";
   label?: string;
   variant?: "primary" | "secondary" | "ghost";
 }) {
