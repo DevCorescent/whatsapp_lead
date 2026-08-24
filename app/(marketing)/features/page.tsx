@@ -33,7 +33,7 @@ function InboxMockup() {
             key={chat.name}
             className="flex items-center gap-3 rounded-xl border border-gray-100 bg-white p-3"
           >
-            <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-[#6C3FC4]/10 text-xs font-semibold text-[#6C3FC4]">
+            <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-emerald-600/10 text-xs font-semibold text-emerald-600">
               {chat.initials}
             </span>
             <span className="min-w-0 flex-1">
@@ -57,13 +57,13 @@ function AiReplyMockup() {
         <div className="max-w-[85%] rounded-2xl rounded-tl-sm bg-white px-4 py-2.5 text-sm text-gray-800 shadow-sm">
           What are your fees for the 6-month course?
         </div>
-        <div className="ml-auto max-w-[85%] rounded-2xl rounded-tr-sm bg-[#6C3FC4] px-4 py-2.5 text-sm text-white shadow-sm">
+        <div className="ml-auto max-w-[85%] rounded-2xl rounded-tr-sm bg-emerald-600 px-4 py-2.5 text-sm text-white shadow-sm">
           Our 6-month program is ₹45,000, with an EMI option at ₹7,500/month. Shall I book a free
           counselling call for you?
         </div>
-        <div className="flex items-center gap-2 rounded-lg bg-[#6C3FC4]/5 px-3 py-2">
-          <Bot className="h-4 w-4 shrink-0 text-[#6C3FC4]" />
-          <span className="text-xs font-medium text-[#6C3FC4]">
+        <div className="flex items-center gap-2 rounded-lg bg-emerald-600/5 px-3 py-2">
+          <Bot className="h-4 w-4 shrink-0 text-emerald-600" />
+          <span className="text-xs font-medium text-emerald-600">
             Answered by AI from your knowledge base · 1.2s
           </span>
         </div>
@@ -122,7 +122,7 @@ function CampaignMockup() {
           </span>
         </div>
         <div className="mt-4 h-2 overflow-hidden rounded-full bg-gray-100">
-          <div className="h-full w-[94%] rounded-full bg-[#6C3FC4]" />
+          <div className="h-full w-[94%] rounded-full bg-emerald-600" />
         </div>
         <div className="mt-3 grid grid-cols-3 gap-2 text-center">
           {[
@@ -162,7 +162,7 @@ function AnalyticsMockup() {
           {bars.map((height, index) => (
             <div
               key={index}
-              className="flex-1 rounded-t bg-[#6C3FC4]"
+              className="flex-1 rounded-t bg-emerald-600"
               style={{ height: `${height}%`, opacity: 0.35 + index * 0.09 }}
             />
           ))}
@@ -185,7 +185,7 @@ function KnowledgeMockup() {
             key={doc.name}
             className="flex items-center gap-3 rounded-xl border border-gray-100 bg-white p-3"
           >
-            <BookOpen className="h-4 w-4 shrink-0 text-[#6C3FC4]" />
+            <BookOpen className="h-4 w-4 shrink-0 text-emerald-600" />
             <span className="min-w-0 flex-1 truncate text-xs font-medium text-gray-900">
               {doc.name}
             </span>
@@ -307,7 +307,7 @@ export default function FeaturesPage() {
   return (
     <div>
       {/* Hero */}
-      <section className="bg-gradient-to-b from-[#6C3FC4]/5 to-white py-16 sm:py-20 lg:py-24">
+      <section className="bg-gradient-to-b from-emerald-600/5 to-white py-16 sm:py-20 lg:py-24">
         <div className="mx-auto max-w-3xl px-4 text-center sm:px-6 lg:px-8">
           <h1 className="text-4xl font-extrabold tracking-tight text-gray-900 sm:text-5xl">
             Everything you need to close more deals on WhatsApp
@@ -319,7 +319,7 @@ export default function FeaturesPage() {
           <div className="mt-8 flex flex-col items-center justify-center gap-3 sm:flex-row sm:gap-4">
             <Link
               href="/register"
-              className="inline-flex w-full items-center justify-center gap-2 rounded-lg bg-[#6C3FC4] px-6 py-3.5 text-base font-semibold text-white shadow-lg shadow-[#6C3FC4]/20 transition-colors hover:bg-[#5A32A6] sm:w-auto"
+              className="inline-flex w-full items-center justify-center gap-2 rounded-lg bg-emerald-600 px-6 py-3.5 text-base font-semibold text-white shadow-lg shadow-emerald-600/20 transition-colors hover:bg-emerald-700 sm:w-auto"
             >
               Start Free Trial
               <ArrowRight className="h-5 w-5" />
@@ -345,7 +345,7 @@ export default function FeaturesPage() {
           >
             <div className="mx-auto grid max-w-7xl items-center gap-12 px-4 sm:px-6 lg:grid-cols-2 lg:gap-16 lg:px-8">
               <div className={isReversed ? "lg:order-2" : ""}>
-                <span className="inline-flex items-center gap-2 rounded-full bg-[#6C3FC4]/10 px-3 py-1 text-xs font-semibold text-[#6C3FC4]">
+                <span className="inline-flex items-center gap-2 rounded-full bg-emerald-600/10 px-3 py-1 text-xs font-semibold text-emerald-600">
                   <Icon className="h-4 w-4" />
                   {eyebrow}
                 </span>
@@ -358,7 +358,7 @@ export default function FeaturesPage() {
                 <ul className="mt-6 space-y-3">
                   {points.map((point) => (
                     <li key={point} className="flex items-start gap-3">
-                      <Check className="mt-0.5 h-5 w-5 shrink-0 text-[#6C3FC4]" />
+                      <Check className="mt-0.5 h-5 w-5 shrink-0 text-emerald-600" />
                       <span className="text-sm text-gray-700 sm:text-base">{point}</span>
                     </li>
                   ))}
@@ -376,7 +376,7 @@ export default function FeaturesPage() {
       {/* CTA banner */}
       <section className="py-16 sm:py-20">
         <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
-          <div className="rounded-3xl bg-[#6C3FC4] px-6 py-14 text-center sm:px-12 sm:py-16">
+          <div className="rounded-3xl bg-emerald-600 px-6 py-14 text-center sm:px-12 sm:py-16">
             <h2 className="text-3xl font-bold tracking-tight text-white sm:text-4xl">
               See it working on your own WhatsApp number
             </h2>
@@ -386,7 +386,7 @@ export default function FeaturesPage() {
             <div className="mt-8 flex flex-col items-center justify-center gap-3 sm:flex-row sm:gap-4">
               <Link
                 href="/register"
-                className="inline-flex w-full items-center justify-center gap-2 rounded-lg bg-white px-6 py-3.5 text-base font-semibold text-[#6C3FC4] shadow-lg transition-colors hover:bg-gray-100 sm:w-auto"
+                className="inline-flex w-full items-center justify-center gap-2 rounded-lg bg-white px-6 py-3.5 text-base font-semibold text-emerald-600 shadow-lg transition-colors hover:bg-gray-100 sm:w-auto"
               >
                 Start Free Trial
                 <ArrowRight className="h-5 w-5" />

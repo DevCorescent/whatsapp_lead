@@ -35,7 +35,7 @@ export default function FaqAccordion({ items }: { items: FaqItem[] }) {
                 aria-hidden="true"
                 className={
                   isOpen
-                    ? "h-5 w-5 shrink-0 rotate-180 text-[#6C3FC4] transition-transform"
+                    ? "h-5 w-5 shrink-0 rotate-180 text-emerald-600 transition-transform"
                     : "h-5 w-5 shrink-0 text-gray-400 transition-transform"
                 }
               />

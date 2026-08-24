@@ -90,7 +90,7 @@ export default function IndustriesPage() {
   return (
     <div>
       {/* Hero */}
-      <section className="bg-gradient-to-b from-[#6C3FC4]/5 to-white py-16 sm:py-20">
+      <section className="bg-gradient-to-b from-emerald-600/5 to-white py-16 sm:py-20">
         <div className="mx-auto max-w-3xl px-4 text-center sm:px-6 lg:px-8">
           <h1 className="text-4xl font-extrabold tracking-tight text-gray-900 sm:text-5xl">
             Built for the way your industry sells
@@ -111,8 +111,8 @@ export default function IndustriesPage() {
                 key={name}
                 className="flex flex-col rounded-2xl border border-gray-200 bg-white p-6 transition-shadow hover:shadow-lg"
               >
-                <span className="flex h-12 w-12 items-center justify-center rounded-xl bg-[#6C3FC4]/10">
-                  <Icon className="h-6 w-6 text-[#6C3FC4]" />
+                <span className="flex h-12 w-12 items-center justify-center rounded-xl bg-emerald-600/10">
+                  <Icon className="h-6 w-6 text-emerald-600" />
                 </span>
 
                 <h2 className="mt-5 text-lg font-semibold text-gray-900">{name}</h2>
@@ -121,7 +121,7 @@ export default function IndustriesPage() {
                 <ul className="mt-5 flex-1 space-y-2.5">
                   {useCases.map((useCase) => (
                     <li key={useCase} className="flex items-start gap-2.5">
-                      <Check className="mt-0.5 h-4 w-4 shrink-0 text-[#6C3FC4]" />
+                      <Check className="mt-0.5 h-4 w-4 shrink-0 text-emerald-600" />
                       <span className="text-sm text-gray-700">{useCase}</span>
                     </li>
                   ))}
@@ -129,7 +129,7 @@ export default function IndustriesPage() {
 
                 <Link
                   href="/register"
-                  className="mt-6 inline-flex items-center gap-2 text-sm font-semibold text-[#6C3FC4] transition-colors hover:text-[#5A32A6]"
+                  className="mt-6 inline-flex items-center gap-2 text-sm font-semibold text-emerald-600 transition-colors hover:text-emerald-700"
                 >
                   Start free trial
                   <ArrowRight className="h-4 w-4" />
@@ -143,7 +143,7 @@ export default function IndustriesPage() {
       {/* CTA banner */}
       <section className="pb-16 sm:pb-20">
         <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
-          <div className="rounded-3xl bg-[#6C3FC4] px-6 py-14 text-center sm:px-12 sm:py-16">
+          <div className="rounded-3xl bg-emerald-600 px-6 py-14 text-center sm:px-12 sm:py-16">
             <h2 className="text-3xl font-bold tracking-tight text-white sm:text-4xl">
               Not sure how it fits your business?
             </h2>
@@ -154,7 +154,7 @@ export default function IndustriesPage() {
             <div className="mt-8">
               <Link
                 href="/contact"
-                className="inline-flex items-center justify-center gap-2 rounded-lg bg-white px-6 py-3.5 text-base font-semibold text-[#6C3FC4] shadow-lg transition-colors hover:bg-gray-100"
+                className="inline-flex items-center justify-center gap-2 rounded-lg bg-white px-6 py-3.5 text-base font-semibold text-emerald-600 shadow-lg transition-colors hover:bg-gray-100"
               >
                 Book a Demo
                 <ArrowRight className="h-5 w-5" />

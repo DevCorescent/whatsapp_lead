@@ -1,18 +1,33 @@
 import Link from "next/link";
+import { MessageSquare } from "lucide-react";
 import type { SVGProps } from "react";
+
+/**
+ * Marketing footer.
+ *
+ * Every link resolves to a page that exists under app/(marketing) or app/(auth), or to
+ * an anchor on the homepage. Documentation, security, careers and API-reference columns
+ * are deliberately absent: those pages are not built, and a dark footer full of 404s is
+ * worse than a short one.
+ */
 
 const PRODUCT_LINKS = [
   { label: "Features", href: "/features" },
   { label: "Pricing", href: "/pricing" },
-  { label: "Industries", href: "/industries" },
+  { label: "How it works", href: "/#lead-journey" },
   { label: "Start Free Trial", href: "/register" },
+];
+
+const SOLUTION_LINKS = [
+  { label: "Industries", href: "/industries" },
+  { label: "Blog", href: "/blog" },
+  { label: "FAQ", href: "/#faq" },
 ];
 
 const COMPANY_LINKS = [
   { label: "About Us", href: "/about" },
-  { label: "Blog", href: "/blog" },
   { label: "Contact", href: "/contact" },
-  { label: "Login", href: "/login" },
+  { label: "Log in", href: "/login" },
 ];
 
 const LEGAL_LINKS = [
@@ -21,7 +36,14 @@ const LEGAL_LINKS = [
   { label: "Refund Policy", href: "/refund-policy" },
 ];
 
-// lucide-react v1 no longer ships brand icons, so the social marks are inline SVG.
+const COLUMNS = [
+  { heading: "Product", links: PRODUCT_LINKS },
+  { heading: "Solutions", links: SOLUTION_LINKS },
+  { heading: "Company", links: COMPANY_LINKS },
+  { heading: "Legal", links: LEGAL_LINKS },
+];
+
+// lucide-react v1 no longer ships brand icons, so the social marks stay inline SVG.
 function TwitterIcon(props: SVGProps<SVGSVGElement>) {
   return (
     <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" {...props}>
@@ -72,62 +94,29 @@ const SOCIAL_LINKS = [
 
 export default function Footer() {
   return (
-    <footer className="border-t border-gray-200 bg-gray-50">
-      <div className="mx-auto max-w-7xl px-4 py-12 sm:px-6 lg:px-8 lg:py-16">
-        <div className="grid grid-cols-2 gap-8 md:grid-cols-4">
-          <div>
-            <h3 className="text-sm font-semibold uppercase tracking-wide text-gray-900">Product</h3>
-            <ul className="mt-4 space-y-3">
-              {PRODUCT_LINKS.map((link) => (
-                <li key={link.href}>
-                  <Link
-                    href={link.href}
-                    className="text-sm text-gray-600 transition-colors hover:text-[#6C3FC4]"
-                  >
-                    {link.label}
-                  </Link>
-                </li>
-              ))}
-            </ul>
-          </div>
+    <footer className="relative overflow-hidden bg-slate-900">
+      <div
+        aria-hidden
+        className="pointer-events-none absolute -left-32 top-0 h-96 w-96 rounded-full bg-[radial-gradient(closest-side,rgba(16,185,129,0.14),transparent_100%)]"
+      />
 
+      <div className="relative mx-auto max-w-7xl px-4 py-16 sm:px-6 lg:px-8 lg:py-20">
+        <div className="grid gap-12 lg:grid-cols-[1.4fr_2.6fr]">
           <div>
-            <h3 className="text-sm font-semibold uppercase tracking-wide text-gray-900">Company</h3>
-            <ul className="mt-4 space-y-3">
-              {COMPANY_LINKS.map((link) => (
-                <li key={link.href}>
-                  <Link
-                    href={link.href}
-                    className="text-sm text-gray-600 transition-colors hover:text-[#6C3FC4]"
-                  >
-                    {link.label}
-                  </Link>
-                </li>
-              ))}
-            </ul>
-          </div>
+            <Link href="/" className="flex items-center gap-2.5">
+              <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-emerald-500">
+                <MessageSquare className="h-4 w-4 text-slate-950" />
+              </span>
+              <span className="text-lg font-bold tracking-tight text-white">WhatsCRM</span>
+            </Link>
 
-          <div>
-            <h3 className="text-sm font-semibold uppercase tracking-wide text-gray-900">Legal</h3>
-            <ul className="mt-4 space-y-3">
-              {LEGAL_LINKS.map((link) => (
-                <li key={link.href}>
-                  <Link
-                    href={link.href}
-                    className="text-sm text-gray-600 transition-colors hover:text-[#6C3FC4]"
-                  >
-                    {link.label}
-                  </Link>
-                </li>
-              ))}
-            </ul>
-          </div>
+            <p className="mt-5 max-w-sm text-sm leading-relaxed text-slate-400">
+              An AI-powered WhatsApp CRM for teams who take conversations seriously — one shared
+              inbox, automated lead qualification, and a pipeline built on the official Meta
+              WhatsApp Business Cloud API.
+            </p>
 
-          <div>
-            <h3 className="text-sm font-semibold uppercase tracking-wide text-gray-900">
-              Follow Us
-            </h3>
-            <ul className="mt-4 flex flex-wrap gap-2">
+            <ul className="mt-6 flex flex-wrap gap-2">
               {SOCIAL_LINKS.map(({ label, href, Icon }) => (
                 <li key={label}>
                   <a
@@ -135,28 +124,51 @@ export default function Footer() {
                     target="_blank"
                     rel="noopener noreferrer"
                     aria-label={label}
-                    className="flex h-10 w-10 items-center justify-center rounded-lg border border-gray-200 bg-white text-gray-500 transition-colors hover:border-[#6C3FC4] hover:text-[#6C3FC4]"
+                    className="flex h-9 w-9 items-center justify-center rounded-lg bg-white/5 text-slate-400 ring-1 ring-inset ring-white/10 transition hover:bg-emerald-500/15 hover:text-emerald-400 hover:ring-emerald-400/30"
                   >
-                    <Icon className="h-4 w-4" />
+                    <Icon className="h-3.5 w-3.5" />
                   </a>
                 </li>
               ))}
             </ul>
+
             <a
               href="mailto:support@whatscrm.in"
-              className="mt-4 inline-block text-sm text-gray-600 transition-colors hover:text-[#6C3FC4]"
+              className="mt-5 inline-block text-sm text-slate-400 transition hover:text-emerald-400"
             >
               support@whatscrm.in
             </a>
           </div>
+
+          <div className="grid grid-cols-2 gap-8 sm:grid-cols-4">
+            {COLUMNS.map((column) => (
+              <div key={column.heading}>
+                <h3 className="text-xs font-semibold uppercase tracking-wider text-white">
+                  {column.heading}
+                </h3>
+                <ul className="mt-4 space-y-3">
+                  {column.links.map((link) => (
+                    <li key={link.href}>
+                      <Link
+                        href={link.href}
+                        className="text-sm text-slate-400 transition hover:text-emerald-400"
+                      >
+                        {link.label}
+                      </Link>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            ))}
+          </div>
         </div>
 
-        <div className="mt-12 flex flex-col items-center justify-between gap-4 border-t border-gray-200 pt-8 sm:flex-row">
-          <Link href="/" className="text-lg font-extrabold tracking-tight text-[#6C3FC4]">
-            WhatsCRM
-          </Link>
-          <p className="text-center text-sm text-gray-500 sm:text-right">
+        <div className="mt-14 flex flex-col items-center justify-between gap-3 border-t border-white/10 pt-8 sm:flex-row">
+          <p className="text-center text-xs text-slate-500 sm:text-left">
             © 2026 WhatsCRM by Corescent Technologies Pvt Ltd. All rights reserved.
+          </p>
+          <p className="text-center text-xs text-slate-500 sm:text-right">
+            Built on the official Meta WhatsApp Business Cloud API.
           </p>
         </div>
       </div>

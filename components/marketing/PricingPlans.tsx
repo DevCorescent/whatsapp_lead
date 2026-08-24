@@ -26,7 +26,7 @@ export default function PricingPlans() {
             aria-pressed={!isAnnual}
             className={
               !isAnnual
-                ? "rounded-full bg-white px-5 py-2 text-sm font-semibold text-[#6C3FC4] shadow-sm"
+                ? "rounded-full bg-white px-5 py-2 text-sm font-semibold text-emerald-600 shadow-sm"
                 : "rounded-full px-5 py-2 text-sm font-semibold text-gray-600 transition-colors hover:text-gray-900"
             }
           >
@@ -38,7 +38,7 @@ export default function PricingPlans() {
             aria-pressed={isAnnual}
             className={
               isAnnual
-                ? "rounded-full bg-white px-5 py-2 text-sm font-semibold text-[#6C3FC4] shadow-sm"
+                ? "rounded-full bg-white px-5 py-2 text-sm font-semibold text-emerald-600 shadow-sm"
                 : "rounded-full px-5 py-2 text-sm font-semibold text-gray-600 transition-colors hover:text-gray-900"
             }
           >
@@ -60,12 +60,12 @@ export default function PricingPlans() {
               key={plan.id}
               className={
                 plan.isPopular
-                  ? "relative flex flex-col rounded-2xl border-2 border-[#6C3FC4] bg-white p-8 shadow-xl"
+                  ? "relative flex flex-col rounded-2xl border-2 border-emerald-600 bg-white p-8 shadow-xl"
                   : "relative flex flex-col rounded-2xl border border-gray-200 bg-white p-8"
               }
             >
               {plan.isPopular && (
-                <span className="absolute -top-3 left-1/2 -translate-x-1/2 rounded-full bg-[#6C3FC4] px-3 py-1 text-xs font-semibold text-white">
+                <span className="absolute -top-3 left-1/2 -translate-x-1/2 rounded-full bg-emerald-600 px-3 py-1 text-xs font-semibold text-white">
                   Most Popular
                 </span>
               )}
@@ -95,7 +95,7 @@ export default function PricingPlans() {
               <ul className="mt-8 flex-1 space-y-3">
                 {plan.features.map((feature) => (
                   <li key={feature} className="flex items-start gap-2.5">
-                    <Check className="mt-0.5 h-4 w-4 shrink-0 text-[#6C3FC4]" />
+                    <Check className="mt-0.5 h-4 w-4 shrink-0 text-emerald-600" />
                     <span className="text-sm text-gray-700">{feature}</span>
                   </li>
                 ))}
@@ -107,7 +107,7 @@ export default function PricingPlans() {
                 }
                 className={
                   plan.isPopular
-                    ? "mt-8 block rounded-lg bg-[#6C3FC4] px-4 py-3 text-center text-sm font-semibold text-white transition-colors hover:bg-[#5A32A6]"
+                    ? "mt-8 block rounded-lg bg-emerald-600 px-4 py-3 text-center text-sm font-semibold text-white transition-colors hover:bg-emerald-700"
                     : "mt-8 block rounded-lg border border-gray-300 px-4 py-3 text-center text-sm font-semibold text-gray-700 transition-colors hover:bg-gray-50"
                 }
               >

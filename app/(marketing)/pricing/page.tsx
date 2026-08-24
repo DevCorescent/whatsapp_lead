@@ -115,7 +115,7 @@ function ComparisonCell({ value }: { value: string | boolean }) {
   if (value === true) {
     return (
       <span className="flex justify-center">
-        <Check className="h-5 w-5 text-[#6C3FC4]" aria-hidden="true" />
+        <Check className="h-5 w-5 text-emerald-600" aria-hidden="true" />
         <span className="sr-only">Included</span>
       </span>
     );
@@ -137,7 +137,7 @@ export default function PricingPage() {
   return (
     <div>
       {/* Header + cards */}
-      <section className="bg-gradient-to-b from-[#6C3FC4]/5 to-white py-16 sm:py-20">
+      <section className="bg-gradient-to-b from-emerald-600/5 to-white py-16 sm:py-20">
         <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
           <div className="mx-auto max-w-2xl text-center">
             <h1 className="text-4xl font-extrabold tracking-tight text-gray-900 sm:text-5xl">
@@ -176,7 +176,7 @@ export default function PricingPage() {
                   <th className="px-6 py-4 text-center text-sm font-semibold text-gray-900">
                     Starter
                   </th>
-                  <th className="px-6 py-4 text-center text-sm font-semibold text-[#6C3FC4]">
+                  <th className="px-6 py-4 text-center text-sm font-semibold text-emerald-600">
                     Growth
                   </th>
                   <th className="px-6 py-4 text-center text-sm font-semibold text-gray-900">
@@ -200,7 +200,7 @@ export default function PricingPage() {
                       <td className="px-6 py-4">
                         <ComparisonCell value={row.starter} />
                       </td>
-                      <td className="bg-[#6C3FC4]/[0.03] px-6 py-4">
+                      <td className="bg-emerald-600/[0.03] px-6 py-4">
                         <ComparisonCell value={row.growth} />
                       </td>
                       <td className="px-6 py-4">
@@ -223,7 +223,7 @@ export default function PricingPage() {
               Frequently asked questions
             </h2>
             <p className="mt-4 text-base text-gray-600 sm:text-lg">
-              Still unsure? <Link href="/contact" className="font-semibold text-[#6C3FC4] hover:underline">Talk to our team</Link>.
+              Still unsure? <Link href="/contact" className="font-semibold text-emerald-600 hover:underline">Talk to our team</Link>.
             </p>
           </div>
 

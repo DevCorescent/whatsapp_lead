@@ -105,3 +105,318 @@ input[type="range"] {
 .react-flow__resize-control.handle {
   cursor: nwse-resize;
 }
+
+/* ─── Marketing homepage ───────────────────────────────────────────────────────
+ *
+ * Additive-only styles for app/(marketing)/page.tsx and components/marketing/home/*.
+ * Nothing below overrides an existing rule or an existing class name, so the
+ * dashboard, admin and auth surfaces render exactly as they did before.
+ *
+ * These are the Aceternity effects — spotlight, glow, beam, float, moving border —
+ * expressed as CSS instead of pulled in as a runtime dependency. The library's
+ * components are Tailwind + Framer Motion wrappers around exactly these primitives,
+ * and this project has neither `motion` nor a `tailwind.config.ts` for them to read.
+ * Writing the primitives here keeps the homepage's visual language identical while
+ * adding zero packages to a product bundle that is already shipping.
+ *
+ * Every animation is disabled under `prefers-reduced-motion` at the end of the block.
+ */
+
+/* Scroll reveal. Transition rather than keyframes so the element holds its final
+   state once shown — a keyframed reveal replays whenever the browser recomposites. */
+.wa-reveal {
+  opacity: 0;
+  transform: translateY(28px);
+  transition:
+    opacity 0.7s cubic-bezier(0.22, 1, 0.36, 1),
+    transform 0.7s cubic-bezier(0.22, 1, 0.36, 1);
+  will-change: opacity, transform;
+}
+.wa-reveal[data-shown="true"] {
+  opacity: 1;
+  transform: none;
+}
+
+/* The faint blueprint grid behind the hero. Two gradients rather than an SVG so it
+   scales to any viewport without a second network request. */
+.wa-grid {
+  background-image:
+    linear-gradient(to right, rgb(15 23 42 / 0.045) 1px, transparent 1px),
+    linear-gradient(to bottom, rgb(15 23 42 / 0.045) 1px, transparent 1px);
+  background-size: 56px 56px;
+}
+.wa-grid-dark {
+  background-image:
+    linear-gradient(to right, rgb(255 255 255 / 0.045) 1px, transparent 1px),
+    linear-gradient(to bottom, rgb(255 255 255 / 0.045) 1px, transparent 1px);
+  background-size: 56px 56px;
+}
+/* Dot variant for the darker bands. */
+.wa-dots {
+  background-image: radial-gradient(rgb(255 255 255 / 0.09) 1px, transparent 1px);
+  background-size: 22px 22px;
+}
+
+@keyframes wa-float {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-10px); }
+}
+@keyframes wa-float-slow {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-14px); }
+}
+/* The spotlight sweep: a soft conic wash that drifts, never a hard beam. */
+@keyframes wa-spotlight {
+  0% { opacity: 0; transform: translate(-58%, -42%) scale(0.86); }
+  100% { opacity: 1; transform: translate(-50%, -46%) scale(1); }
+}
+/* Draws the connector line in the lead-journey timeline. */
+@keyframes wa-beam {
+  from { transform: scaleY(0); }
+  to { transform: scaleY(1); }
+}
+/* Aceternity "moving border" — a highlight orbiting the card edge. */
+@keyframes wa-orbit {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+@keyframes wa-pulse-ring {
+  0% { transform: scale(0.85); opacity: 0.7; }
+  70% { transform: scale(1.5); opacity: 0; }
+  100% { transform: scale(1.5); opacity: 0; }
+}
+@keyframes wa-marquee {
+  from { transform: translateX(0); }
+  to { transform: translateX(-50%); }
+}
+@keyframes wa-dash {
+  to { stroke-dashoffset: 0; }
+}
+
+@layer utilities {
+  .wa-float { animation: wa-float 6s ease-in-out infinite; }
+  .wa-float-slow { animation: wa-float-slow 8s ease-in-out infinite; }
+  .wa-spotlight { animation: wa-spotlight 2.4s cubic-bezier(0.22, 1, 0.36, 1) forwards; }
+  .wa-beam { transform-origin: top; animation: wa-beam 1.4s cubic-bezier(0.22, 1, 0.36, 1) forwards; }
+  .wa-orbit { animation: wa-orbit 6s linear infinite; }
+  .wa-pulse-ring { animation: wa-pulse-ring 2.4s cubic-bezier(0, 0, 0.2, 1) infinite; }
+  .wa-marquee { animation: wa-marquee 38s linear infinite; }
+  .wa-dash { stroke-dasharray: 260; stroke-dashoffset: 260; animation: wa-dash 1.8s ease-out forwards; }
+
+  /* Pauses the integration marquee on hover so a name can actually be read. */
+  .wa-marquee-hold:hover .wa-marquee { animation-play-state: paused; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .wa-reveal {
+    opacity: 1;
+    transform: none;
+    transition: none;
+  }
+  .wa-float,
+  .wa-float-slow,
+  .wa-spotlight,
+  .wa-beam,
+  .wa-orbit,
+  .wa-pulse-ring,
+  .wa-marquee,
+  .wa-dash {
+    animation: none;
+  }
+  .wa-beam { transform: none; }
+  .wa-dash { stroke-dashoffset: 0; }
+}
+
+/* ─── Marketing homepage: staged motion ───────────────────────────────────────
+ *
+ * A second additive block for the homepage polish pass. Same rules as the block
+ * above: nothing here overrides an existing selector, and every class is prefixed
+ * `wa-` so it cannot collide with a Tailwind utility or an application style.
+ *
+ * THE ONE PATTERN
+ *
+ * Everything below is driven by `data-shown` on an ancestor, which the Reveal
+ * primitive already sets when a section scrolls into view. A child marked
+ * `.wa-pop` / `.wa-grow-x` / `.wa-draw-in` sits in its resting (hidden) state
+ * until that attribute flips, then transitions to its final state. Stagger is a
+ * `transition-delay` set inline per child.
+ *
+ * This is why there is no second observer per bar, tick or node: one observer per
+ * section drives every child inside it. Transitions rather than keyframes, so an
+ * element that has arrived stays arrived instead of replaying on recomposite.
+ *
+ * Only `opacity` and `transform` are animated — never width, height, top or left.
+ */
+
+/* Reveal with a touch of scale. For the hero dashboard only: a large surface that
+   fades straight in reads flat, and 1.5% of scale is enough to give it depth
+   without looking like a zoom. */
+.wa-reveal-scale {
+  opacity: 0;
+  transform: translateY(28px) scale(0.985);
+  transition:
+    opacity 0.8s cubic-bezier(0.22, 1, 0.36, 1),
+    transform 0.8s cubic-bezier(0.22, 1, 0.36, 1);
+  will-change: opacity, transform;
+}
+.wa-reveal-scale[data-shown="true"] {
+  opacity: 1;
+  transform: none;
+}
+
+/* Child states. Resting values live on the class; the shown values live behind an
+   ancestor `[data-shown="true"]`, which is what makes the stagger declarative. */
+
+/* A checkmark, a badge, a KPI figure — anything that should land rather than slide. */
+.wa-pop {
+  opacity: 0;
+  transform: scale(0.72);
+  transition:
+    opacity 0.42s cubic-bezier(0.22, 1, 0.36, 1),
+    transform 0.42s cubic-bezier(0.34, 1.4, 0.64, 1);
+}
+[data-shown="true"] .wa-pop {
+  opacity: 1;
+  transform: none;
+}
+
+/* A progress bar or funnel step. scaleX, not width — width is a layout property and
+   animating it reflows the row on every frame. */
+.wa-grow-x {
+  transform: scaleX(0);
+  transform-origin: left center;
+  transition: transform 0.9s cubic-bezier(0.22, 1, 0.36, 1);
+}
+[data-shown="true"] .wa-grow-x {
+  transform: scaleX(1);
+}
+
+/* A short fade-and-lift for text inside an already-revealed block. */
+.wa-lift {
+  opacity: 0;
+  transform: translateY(18px);
+  transition:
+    opacity 0.5s cubic-bezier(0.22, 1, 0.36, 1),
+    transform 0.5s cubic-bezier(0.22, 1, 0.36, 1);
+}
+[data-shown="true"] .wa-lift {
+  opacity: 1;
+  transform: none;
+}
+
+/* An SVG path that draws itself. The dash length is set per element inline, because
+   it has to match that path's own measured length. */
+.wa-draw-in {
+  stroke-dashoffset: var(--wa-dash-len, 300);
+  transition: stroke-dashoffset 1.5s cubic-bezier(0.22, 1, 0.36, 1);
+}
+[data-shown="true"] .wa-draw-in {
+  stroke-dashoffset: 0;
+}
+
+/* The vertical rail in the lead journey, and the connector rail in Automation. */
+.wa-rail {
+  transform: scaleY(0);
+  transform-origin: top center;
+  transition: transform 1.5s cubic-bezier(0.22, 1, 0.36, 1);
+}
+[data-shown="true"] .wa-rail {
+  transform: scaleY(1);
+}
+.wa-rail-x {
+  transform: scaleX(0);
+  transform-origin: left center;
+  transition: transform 1.2s cubic-bezier(0.22, 1, 0.36, 1);
+}
+[data-shown="true"] .wa-rail-x {
+  transform: scaleX(1);
+}
+
+/* Hover affordances, shared so every card on the page lifts by the same amount. */
+@layer utilities {
+  .wa-hover-lift {
+    transition:
+      transform 0.3s cubic-bezier(0.22, 1, 0.36, 1),
+      box-shadow 0.3s ease,
+      background-color 0.3s ease;
+  }
+  .wa-hover-lift:hover {
+    transform: translateY(-4px);
+  }
+
+  /* The icon tile inside a card, nudged on card hover. Scoped to `group` so it only
+     responds to its own card. */
+  .group:hover .wa-icon-tilt {
+    transform: translateY(-1px) scale(1.06);
+  }
+  .wa-icon-tilt {
+    transition: transform 0.3s cubic-bezier(0.34, 1.4, 0.64, 1);
+  }
+}
+
+/* A single slow breath on the recommended pricing ring. Not a pulse: it completes
+   once the section is seen and then holds, because a price card that keeps
+   flashing reads as an advert rather than a recommendation. */
+@keyframes wa-ring-settle {
+  0% { box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.35); }
+  70% { box-shadow: 0 0 0 12px rgba(16, 185, 129, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(16, 185, 129, 0); }
+}
+[data-shown="true"] .wa-ring-settle {
+  animation: wa-ring-settle 1.8s cubic-bezier(0.22, 1, 0.36, 1) 0.5s 1;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .wa-reveal-scale,
+  .wa-pop,
+  .wa-lift {
+    opacity: 1;
+    transform: none;
+    transition: none;
+  }
+  .wa-grow-x,
+  .wa-rail-x {
+    transform: scaleX(1);
+    transition: none;
+  }
+  .wa-rail {
+    transform: scaleY(1);
+    transition: none;
+  }
+  .wa-draw-in {
+    stroke-dashoffset: 0;
+    transition: none;
+  }
+  .wa-hover-lift:hover {
+    transform: none;
+  }
+  .group:hover .wa-icon-tilt {
+    transform: none;
+  }
+  [data-shown="true"] .wa-ring-settle {
+    animation: none;
+  }
+}
+
+/* No JavaScript, no observers, therefore no `data-shown` — and every staged element
+   would sit at opacity 0 forever. The content is in the server-rendered HTML either
+   way, so hand it its final state rather than hiding a readable page behind a script. */
+@media (scripting: none) {
+  .wa-reveal,
+  .wa-reveal-scale,
+  .wa-pop,
+  .wa-lift {
+    opacity: 1;
+    transform: none;
+  }
+  .wa-grow-x,
+  .wa-rail-x {
+    transform: scaleX(1);
+  }
+  .wa-rail {
+    transform: scaleY(1);
+  }
+  .wa-draw-in {
+    stroke-dashoffset: 0;
+  }
+}

@@ -2,47 +2,91 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { useState } from "react";
-import { Menu, X } from "lucide-react";
+import { useEffect, useState } from "react";
+import { Menu, MessageSquare, X } from "lucide-react";
+import { cn } from "@/lib/utils";
+
+/**
+ * Marketing navigation.
+ *
+ * Every entry points at a page that exists under app/(marketing) — "Solutions" is the
+ * industries page and "Resources" is the blog, rather than two new routes invented to
+ * fill a nav bar. Login and Start Free Trial go to the real auth routes; nothing about
+ * authentication changes here.
+ *
+ * Aceternity's Resizable Navbar behaviour: the bar compacts and gains a shadow once the
+ * page has scrolled, done with a passive scroll listener rather than a motion value.
+ */
 
 const NAV_LINKS = [
   { label: "Features", href: "/features" },
+  { label: "Solutions", href: "/industries" },
   { label: "Pricing", href: "/pricing" },
-  { label: "Industries", href: "/industries" },
-  { label: "About", href: "/about" },
-  { label: "Blog", href: "/blog" },
+  { label: "Resources", href: "/blog" },
 ];
 
-export default function Navbar() {
-  const [isOpen, setIsOpen] = useState(false);
-  const pathname = usePathname();
+function Wordmark({ onClick }: { onClick?: () => void }) {
+  return (
+    <Link
+      href="/"
+      onClick={onClick}
+      className="flex items-center gap-2.5 rounded-lg focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-600"
+    >
+      <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-emerald-600 shadow-sm shadow-emerald-600/30">
+        <MessageSquare className="h-4 w-4 text-white" />
+      </span>
+      <span className="text-lg font-bold tracking-tight text-slate-900">WhatsCRM</span>
+    </Link>
+  );
+}
 
+export default function Navbar() {
+  const pathname = usePathname();
+  const [isOpen, setIsOpen] = useState(false);
+  const [scrolled, setScrolled] = useState(false);
+
+  useEffect(() => {
+    const onScroll = () => setScrolled(window.scrollY > 12);
+    onScroll();
+    window.addEventListener("scroll", onScroll, { passive: true });
+    return () => window.removeEventListener("scroll", onScroll);
+  }, []);
+
+  // Every link in the sheet closes it on click, which is also what ends the navigation —
+  // so there is no route change that can leave it open, and no effect needed to catch one.
   const closeMenu = () => setIsOpen(false);
 
   return (
-    <header className="sticky top-0 z-50 border-b border-gray-200 bg-white/95 backdrop-blur">
-      <nav className="mx-auto flex h-16 max-w-7xl items-center justify-between px-4 sm:px-6 lg:px-8">
-        <Link
-          href="/"
-          onClick={closeMenu}
-          className="text-xl font-extrabold tracking-tight text-[#6C3FC4]"
-        >
-          WhatsCRM
-        </Link>
+    <header
+      className={cn(
+        "sticky top-0 z-50 border-b transition-all duration-300",
+        scrolled
+          ? "border-slate-200/80 bg-white/85 shadow-sm shadow-slate-900/5 backdrop-blur-md"
+          : "border-transparent bg-white/60 backdrop-blur",
+      )}
+    >
+      <nav
+        aria-label="Main"
+        className={cn(
+          "mx-auto flex max-w-7xl items-center justify-between px-4 transition-all duration-300 sm:px-6 lg:px-8",
+          scrolled ? "h-14" : "h-16",
+        )}
+      >
+        <Wordmark onClick={closeMenu} />
 
-        {/* Desktop links */}
-        <ul className="hidden items-center gap-8 md:flex">
+        <ul className="hidden items-center gap-1 md:flex">
           {NAV_LINKS.map((link) => {
             const isActive = pathname === link.href;
             return (
               <li key={link.href}>
                 <Link
                   href={link.href}
-                  className={
+                  className={cn(
+                    "rounded-lg px-3.5 py-2 text-sm font-medium transition focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-600",
                     isActive
-                      ? "text-sm font-semibold text-[#6C3FC4]"
-                      : "text-sm font-medium text-gray-700 transition-colors hover:text-[#6C3FC4]"
-                  }
+                      ? "text-emerald-700"
+                      : "text-slate-600 hover:bg-slate-100/70 hover:text-slate-900",
+                  )}
                 >
                   {link.label}
                 </Link>
@@ -51,63 +95,63 @@ export default function Navbar() {
           })}
         </ul>
 
-        {/* Desktop actions */}
-        <div className="hidden items-center gap-3 md:flex">
+        <div className="hidden items-center gap-2 md:flex">
           <Link
             href="/login"
-            className="rounded-lg px-4 py-2 text-sm font-semibold text-gray-700 transition-colors hover:bg-gray-100 hover:text-[#6C3FC4]"
+            className="rounded-lg px-4 py-2 text-sm font-semibold text-slate-700 transition hover:bg-slate-100 hover:text-slate-900 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-600"
           >
-            Login
+            Log in
           </Link>
           <Link
             href="/register"
-            className="rounded-lg bg-[#6C3FC4] px-4 py-2 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-[#5A32A6]"
+            className="rounded-lg bg-emerald-600 px-4 py-2 text-sm font-semibold text-white shadow-sm shadow-emerald-600/25 transition hover:bg-emerald-700 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-600"
           >
             Start Free Trial
           </Link>
         </div>
 
-        {/* Mobile hamburger */}
         <button
           type="button"
           onClick={() => setIsOpen((open) => !open)}
           aria-expanded={isOpen}
           aria-controls="mobile-nav"
           aria-label={isOpen ? "Close menu" : "Open menu"}
-          className="inline-flex items-center justify-center rounded-lg p-2 text-gray-700 transition-colors hover:bg-gray-100 md:hidden"
+          className="inline-flex items-center justify-center rounded-lg p-2 text-slate-700 transition hover:bg-slate-100 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-600 md:hidden"
         >
-          {isOpen ? <X className="h-6 w-6" /> : <Menu className="h-6 w-6" />}
+          {isOpen ? <X className="h-5 w-5" /> : <Menu className="h-5 w-5" />}
         </button>
       </nav>
 
-      {/* Mobile slide-down nav */}
       {isOpen && (
-        <div id="mobile-nav" className="border-t border-gray-200 bg-white md:hidden">
+        <div
+          id="mobile-nav"
+          className="border-t border-slate-200 bg-white shadow-lg shadow-slate-900/5 md:hidden"
+        >
           <ul className="space-y-1 px-4 py-4">
             {NAV_LINKS.map((link) => (
               <li key={link.href}>
                 <Link
                   href={link.href}
                   onClick={closeMenu}
-                  className="block rounded-lg px-3 py-2 text-base font-medium text-gray-700 transition-colors hover:bg-gray-50 hover:text-[#6C3FC4]"
+                  className="block rounded-lg px-3 py-2.5 text-base font-medium text-slate-700 transition hover:bg-emerald-50 hover:text-emerald-700"
                 >
                   {link.label}
                 </Link>
               </li>
             ))}
           </ul>
-          <div className="flex flex-col gap-2 border-t border-gray-200 px-4 py-4">
+          <div className="flex flex-col gap-2 border-t border-slate-200 px-4 py-4">
             <Link
               href="/login"
               onClick={closeMenu}
-              className="rounded-lg border border-gray-300 px-4 py-2.5 text-center text-sm font-semibold text-gray-700 transition-colors hover:bg-gray-50"
+              className="rounded-lg px-4 py-2.5 text-center text-sm font-semibold text-slate-700 ring-1 ring-inset ring-slate-200 transition hover:bg-slate-50"
             >
-              Login
+              Log in
             </Link>
             <Link
               href="/register"
               onClick={closeMenu}
-              className="rounded-lg bg-[#6C3FC4] px-4 py-2.5 text-center text-sm font-semibold text-white transition-colors hover:bg-[#5A32A6]"
+              className="rounded-lg bg-emerald-600 px-4 py-2.5 text-center text-sm font-semibold text-white shadow-sm shadow-emerald-600/25 transition hover:bg-emerald-700"
             >
               Start Free Trial
             </Link>
