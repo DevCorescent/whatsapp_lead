@@ -14,61 +14,66 @@ import { Container, Reveal, SectionHeading } from "./primitives";
  *
  * Every answer describes behaviour that exists today. Where a limit is set by the plan
  * rather than the product, the answer says so instead of implying "unlimited".
+ *
+ * FIVE QUESTIONS, AND THAT IS THE POINT. This list was eight, which made the homepage's
+ * last section its longest and pushed the closing CTA below a screen of collapsed rows
+ * nobody opens. What survived is the five a first-time visitor actually has before they
+ * sign up — what it is, how it qualifies, where answers come from, can I use my number,
+ * what does trying it cost me.
+ *
+ * The three that went were real answers to narrower questions — multi-agent inboxes,
+ * multiple numbers, STOP handling. They are operational detail: they matter once
+ * someone is evaluating, not while they are deciding whether to. /pricing and /features
+ * carry that weight, and support answers it directly.
+ *
+ * The remaining answers were also cut to roughly two sentences each. The long form was
+ * accurate but read as documentation, and an FAQ that takes a paragraph to answer
+ * "what is this" has answered a different question.
  */
 
 const FAQS = [
   {
     question: "What is WhatsCRM?",
     answer:
-      "A CRM built around your WhatsApp Business number. Incoming messages become contacts and conversations automatically, an AI answers them from your own documents, leads are qualified and scored, and your team works the result from a shared inbox and a pipeline — instead of from a group chat.",
+      "An AI-powered CRM built around your WhatsApp Business number. Incoming messages become contacts and conversations automatically, the AI replies and qualifies the lead, and your team works the result from one shared inbox and pipeline instead of a group chat.",
   },
   {
     question: "How does the AI qualify a lead?",
     answer:
-      "It reads the conversation and judges it against BANT — budget, authority, need and timeline — returning a short reason for each. Those results produce a score from 0 to 100, which sorts the lead into COLD, WARM, HOT or QUALIFIED and is written onto the lead record, not just shown once and forgotten.",
+      "It reads the conversation for budget, authority, need and timeline, then turns what it finds into a score from 0 to 100. That score sorts each lead into COLD, WARM, HOT or QUALIFIED, so your team can see which conversations are worth their time first.",
   },
   {
     question: "Where do the AI's answers come from?",
     answer:
-      "From documents you upload. Files are indexed, and before the AI writes anything it retrieves the passages relevant to what the customer just asked. The documents it used are recorded on the message, so every AI reply can be traced back to its source — and a wrong answer points you at the file to fix.",
-  },
-  {
-    question: "Can several team members handle the same number?",
-    answer:
-      "Yes — that is the point of the shared inbox. Conversations can be assigned to an agent and carry a status of Open, Assigned, Resolved or Closed. Internal notes stay inside the app and are never sent to WhatsApp. Six roles control who can reach which surfaces.",
+      "From the documents you upload to your knowledge base. Before the AI replies it retrieves the passages relevant to what was just asked, and the files it used are recorded on the message — so every answer traces back to your own company information.",
   },
   {
     question: "Can I connect my own WhatsApp number?",
     answer:
-      "Yes. WhatsCRM runs on the official Meta WhatsApp Business Cloud API, so you connect your own WhatsApp Business number and phone number ID from Settings. You will need a Meta Business Account with WhatsApp enabled; the onboarding wizard walks through the credentials step by step.",
-  },
-  {
-    question: "Can I run more than one WhatsApp number?",
-    answer:
-      "Yes. Each business inside your workspace has its own number, inbox, contacts, tags, templates, flows and AI configuration, and you switch between them from the sidebar. How many you can create depends on your plan.",
-  },
-  {
-    question: "What happens when someone replies STOP?",
-    answer:
-      "They are unsubscribed immediately and sent a confirmation. From that point they are skipped by AI replies, chatbot flows and campaigns until they reply START or SUBSCRIBE to opt back in. This runs before anything else on the inbound path, so nothing can talk over it.",
+      "Yes. WhatsCRM runs on the official Meta WhatsApp Business Cloud API, so you connect your own WhatsApp Business number from Settings. You will need a Meta Business Account with WhatsApp enabled, and the onboarding wizard walks through the credentials step by step.",
   },
   {
     question: "How does the free trial work?",
     answer:
-      "You can create a workspace and explore the product without entering card details. Paid plans are billed monthly or annually and can be upgraded, downgraded or cancelled from Billing — a cancellation runs to the end of the cycle you have already paid for.",
+      "Create a workspace and explore the WhatsApp, CRM and AI features without entering card details. Paid plans are billed monthly or annually and can be upgraded, downgraded or cancelled from Billing whenever you decide.",
   },
 ];
 
 export function Faq() {
-  const [open, setOpen] = useState<number | null>(0);
+  // Every question starts closed. Opening one on load answers a question nobody
+  // asked and pushes the rest of the list down the page before it can be scanned.
+  const [open, setOpen] = useState<number | null>(null);
 
   return (
-    <section id="faq" className="relative scroll-mt-20 overflow-hidden bg-slate-50 py-20 sm:py-28">
+    <section
+      id="faq"
+      className="relative scroll-mt-20 overflow-hidden bg-gradient-to-b from-white to-emerald-50/40 py-12 sm:py-14"
+    >
       <Container>
-          <SectionHeading align="center" eyebrow="FAQ" title="Questions, answered" />
+        <SectionHeading align="center" eyebrow="FAQ" title="Questions, answered" />
 
         <Reveal delay={80}>
-          <div className="mx-auto mt-12 max-w-3xl divide-y divide-slate-200 overflow-hidden rounded-2xl bg-white shadow-sm ring-1 ring-inset ring-slate-900/5">
+          <div className="mx-auto mt-7 max-w-3xl divide-y divide-slate-200 overflow-hidden rounded-2xl bg-white shadow-sm ring-1 ring-inset ring-slate-900/5">
             {FAQS.map((faq, i) => {
               const isOpen = open === i;
               const triggerId = `home-faq-trigger-${i}`;
@@ -83,7 +88,7 @@ export function Faq() {
                       aria-expanded={isOpen}
                       aria-controls={panelId}
                       onClick={() => setOpen(isOpen ? null : i)}
-                      className="flex w-full items-center justify-between gap-4 px-6 py-5 text-left transition hover:bg-slate-50 focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-emerald-600"
+                      className="flex w-full items-center justify-between gap-4 px-5 py-4 text-left transition hover:bg-slate-50 focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-emerald-600 sm:px-6"
                     >
                       <span className="text-sm font-semibold text-slate-900 sm:text-base">
                         {faq.question}
@@ -110,7 +115,7 @@ export function Faq() {
                     )}
                   >
                     <div className="overflow-hidden">
-                      <p className="px-6 pb-5 text-sm leading-relaxed text-slate-600">
+                      <p className="px-5 pb-4 text-sm leading-relaxed text-slate-600 sm:px-6">
                         {faq.answer}
                       </p>
                     </div>

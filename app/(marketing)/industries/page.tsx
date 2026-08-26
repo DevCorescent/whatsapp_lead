@@ -1,15 +1,7 @@
 import Link from "next/link";
 import type { Metadata } from "next";
-import {
-  ArrowRight,
-  Building2,
-  Car,
-  Check,
-  GraduationCap,
-  HeartPulse,
-  Landmark,
-  ShoppingCart,
-} from "lucide-react";
+import { ArrowRight, Check } from "lucide-react";
+import { INDUSTRIES } from "@/components/marketing/industries";
 
 export const metadata: Metadata = {
   title: "Industries — WhatsCRM",
@@ -17,81 +9,17 @@ export const metadata: Metadata = {
     "How real estate, EdTech, e-commerce, healthcare, finance and automotive teams use WhatsCRM to capture and close leads on WhatsApp.",
 };
 
-const INDUSTRIES = [
-  {
-    Icon: Building2,
-    name: "Real Estate",
-    summary:
-      "Property enquiries arrive on WhatsApp and go cold in a group chat. WhatsCRM captures every one and tells you which buyer is actually ready to visit.",
-    useCases: [
-      "Auto-reply with floor plans, price and location",
-      "AI scores buyers on budget and timeline",
-      "Site-visit follow-ups that never get forgotten",
-    ],
-  },
-  {
-    Icon: GraduationCap,
-    name: "EdTech & Coaching",
-    summary:
-      "Admission season means hundreds of the same questions. Let AI answer fees, batches and syllabus while your counsellors call the serious students.",
-    useCases: [
-      "Instant answers on fees, batches and EMI",
-      "Counsellor assignment by course interest",
-      "Bulk campaigns for new batch launches",
-    ],
-  },
-  {
-    Icon: ShoppingCart,
-    name: "E-commerce & D2C",
-    summary:
-      "Recover abandoned carts and handle order queries where your customers already are — WhatsApp beats email open rates by 5×.",
-    useCases: [
-      "Order status and shipping queries on autopilot",
-      "Abandoned-cart and restock campaigns",
-      "Returns and refunds tracked as tickets",
-    ],
-  },
-  {
-    Icon: HeartPulse,
-    name: "Healthcare & Clinics",
-    summary:
-      "Appointment requests, reports and reminders in one shared inbox your front desk can actually keep up with.",
-    useCases: [
-      "Appointment booking and reminder messages",
-      "Answer clinic timings and consultation fees",
-      "Route enquiries to the right department",
-    ],
-  },
-  {
-    Icon: Landmark,
-    name: "Finance & Insurance",
-    summary:
-      "Qualify loan and policy leads before an advisor picks up the phone, so their time goes to the applications most likely to convert.",
-    useCases: [
-      "AI qualification on income and eligibility",
-      "Document collection over WhatsApp",
-      "Renewal and premium-due reminders",
-    ],
-  },
-  {
-    Icon: Car,
-    name: "Automotive",
-    summary:
-      "From first enquiry to test drive to service reminder — keep the whole customer lifecycle in one pipeline.",
-    useCases: [
-      "Test-drive booking straight from a chat",
-      "Model, variant and finance queries answered",
-      "Service and insurance renewal campaigns",
-    ],
-  },
-];
 
 export default function IndustriesPage() {
   return (
     <div>
       {/* Hero */}
-      <section className="bg-gradient-to-b from-emerald-600/5 to-white py-16 sm:py-20">
-        <div className="mx-auto max-w-3xl px-4 text-center sm:px-6 lg:px-8">
+      <section className="relative isolate overflow-hidden bg-gradient-to-b from-white via-emerald-50/60 to-white py-16 sm:py-20">
+        <div
+          aria-hidden
+          className="pointer-events-none absolute left-1/2 top-0 h-[30rem] w-[52rem] -translate-x-1/2 -translate-y-1/3 rounded-full bg-[radial-gradient(closest-side,rgba(16,185,129,0.16),transparent_100%)]"
+        />
+        <div className="relative mx-auto max-w-3xl px-4 text-center sm:px-6 lg:px-8">
           <h1 className="text-4xl font-extrabold tracking-tight text-gray-900 sm:text-5xl">
             Built for the way your industry sells
           </h1>
@@ -103,13 +31,16 @@ export default function IndustriesPage() {
       </section>
 
       {/* Industry cards */}
-      <section className="pb-16 sm:pb-20 lg:pb-24">
+      <section className="bg-gradient-to-b from-white to-emerald-50/40 pb-16 pt-4 sm:pb-20 lg:pb-24">
         <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
           <div className="grid gap-6 sm:grid-cols-2 lg:grid-cols-3">
-            {INDUSTRIES.map(({ Icon, name, summary, useCases }) => (
+            {/* `id` is the deep-link target the site map and the footer point at, so
+                every industry is addressable without a page of its own. */}
+            {INDUSTRIES.map(({ id, Icon, name, summary, useCases }) => (
               <div
                 key={name}
-                className="flex flex-col rounded-2xl border border-gray-200 bg-white p-6 transition-shadow hover:shadow-lg"
+                id={id}
+                className="group flex scroll-mt-24 flex-col rounded-2xl border border-gray-200 bg-white p-6 transition duration-300 hover:-translate-y-1 hover:border-emerald-500/30 hover:shadow-lg hover:shadow-emerald-900/5"
               >
                 <span className="flex h-12 w-12 items-center justify-center rounded-xl bg-emerald-600/10">
                   <Icon className="h-6 w-6 text-emerald-600" />
@@ -140,8 +71,9 @@ export default function IndustriesPage() {
         </div>
       </section>
 
-      {/* CTA banner */}
-      <section className="pb-16 sm:pb-20">
+      {/* CTA banner. Picks the wash up where the card grid left it, so the two bands
+          read as one section rather than as a colour that stops mid-page. */}
+      <section className="bg-gradient-to-b from-emerald-50/40 to-white pb-16 sm:pb-20">
         <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
           <div className="rounded-3xl bg-emerald-600 px-6 py-14 text-center sm:px-12 sm:py-16">
             <h2 className="text-3xl font-bold tracking-tight text-white sm:text-4xl">

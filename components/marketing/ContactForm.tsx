@@ -15,7 +15,7 @@ type FormState = {
 const EMPTY_FORM: FormState = { name: "", email: "", phone: "", company: "", message: "" };
 
 const INPUT_CLASS =
-  "mt-1.5 w-full rounded-lg border border-gray-300 px-4 py-2.5 text-sm text-gray-900 placeholder:text-gray-400 focus:border-[#6C3FC4] focus:outline-none focus:ring-2 focus:ring-[#6C3FC4]/20";
+  "mt-1.5 w-full rounded-lg border border-gray-300 px-4 py-2.5 text-sm text-gray-900 placeholder:text-gray-400 focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-500/20";
 
 export default function ContactForm() {
   const [form, setForm] = useState<FormState>(EMPTY_FORM);
@@ -140,7 +140,7 @@ export default function ContactForm() {
 
       <button
         type="submit"
-        className="mt-6 inline-flex w-full items-center justify-center gap-2 rounded-lg bg-[#6C3FC4] px-6 py-3.5 text-base font-semibold text-white shadow-lg shadow-[#6C3FC4]/20 transition-colors hover:bg-[#5A32A6] sm:w-auto"
+        className="mt-6 inline-flex w-full items-center justify-center gap-2 rounded-xl bg-emerald-600 px-6 py-3.5 text-base font-semibold text-white shadow-lg shadow-emerald-600/25 transition duration-200 hover:-translate-y-0.5 hover:bg-emerald-700 hover:shadow-xl hover:shadow-emerald-600/30 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-600 sm:w-auto"
       >
         <Send className="h-5 w-5" />
         Book a Demo
@@ -148,7 +148,7 @@ export default function ContactForm() {
 
       <p className="mt-4 text-xs text-gray-500">
         By submitting this form you agree to our{" "}
-        <Link href="/privacy-policy" className="font-medium text-[#6C3FC4] hover:underline">
+        <Link href="/privacy-policy" className="font-medium text-emerald-700 hover:text-emerald-800 hover:underline">
           Privacy Policy
         </Link>
         . We will never share your details.

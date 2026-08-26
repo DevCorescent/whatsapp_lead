@@ -207,6 +207,29 @@ input[type="range"] {
   .wa-marquee-hold:hover .wa-marquee { animation-play-state: paused; }
 }
 
+/* A marquee that only runs where there is a pointer to pause it with.
+   Below `sm` the same track is a swipeable scroller instead: a strip that moves on
+   its own under a thumb is a strip you cannot read, and there is no hover to stop
+   it. Written as a media query rather than a `sm:` variant because a class declared
+   in `@layer utilities` does not get responsive variants in Tailwind v4. */
+.wa-marquee-desktop {
+  animation: none;
+}
+@media (min-width: 640px) {
+  .wa-marquee-desktop {
+    animation: wa-marquee 46s linear infinite;
+  }
+  .wa-marquee-hold:hover .wa-marquee-desktop,
+  .wa-marquee-hold:focus-within .wa-marquee-desktop {
+    animation-play-state: paused;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .wa-marquee-desktop {
+    animation: none;
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   .wa-reveal {
     opacity: 1;
@@ -418,5 +441,331 @@ input[type="range"] {
   }
   .wa-draw-in {
     stroke-dashoffset: 0;
+  }
+}
+
+/* ─── Marketing homepage: interaction ─────────────────────────────────────────
+ *
+ * A third additive block, for the pieces of the homepage that respond to a click
+ * or a press rather than to scroll position. Same rules as the two blocks above:
+ * every class is `wa-` prefixed, nothing here overrides an existing selector, and
+ * everything is switched off under `prefers-reduced-motion`.
+ *
+ * State is expressed as a data attribute the component sets — `data-open`,
+ * `data-active`, `data-pressed` — so React only ever toggles an attribute and the
+ * transition itself stays in CSS, matching how the scroll reveals already work.
+ */
+
+/* A detail panel that opens under the thing it explains.
+   `grid-template-rows: 0fr → 1fr` rather than max-height: it animates to the
+   content's real height, so a two-line panel and a six-line one both open
+   correctly without a magic pixel value that clips the longer of the two. */
+.wa-collapse {
+  display: grid;
+  grid-template-rows: 0fr;
+  opacity: 0;
+  transition:
+    grid-template-rows 0.4s cubic-bezier(0.22, 1, 0.36, 1),
+    opacity 0.28s ease;
+}
+.wa-collapse[data-open="true"] {
+  grid-template-rows: 1fr;
+  opacity: 1;
+}
+.wa-collapse > * {
+  min-height: 0;
+  overflow: hidden;
+}
+
+/* A highlight travelling along a connector, for the edge the demo is currently
+   crossing. A moving background position rather than a positioned dot, because a
+   dot needs the line's pixel length and this does not. */
+@keyframes wa-flow-x {
+  from { background-position: -70% 50%; }
+  to { background-position: 170% 50%; }
+}
+@keyframes wa-flow-y {
+  from { background-position: 50% -70%; }
+  to { background-position: 50% 170%; }
+}
+@keyframes wa-swap {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: none; }
+}
+
+/* The detail panel's entrance, in both of its forms: a sheet rising from the bottom
+   of a phone, an anchored popover on a pointer device. One class rather than two
+   plus a breakpoint variant, because a custom class in @layer utilities does not
+   get responsive variants in Tailwind v4 — the media query has to live here. */
+@keyframes wa-sheet-in {
+  from { opacity: 0; transform: translateY(100%); }
+  to { opacity: 1; transform: none; }
+}
+@keyframes wa-popover-in {
+  from { opacity: 0; transform: translateY(-4px) scale(0.97); }
+  to { opacity: 1; transform: none; }
+}
+.wa-detail-in {
+  animation: wa-sheet-in 0.3s cubic-bezier(0.22, 1, 0.36, 1);
+}
+.wa-scrim-in {
+  animation: wa-fade-in 0.25s ease;
+}
+@keyframes wa-fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+@media (min-width: 640px) {
+  .wa-detail-in {
+    animation: wa-popover-in 0.22s cubic-bezier(0.22, 1, 0.36, 1);
+  }
+}
+
+/* Three dots, for the moment before an answer exists. */
+@keyframes wa-typing {
+  0%, 60%, 100% { opacity: 0.25; transform: translateY(0); }
+  30% { opacity: 1; transform: translateY(-2px); }
+}
+.wa-typing-dot {
+  animation: wa-typing 1.2s ease-in-out infinite;
+}
+
+/* The citation, at the moment the answer lands. Runs once and holds — a source line
+   that keeps flashing reads as an error state. */
+@keyframes wa-cite {
+  0% { box-shadow: 0 0 0 0 rgba(16, 185, 129, 0); }
+  35% { box-shadow: 0 0 0 4px rgba(16, 185, 129, 0.28); }
+  100% { box-shadow: 0 0 0 0 rgba(16, 185, 129, 0); }
+}
+.wa-cite {
+  animation: wa-cite 1.6s cubic-bezier(0.22, 1, 0.36, 1) 1;
+}
+
+@layer utilities {
+  .wa-flow-x {
+    background-image: linear-gradient(
+      90deg,
+      transparent 0%,
+      rgb(16 185 129) 40%,
+      rgb(52 211 153) 50%,
+      rgb(16 185 129) 60%,
+      transparent 100%
+    );
+    background-size: 70% 100%;
+    background-repeat: no-repeat;
+    animation: wa-flow-x 1.5s linear infinite;
+  }
+  .wa-flow-y {
+    background-image: linear-gradient(
+      180deg,
+      transparent 0%,
+      rgb(16 185 129) 40%,
+      rgb(52 211 153) 50%,
+      rgb(16 185 129) 60%,
+      transparent 100%
+    );
+    background-size: 100% 70%;
+    background-repeat: no-repeat;
+    animation: wa-flow-y 1.5s linear infinite;
+  }
+
+  /* Content swapping inside a panel that keeps its position — the caption under a
+     workflow canvas, say. Keyed on the selected id, so React remounts the node and
+     the animation runs again. A keyframe rather than a transition for exactly that
+     reason: there is no previous state to transition from. */
+  .wa-swap {
+    animation: wa-swap 0.34s cubic-bezier(0.22, 1, 0.36, 1);
+  }
+
+  /* The press affordance shared by every interactive card, chip and node. */
+  .wa-tap {
+    transition:
+      transform 0.28s cubic-bezier(0.34, 1.4, 0.64, 1),
+      box-shadow 0.28s ease,
+      background-color 0.24s ease,
+      border-color 0.24s ease,
+      opacity 0.24s ease;
+    -webkit-tap-highlight-color: transparent;
+    touch-action: manipulation;
+  }
+  .wa-tap:active {
+    transform: scale(0.985);
+  }
+}
+
+/* The hero frame's bend. The transform itself is written inline from the pointer
+   position; this only supplies the easing — quick while a finger is down, slower
+   and springier on release, which is what makes it read as a flexible card rather
+   than a rotating box. */
+.wa-bend {
+  transition: transform 0.65s cubic-bezier(0.22, 1.15, 0.36, 1);
+  transform-origin: center center;
+  will-change: transform;
+}
+.wa-bend[data-pressed="true"] {
+  transition-duration: 0.14s;
+  transition-timing-function: ease-out;
+}
+
+/* A region of the inbox mockup while the demo is pointing at something else.
+   Deliberately shallow. The demo loops, so at any moment most of the frame is in
+   this state — at the 40%-opacity a "dim the rest" effect usually reaches, a hero
+   that is mostly not-the-current-step reads as disabled rather than as focused.
+   This is depth of field: enough to sit back, never enough to look switched off. */
+.wa-recede {
+  transition:
+    opacity 0.4s ease,
+    filter 0.4s ease,
+    transform 0.45s cubic-bezier(0.22, 1, 0.36, 1);
+}
+.wa-recede[data-dim="true"] {
+  opacity: 0.78;
+  filter: saturate(0.88);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .wa-collapse {
+    transition: none;
+  }
+  .wa-flow-x,
+  .wa-flow-y,
+  .wa-swap,
+  .wa-detail-in,
+  .wa-scrim-in,
+  .wa-typing-dot,
+  .wa-cite {
+    animation: none;
+    background-image: none;
+  }
+  /* The typing dots carry meaning, so they stay visible rather than resting at the
+     25% opacity the keyframe starts on. */
+  .wa-typing-dot {
+    opacity: 1;
+  }
+  .wa-tap,
+  .wa-bend,
+  .wa-recede {
+    transition: none;
+  }
+  .wa-tap:active {
+    transform: none;
+  }
+  /* The bend is a pointer-driven transform, so it is disabled in the component
+     rather than here; this guards the case where a transform is already set. */
+  .wa-bend {
+    transform: none !important;
+  }
+}
+
+@media (scripting: none) {
+  .wa-collapse {
+    grid-template-rows: 1fr;
+    opacity: 1;
+  }
+}
+
+/* ─── Marketing: the premium dark band, and the footer ────────────────────────
+ *
+ * A fourth additive block, for the one part of the site that is deliberately dark —
+ * the How-it-works → Features band on the homepage — and for the footer that closes
+ * every page. Same rules as the three blocks above: every class is `wa-` prefixed,
+ * nothing here overrides an existing selector, and every animation is switched off
+ * under `prefers-reduced-motion`.
+ *
+ * WHY A DARK BAND AT ALL. The page is otherwise white with green washes, which reads
+ * as calm but also as flat — nothing on it claims to be the centre. One dark band in
+ * the middle gives the scroll a spine: the sections before it lead into it and the
+ * ones after read as detail. It is used exactly once, which is the only reason it
+ * works.
+ */
+
+/* Grain, at the strength where you notice it only if you look for it. A single
+   fractal-noise tile rather than a bitmap, so it costs no request and tiles at any
+   viewport. Sits above the gradient and below the mesh glows. */
+.wa-noise {
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='140' height='140' filter='url(%23n)' opacity='0.32'/%3E%3C/svg%3E");
+  background-size: 140px 140px;
+}
+
+/* The mesh glows behind the dark band. Two blobs breathing out of phase, which is
+   what stops the background from reading as a static image. Small amplitude on
+   purpose — this is atmosphere, not motion anyone should be able to follow. */
+@keyframes wa-drift {
+  0%, 100% { transform: translate3d(0, 0, 0) scale(1); opacity: 0.85; }
+  50% { transform: translate3d(2.5%, -3.5%, 0) scale(1.08); opacity: 1; }
+}
+@layer utilities {
+  .wa-drift { animation: wa-drift 22s ease-in-out infinite; }
+  .wa-drift-slow { animation: wa-drift 30s ease-in-out infinite reverse; }
+}
+
+/* A dark glass card. The lift and the border/shadow response are one class so every
+   card in the band answers a pointer identically; the emerald edge on hover is what
+   makes the surface read as glass rather than as a flat dark rectangle. */
+.wa-glass {
+  transition:
+    transform 0.35s cubic-bezier(0.22, 1, 0.36, 1),
+    border-color 0.35s ease,
+    background-color 0.35s ease,
+    box-shadow 0.35s ease;
+}
+.wa-glass:hover,
+.wa-glass:focus-within {
+  transform: translateY(-4px);
+}
+
+/* The aura behind a glass card, revealed on hover. A sibling layer rather than a
+   box-shadow, so it can blur past the card's bounds without smearing the border. */
+.wa-aura {
+  opacity: 0;
+  transition: opacity 0.4s ease;
+}
+.wa-glass:hover > .wa-aura,
+.wa-glass:focus-within > .wa-aura {
+  opacity: 1;
+}
+
+/* A connection point on a connector line: a lit dot with a ring that breathes.
+   Used between the workflow steps, where it marks the hand-off from one stage to
+   the next. */
+@keyframes wa-node-glow {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.5); }
+  50% { box-shadow: 0 0 0 5px rgba(16, 185, 129, 0); }
+}
+@layer utilities {
+  .wa-node-glow { animation: wa-node-glow 3s ease-in-out infinite; }
+}
+
+/* A link that grows an underline from the left. Painted as a background image so it
+   needs no pseudo-element and no extra span, and so it wraps correctly on the two
+   footer labels long enough to break across lines. */
+.wa-underline {
+  background-image: linear-gradient(currentColor, currentColor);
+  background-repeat: no-repeat;
+  background-position: 0 100%;
+  background-size: 0% 1px;
+  transition:
+    background-size 0.3s cubic-bezier(0.22, 1, 0.36, 1),
+    color 0.25s ease;
+}
+.wa-underline:hover,
+.wa-underline:focus-visible {
+  background-size: 100% 1px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .wa-drift,
+  .wa-drift-slow,
+  .wa-node-glow {
+    animation: none;
+  }
+  .wa-glass,
+  .wa-aura,
+  .wa-underline {
+    transition: none;
+  }
+  .wa-glass:hover,
+  .wa-glass:focus-within {
+    transform: none;
   }
 }

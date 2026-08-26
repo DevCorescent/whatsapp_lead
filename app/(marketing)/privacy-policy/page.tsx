@@ -102,7 +102,7 @@ export default function PrivacyPolicyPage() {
       footer={
         <p className="text-sm leading-relaxed text-gray-600">
           Questions about this policy? Email{" "}
-          <a href="mailto:privacy@whatscrm.in" className="font-semibold text-[#6C3FC4] hover:underline">
+          <a href="mailto:privacy@whatscrm.in" className="font-semibold text-emerald-700 hover:text-emerald-800 hover:underline">
             privacy@whatscrm.in
           </a>{" "}
           and a real person will get back to you.

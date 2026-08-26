@@ -81,7 +81,7 @@ export default function RefundPolicyPage() {
           To request a refund, email{" "}
           <a
             href="mailto:support@whatscrm.in"
-            className="font-semibold text-[#6C3FC4] hover:underline"
+            className="font-semibold text-emerald-700 hover:text-emerald-800 hover:underline"
           >
             support@whatscrm.in
           </a>{" "}

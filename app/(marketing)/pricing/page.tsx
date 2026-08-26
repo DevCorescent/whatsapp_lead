@@ -137,7 +137,7 @@ export default function PricingPage() {
   return (
     <div>
       {/* Header + cards */}
-      <section className="bg-gradient-to-b from-emerald-600/5 to-white py-16 sm:py-20">
+      <section className="relative isolate overflow-hidden bg-gradient-to-b from-white via-emerald-50/60 to-white py-16 sm:py-20">
         <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
           <div className="mx-auto max-w-2xl text-center">
             <h1 className="text-4xl font-extrabold tracking-tight text-gray-900 sm:text-5xl">
@@ -167,8 +167,14 @@ export default function PricingPage() {
             </p>
           </div>
 
-          {/* Horizontal scroll keeps the table usable on small screens */}
-          <div className="mt-12 overflow-x-auto rounded-2xl border border-gray-200">
+          {/* Horizontal scroll keeps the table usable on small screens.
+              `relative` is load-bearing, not decoration: the "Not available" labels in
+              the cells are `sr-only`, which is `position: absolute`. In a static
+              wrapper their containing block is the initial one, so they sit outside
+              the scroller, escape its clip, and drag the whole DOCUMENT 225px wider
+              than a 360px viewport. Positioning the wrapper makes it their containing
+              block, and the clip applies. */}
+          <div className="relative mt-12 overflow-x-auto rounded-2xl border border-gray-200">
             <table className="w-full min-w-[640px] border-collapse bg-white text-left">
               <thead>
                 <tr className="border-b border-gray-200 bg-gray-50">
@@ -216,7 +222,7 @@ export default function PricingPage() {
       </section>
 
       {/* FAQ */}
-      <section className="bg-gray-50 py-16 sm:py-20">
+      <section className="bg-gradient-to-b from-emerald-50/50 via-white to-white py-16 sm:py-20">
         <div className="mx-auto max-w-3xl px-4 sm:px-6 lg:px-8">
           <div className="text-center">
             <h2 className="text-3xl font-bold tracking-tight text-gray-900 sm:text-4xl">

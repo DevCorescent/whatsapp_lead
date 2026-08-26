@@ -11,7 +11,7 @@
  * application; it exists only for components/marketing/home/*.
  */
 
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import { cn } from "@/lib/utils";
 import { stagger } from "./motion";
 
@@ -133,14 +133,19 @@ export function Stage({
   children,
   className,
   rootMargin,
+  style,
+  id,
 }: {
   children: ReactNode;
   className?: string;
   rootMargin?: string;
+  style?: CSSProperties;
+  /** For the cases where the staged block is also an anchor target. */
+  id?: string;
 }) {
   const { ref, shown } = useInView<HTMLDivElement>(rootMargin);
   return (
-    <div ref={ref} data-shown={shown} className={className}>
+    <div ref={ref} id={id} data-shown={shown} className={className} style={style}>
       {children}
     </div>
   );
@@ -355,11 +360,18 @@ export function CountUp({
   to,
   duration = 1400,
   className,
+  format,
 }: {
   from: number;
   to: number;
   duration?: number;
   className?: string;
+  /**
+   * Render the running value. Without it the number is rounded to an integer, which
+   * is right for a score but not for "3.2m" or "18.6%" — the analytics KPIs pass a
+   * formatter so the figure counts up in the units it is finally shown in.
+   */
+  format?: (value: number) => string;
 }) {
   const { ref, shown } = useInView<HTMLSpanElement>();
   const [value, setValue] = useState(from);
@@ -381,7 +393,7 @@ export function CountUp({
       const progress = reduced ? 1 : Math.min((now - start) / duration, 1);
       // easeOutCubic — fast arrival, gentle settle.
       const eased = 1 - Math.pow(1 - progress, 3);
-      setValue(Math.round(from + (to - from) * eased));
+      setValue(from + (to - from) * eased);
       if (progress < 1) frame = requestAnimationFrame(tick);
     };
 
@@ -391,7 +403,7 @@ export function CountUp({
 
   return (
     <span ref={ref} className={cn("nums", className)}>
-      {value}
+      {format ? format(value) : Math.round(value)}
     </span>
   );
 }

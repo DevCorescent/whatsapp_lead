@@ -112,7 +112,7 @@ export default function TermsPage() {
       footer={
         <p className="text-sm leading-relaxed text-gray-600">
           Need clarification on any clause? Write to{" "}
-          <a href="mailto:legal@whatscrm.in" className="font-semibold text-[#6C3FC4] hover:underline">
+          <a href="mailto:legal@whatscrm.in" className="font-semibold text-emerald-700 hover:text-emerald-800 hover:underline">
             legal@whatscrm.in
           </a>
           .

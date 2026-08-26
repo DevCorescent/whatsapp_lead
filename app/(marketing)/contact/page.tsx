@@ -39,7 +39,11 @@ export default function ContactPage() {
   return (
     <div>
       {/* Hero */}
-      <section className="bg-gradient-to-b from-[#6C3FC4]/5 to-white py-16 sm:py-20">
+      <section className="relative isolate overflow-hidden bg-gradient-to-b from-white via-emerald-50/60 to-white py-16 sm:py-20">
+        <div
+          aria-hidden
+          className="pointer-events-none absolute left-1/2 top-0 h-[30rem] w-[52rem] -translate-x-1/2 -translate-y-1/3 rounded-full bg-[radial-gradient(closest-side,rgba(16,185,129,0.16),transparent_100%)]"
+        />
         <div className="mx-auto max-w-3xl px-4 text-center sm:px-6 lg:px-8">
           <h1 className="text-4xl font-extrabold tracking-tight text-gray-900 sm:text-5xl">
             Let&apos;s talk
@@ -64,15 +68,15 @@ export default function ContactPage() {
             <ul className="mt-8 space-y-6">
               {CONTACT_DETAILS.map(({ Icon, label, value, href }) => (
                 <li key={label} className="flex gap-4">
-                  <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-[#6C3FC4]/10">
-                    <Icon className="h-5 w-5 text-[#6C3FC4]" />
+                  <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-emerald-50 ring-1 ring-inset ring-emerald-600/15">
+                    <Icon className="h-5 w-5 text-emerald-600" />
                   </span>
                   <span className="min-w-0">
                     <span className="block text-sm font-semibold text-gray-900">{label}</span>
                     {href ? (
                       <a
                         href={href}
-                        className="mt-0.5 block text-sm text-gray-600 transition-colors hover:text-[#6C3FC4]"
+                        className="mt-0.5 block text-sm text-gray-600 transition-colors hover:text-emerald-700"
                       >
                         {value}
                       </a>

@@ -1,46 +1,79 @@
 import Link from "next/link";
-import { MessageSquare } from "lucide-react";
+import { ArrowRight, MessageSquare, ShieldCheck, Sparkles, Zap } from "lucide-react";
 import type { SVGProps } from "react";
 
 /**
  * Marketing footer.
  *
- * Every link resolves to a page that exists under app/(marketing) or app/(auth), or to
- * an anchor on the homepage. Documentation, security, careers and API-reference columns
- * are deliberately absent: those pages are not built, and a dark footer full of 404s is
- * worse than a short one.
+ * EVERY LINK RESOLVES to a page that exists under app/(marketing) or app/(auth), or to
+ * an anchor on the homepage. That is not a style preference: a footer link that 404s
+ * is the kind of defect nobody reports, because everyone assumes it is deliberate.
+ * Adding a column entry here means adding the `page.tsx` in the same change.
+ *
+ * THE SHAPE. A compact CTA rail, then brand plus four link columns, then a thin legal
+ * bar. Five columns of links with no CTA reads as a sitemap; a full-width CTA panel
+ * stacked on top of five columns makes the footer taller than most of the pages it
+ * closes. The rail is the compromise — one line, one button, on the same dark
+ * gradient rather than in a card of its own.
+ *
+ * COLUMN ORDER IS AUDIENCE ORDER: who we are, what we sell, how to build on it, what
+ * you are agreeing to. Someone scanning left to right is narrowing, not wandering.
+ *
+ * The gradient runs navy → dark teal and matches the homepage's DarkBand, so the page
+ * closes in the same register its centre was written in.
  */
-
-const PRODUCT_LINKS = [
-  { label: "Features", href: "/features" },
-  { label: "Pricing", href: "/pricing" },
-  { label: "How it works", href: "/#lead-journey" },
-  { label: "Start Free Trial", href: "/register" },
-];
-
-const SOLUTION_LINKS = [
-  { label: "Industries", href: "/industries" },
-  { label: "Blog", href: "/blog" },
-  { label: "FAQ", href: "/#faq" },
-];
 
 const COMPANY_LINKS = [
   { label: "About Us", href: "/about" },
+  { label: "Why Choose Us", href: "/why-choose-us" },
+  { label: "Career", href: "/careers" },
   { label: "Contact", href: "/contact" },
-  { label: "Log in", href: "/login" },
+];
+
+/**
+ * Six items, and the API is deliberately not one of them.
+ *
+ * The API is a developer surface, not something a buyer scanning the Product column is
+ * shopping for, and it already has two entries under Developers. Listing it in both
+ * places made Product the longest column by two rows and said "API" three times in one
+ * footer. It reaches /api-docs from Developers.
+ */
+const PRODUCT_LINKS = [
+  { label: "Features", href: "/features" },
+  { label: "Solutions", href: "/solutions" },
+  { label: "Industry", href: "/industries" },
+  { label: "Pricing", href: "/pricing" },
+  { label: "Portfolio", href: "/portfolio" },
+  { label: "Resources", href: "/resources" },
+];
+
+const DEVELOPER_LINKS = [
+  { label: "API Docs", href: "/api-docs" },
+  { label: "API Reference", href: "/api-reference" },
+  { label: "Blog", href: "/blog" },
+  { label: "Site Map", href: "/site-map" },
 ];
 
 const LEGAL_LINKS = [
   { label: "Privacy Policy", href: "/privacy-policy" },
   { label: "Terms & Conditions", href: "/terms" },
   { label: "Refund Policy", href: "/refund-policy" },
+  { label: "Security", href: "/security" },
+  { label: "Cookies", href: "/cookies" },
 ];
 
 const COLUMNS = [
-  { heading: "Product", links: PRODUCT_LINKS },
-  { heading: "Solutions", links: SOLUTION_LINKS },
   { heading: "Company", links: COMPANY_LINKS },
+  { heading: "Product", links: PRODUCT_LINKS },
+  { heading: "Developers", links: DEVELOPER_LINKS },
   { heading: "Legal", links: LEGAL_LINKS },
+];
+
+/** Three claims the repository can actually stand behind. No adoption figures. */
+const TRUST = [
+  { Icon: ShieldCheck, label: "Official Meta Cloud API" },
+  { Icon: Sparkles, label: "AI grounded in your docs" },
+  { Icon: Zap, label: "Free trial, no card" },
 ];
 
 // lucide-react v1 no longer ships brand icons, so the social marks stay inline SVG.
@@ -94,27 +127,74 @@ const SOCIAL_LINKS = [
 
 export default function Footer() {
   return (
-    <footer className="relative overflow-hidden bg-slate-900">
+    <footer className="relative isolate overflow-hidden bg-[linear-gradient(185deg,#07231f_0%,#08202a_34%,#0b1a24_70%,#0a1120_100%)]">
+      {/* The same four-layer treatment as the homepage's dark band — grid, two mesh
+          washes, grain — but softer. The footer closes the page; it must not compete
+          with it. */}
       <div
         aria-hidden
-        className="pointer-events-none absolute -left-32 top-0 h-96 w-96 rounded-full bg-[radial-gradient(closest-side,rgba(16,185,129,0.14),transparent_100%)]"
+        className="wa-grid-dark pointer-events-none absolute inset-0 [mask-image:radial-gradient(ellipse_75%_70%_at_50%_0%,#000_30%,transparent_100%)]"
+      />
+      <div
+        aria-hidden
+        className="wa-drift pointer-events-none absolute -left-32 -top-24 h-[30rem] w-[30rem] rounded-full bg-[radial-gradient(closest-side,rgba(16,185,129,0.18),transparent_100%)]"
+      />
+      <div
+        aria-hidden
+        className="wa-drift-slow pointer-events-none absolute -right-28 top-1/4 h-[26rem] w-[26rem] rounded-full bg-[radial-gradient(closest-side,rgba(45,212,191,0.12),transparent_100%)]"
+      />
+      <div aria-hidden className="wa-noise pointer-events-none absolute inset-0 opacity-[0.03]" />
+      <div
+        aria-hidden
+        className="pointer-events-none absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-emerald-400/30 to-transparent"
       />
 
-      <div className="relative mx-auto max-w-7xl px-4 py-16 sm:px-6 lg:px-8 lg:py-20">
-        <div className="grid gap-12 lg:grid-cols-[1.4fr_2.6fr]">
+      <div className="relative mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
+        {/* ── CTA rail ───────────────────────────────────────────────────────── */}
+        <div className="flex flex-col items-center gap-4 border-b border-white/10 py-8 text-center sm:flex-row sm:justify-between sm:text-left lg:py-9">
           <div>
-            <Link href="/" className="flex items-center gap-2.5">
-              <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-emerald-500">
+            <p className="text-xl font-bold tracking-tight text-white sm:text-2xl">
+              Ready to grow on WhatsApp?
+            </p>
+            <p className="mt-1 text-sm text-slate-400">
+              Connect your number and let the AI handle the first reply.
+            </p>
+          </div>
+          <Link
+            href="/register"
+            className="group inline-flex shrink-0 items-center gap-2 rounded-xl bg-emerald-500 px-5 py-3 text-sm font-semibold text-slate-950 shadow-lg shadow-emerald-500/20 transition duration-300 hover:-translate-y-0.5 hover:bg-emerald-400 hover:shadow-xl hover:shadow-emerald-500/30 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-400"
+          >
+            Start Free Trial
+            <ArrowRight className="h-4 w-4 transition-transform duration-200 group-hover:translate-x-0.5" />
+          </Link>
+        </div>
+
+        {/* ── Brand + columns ────────────────────────────────────────────────── */}
+        <div className="grid gap-10 py-10 lg:grid-cols-[1.15fr_2.85fr] lg:gap-12 lg:py-12">
+          <div>
+            <Link
+              href="/"
+              className="group inline-flex items-center gap-2.5 rounded-lg focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-400"
+            >
+              <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-emerald-500 shadow-lg shadow-emerald-500/25 transition-transform duration-300 group-hover:scale-105">
                 <MessageSquare className="h-4 w-4 text-slate-950" />
               </span>
               <span className="text-lg font-bold tracking-tight text-white">WhatsCRM</span>
             </Link>
 
-            <p className="mt-5 max-w-sm text-sm leading-relaxed text-slate-400">
-              An AI-powered WhatsApp CRM for teams who take conversations seriously — one shared
-              inbox, automated lead qualification, and a pipeline built on the official Meta
-              WhatsApp Business Cloud API.
+            <p className="mt-4 max-w-xs text-sm leading-relaxed text-slate-400">
+              An AI-powered WhatsApp CRM: one shared inbox, replies grounded in your own
+              documents, and leads qualified before anyone opens the app.
             </p>
+
+            <ul className="mt-5 space-y-2">
+              {TRUST.map(({ Icon, label }) => (
+                <li key={label} className="flex items-center gap-2 text-xs text-slate-400">
+                  <Icon className="h-3.5 w-3.5 shrink-0 text-emerald-400" />
+                  {label}
+                </li>
+              ))}
+            </ul>
 
             <ul className="mt-6 flex flex-wrap gap-2">
               {SOCIAL_LINKS.map(({ label, href, Icon }) => (
@@ -124,7 +204,7 @@ export default function Footer() {
                     target="_blank"
                     rel="noopener noreferrer"
                     aria-label={label}
-                    className="flex h-9 w-9 items-center justify-center rounded-lg bg-white/5 text-slate-400 ring-1 ring-inset ring-white/10 transition hover:bg-emerald-500/15 hover:text-emerald-400 hover:ring-emerald-400/30"
+                    className="flex h-9 w-9 items-center justify-center rounded-lg border border-white/10 bg-white/[0.04] text-slate-400 transition duration-300 hover:-translate-y-0.5 hover:scale-105 hover:border-emerald-400/40 hover:bg-emerald-400/15 hover:text-emerald-300 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-400"
                   >
                     <Icon className="h-3.5 w-3.5" />
                   </a>
@@ -134,24 +214,28 @@ export default function Footer() {
 
             <a
               href="mailto:support@whatscrm.in"
-              className="mt-5 inline-block text-sm text-slate-400 transition hover:text-emerald-400"
+              className="wa-underline mt-5 inline-block text-sm text-slate-400 hover:text-emerald-400"
             >
               support@whatscrm.in
             </a>
           </div>
 
-          <div className="grid grid-cols-2 gap-8 sm:grid-cols-4">
+          <div className="grid grid-cols-2 gap-x-6 gap-y-8 sm:grid-cols-4">
             {COLUMNS.map((column) => (
               <div key={column.heading}>
                 <h3 className="text-xs font-semibold uppercase tracking-wider text-white">
                   {column.heading}
                 </h3>
-                <ul className="mt-4 space-y-3">
+                <span
+                  aria-hidden
+                  className="mt-2 block h-px w-6 rounded-full bg-gradient-to-r from-emerald-400/70 to-transparent"
+                />
+                <ul className="mt-3 space-y-2.5">
                   {column.links.map((link) => (
-                    <li key={link.href}>
+                    <li key={link.label}>
                       <Link
                         href={link.href}
-                        className="text-sm text-slate-400 transition hover:text-emerald-400"
+                        className="wa-underline inline-block text-sm text-slate-400 hover:text-emerald-400 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-400"
                       >
                         {link.label}
                       </Link>
@@ -163,9 +247,10 @@ export default function Footer() {
           </div>
         </div>
 
-        <div className="mt-14 flex flex-col items-center justify-between gap-3 border-t border-white/10 pt-8 sm:flex-row">
+        {/* ── Legal bar ──────────────────────────────────────────────────────── */}
+        <div className="flex flex-col items-center justify-between gap-2 border-t border-white/10 py-6 sm:flex-row">
           <p className="text-center text-xs text-slate-500 sm:text-left">
-            © 2026 WhatsCRM by Corescent Technologies Pvt Ltd. All rights reserved.
+            © WhatsCRM by Corescent Technologies Pvt Ltd. All rights reserved.
           </p>
           <p className="text-center text-xs text-slate-500 sm:text-right">
             Built on the official Meta WhatsApp Business Cloud API.

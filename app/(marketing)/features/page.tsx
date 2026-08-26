@@ -1,6 +1,7 @@
 import Link from "next/link";
 import type { Metadata } from "next";
 import type { ReactNode } from "react";
+import { cn } from "@/lib/utils";
 import {
   ArrowRight,
   BookOpen,
@@ -306,9 +307,15 @@ const FEATURES = [
 export default function FeaturesPage() {
   return (
     <div>
-      {/* Hero */}
-      <section className="bg-gradient-to-b from-emerald-600/5 to-white py-16 sm:py-20 lg:py-24">
-        <div className="mx-auto max-w-3xl px-4 text-center sm:px-6 lg:px-8">
+      {/* Hero. The wash and the single radial glow are the same treatment every
+          other top-level marketing page uses, so arriving here from the nav does not
+          feel like arriving at a different site. */}
+      <section className="relative isolate overflow-hidden bg-gradient-to-b from-white via-emerald-50/60 to-white py-16 sm:py-20 lg:py-24">
+        <div
+          aria-hidden
+          className="pointer-events-none absolute left-1/2 top-0 h-[30rem] w-[52rem] -translate-x-1/2 -translate-y-1/3 rounded-full bg-[radial-gradient(closest-side,rgba(16,185,129,0.16),transparent_100%)]"
+        />
+        <div className="relative mx-auto max-w-3xl px-4 text-center sm:px-6 lg:px-8">
           <h1 className="text-4xl font-extrabold tracking-tight text-gray-900 sm:text-5xl">
             Everything you need to close more deals on WhatsApp
           </h1>
@@ -319,14 +326,14 @@ export default function FeaturesPage() {
           <div className="mt-8 flex flex-col items-center justify-center gap-3 sm:flex-row sm:gap-4">
             <Link
               href="/register"
-              className="inline-flex w-full items-center justify-center gap-2 rounded-lg bg-emerald-600 px-6 py-3.5 text-base font-semibold text-white shadow-lg shadow-emerald-600/20 transition-colors hover:bg-emerald-700 sm:w-auto"
+              className="group inline-flex w-full items-center justify-center gap-2 rounded-xl bg-emerald-600 px-6 py-3.5 text-base font-semibold text-white shadow-lg shadow-emerald-600/25 transition duration-200 hover:-translate-y-0.5 hover:bg-emerald-700 hover:shadow-xl hover:shadow-emerald-600/30 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-600 sm:w-auto"
             >
               Start Free Trial
               <ArrowRight className="h-5 w-5" />
             </Link>
             <Link
               href="/pricing"
-              className="inline-flex w-full items-center justify-center rounded-lg border border-gray-300 bg-white px-6 py-3.5 text-base font-semibold text-gray-700 transition-colors hover:bg-gray-50 sm:w-auto"
+              className="inline-flex w-full items-center justify-center rounded-xl bg-white px-6 py-3.5 text-base font-semibold text-slate-700 shadow-sm ring-1 ring-inset ring-slate-200 transition duration-200 hover:-translate-y-0.5 hover:bg-slate-50 hover:text-slate-900 hover:ring-slate-300 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-600 sm:w-auto"
             >
               See Pricing
             </Link>
@@ -337,11 +344,21 @@ export default function FeaturesPage() {
       {/* Deep-dives — layout alternates on lg and up */}
       {FEATURES.map(({ Icon, eyebrow, title, description, points, Mockup }, index) => {
         const isReversed = index % 2 === 1;
+        // Slug from the eyebrow, so the marketing nav can deep-link to a single
+        // feature: "AI Auto-Reply" → /features#ai-auto-reply. Nothing else on the
+        // page changes — this is an anchor, not a restyle.
+        const anchor = eyebrow.toLowerCase().replace(/[^a-z0-9]+/g, "-");
 
         return (
           <section
             key={title}
-            className={index % 2 === 1 ? "bg-gray-50 py-16 sm:py-20" : "py-16 sm:py-20"}
+            id={anchor}
+            className={cn(
+              "scroll-mt-20",
+              index % 2 === 1
+                ? "bg-gradient-to-b from-emerald-50/60 via-white to-emerald-50/40 py-16 sm:py-20"
+                : "bg-white py-16 sm:py-20",
+            )}
           >
             <div className="mx-auto grid max-w-7xl items-center gap-12 px-4 sm:px-6 lg:grid-cols-2 lg:gap-16 lg:px-8">
               <div className={isReversed ? "lg:order-2" : ""}>

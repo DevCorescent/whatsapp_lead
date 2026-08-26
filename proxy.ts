@@ -6,7 +6,45 @@ import { authConfig } from "@/lib/auth.config";
 // drags Prisma and the pg driver into the Edge bundle, which cannot load them.
 const { auth } = NextAuth(authConfig);
 
-const PUBLIC_ROUTES = ["/", "/pricing", "/features", "/about", "/blog", "/contact", "/industries", "/privacy-policy", "/terms", "/refund-policy"];
+/**
+ * Every route under app/(marketing), and the only list that decides what a signed-out
+ * visitor can see.
+ *
+ * IT FAILS CLOSED, which is correct — an unlisted route redirects to /login rather
+ * than leaking a dashboard — but it means ADDING A MARKETING PAGE IS TWO EDITS: the
+ * `page.tsx`, and this array. Miss the second and the new page silently bounces
+ * everyone to the login screen, which looks like a broken link rather than a missing
+ * permission and is therefore reported as one.
+ *
+ * Matching is exact-or-prefix (`/blog` also covers `/blog/:slug`), so nested routes
+ * need only their root listed here.
+ */
+const PUBLIC_ROUTES = [
+  "/",
+  // Product
+  "/features",
+  "/solutions",
+  "/industries",
+  "/pricing",
+  "/portfolio",
+  "/resources",
+  // Company
+  "/about",
+  "/why-choose-us",
+  "/careers",
+  "/contact",
+  // Developers
+  "/api-docs",
+  "/api-reference",
+  "/blog",
+  "/site-map",
+  // Legal
+  "/privacy-policy",
+  "/terms",
+  "/refund-policy",
+  "/security",
+  "/cookies",
+];
 const AUTH_ROUTES = ["/login", "/register", "/forgot-password", "/reset-password"];
 const ADMIN_ROUTE_PREFIX = "/admin";
 
