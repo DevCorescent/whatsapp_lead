@@ -26,6 +26,7 @@ import type { SVGProps } from "react";
 const COMPANY_LINKS = [
   { label: "About Us", href: "/about" },
   { label: "Why Choose Us", href: "/why-choose-us" },
+  { label: "Become a Partner", href: "/become-a-partner" },
   { label: "Career", href: "/careers" },
   { label: "Contact", href: "/contact" },
 ];
@@ -47,7 +48,16 @@ const PRODUCT_LINKS = [
   { label: "Resources", href: "/resources" },
 ];
 
+/**
+ * Documentation leads, and the two API entries sit under it.
+ *
+ * "Documentation" is the door a non-developer is looking for — the how-do-I pages —
+ * and /api-docs and /api-reference are what a developer is looking for once they are
+ * through it. Listing the API first made this column read as a developers-only column,
+ * which is not what the fourth column of a marketing footer is for.
+ */
 const DEVELOPER_LINKS = [
+  { label: "Documentation", href: "/documentation" },
   { label: "API Docs", href: "/api-docs" },
   { label: "API Reference", href: "/api-reference" },
   { label: "Blog", href: "/blog" },

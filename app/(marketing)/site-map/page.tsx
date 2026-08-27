@@ -40,7 +40,7 @@ const GROUPS: Group[] = [
       { label: "Home", href: "/", note: "The product in ninety seconds" },
       { label: "Features", href: "/features", note: "Six surfaces, in detail" },
       { label: "Solutions", href: "/solutions", note: "Organised by the problem" },
-      { label: "Industry", href: "/industries", note: "Six sectors" },
+      { label: "Industry", href: "/industries", note: "Eight sectors, one page each" },
       { label: "Pricing", href: "/pricing", note: "Plans and comparison" },
       { label: "Portfolio", href: "/portfolio", note: "What we have built" },
       { label: "Resources", href: "/resources", note: "Guides, docs and support" },
@@ -52,6 +52,7 @@ const GROUPS: Group[] = [
     entries: [
       { label: "About Us", href: "/about", note: "Who builds WhatsCRM" },
       { label: "Why Choose Us", href: "/why-choose-us", note: "Six reasons, with mechanisms" },
+      { label: "Become a Partner", href: "/become-a-partner", note: "Refer, resell or integrate" },
       { label: "Career", href: "/careers", note: "Open roles and how we hire" },
       { label: "Contact", href: "/contact", note: "Email, phone and the form" },
     ],
@@ -60,6 +61,7 @@ const GROUPS: Group[] = [
     Icon: Terminal,
     title: "Developers",
     entries: [
+      { label: "Documentation", href: "/documentation", note: "Set it up and run it" },
       { label: "WhatsCRM API", href: "/api-docs", note: "Quickstart and concepts" },
       { label: "API Reference", href: "/api-reference", note: "Every endpoint" },
       { label: "Blog", href: "/blog", note: "Guides and product news" },
@@ -146,13 +148,20 @@ export default function SiteMapPage() {
           <div>
             <h2 className="text-lg font-bold tracking-tight text-slate-900">Industry pages</h2>
             <p className="mt-1 text-sm text-slate-600">
-              All six live on <Link href="/industries" className="font-medium text-emerald-700 hover:text-emerald-800">/industries</Link>, each with its own section anchor.
+              All eight are listed on{" "}
+              <Link
+                href="/industries"
+                className="font-medium text-emerald-700 hover:text-emerald-800"
+              >
+                /industries
+              </Link>
+              , and each one has a page of its own.
             </p>
             <Stage className="mt-5 grid gap-2 sm:grid-cols-2">
               {INDUSTRIES.map((industry, i) => (
                 <Link
                   key={industry.id}
-                  href={`/industries#${industry.id}`}
+                  href={`/industries/${industry.id}`}
                   style={stagger(i, 50)}
                   className="wa-lift group flex items-center gap-2.5 rounded-xl bg-slate-50 px-3.5 py-2.5 text-sm font-medium text-slate-700 ring-1 ring-inset ring-slate-900/5 transition duration-300 hover:-translate-y-0.5 hover:bg-white hover:text-emerald-700 hover:ring-emerald-500/25 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-600"
                 >

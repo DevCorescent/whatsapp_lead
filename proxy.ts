@@ -31,9 +31,11 @@ const PUBLIC_ROUTES = [
   // Company
   "/about",
   "/why-choose-us",
+  "/become-a-partner",
   "/careers",
   "/contact",
   // Developers
+  "/documentation",
   "/api-docs",
   "/api-reference",
   "/blog",

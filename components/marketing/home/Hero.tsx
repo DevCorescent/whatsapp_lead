@@ -87,10 +87,10 @@ export function Hero() {
             </Reveal>
           </div>
 
-          {/* Extra right padding on the column, not the card: the score and pipeline
-              cards hang off the composition's corners and would otherwise be clipped
-              by the container's own gutter. */}
-          <div className="px-2 sm:px-6 lg:px-0">
+          {/* No gutter of its own. The showcase is a phone plus an event rail that
+              already lay themselves out — a stack on a narrow screen, side by side
+              from `sm` — and extra padding here only squeezes the device. */}
+          <div>
             <HeroShowcase />
           </div>
         </div>

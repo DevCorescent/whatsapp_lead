@@ -70,7 +70,7 @@ const DESTINATIONS: {
   {
     Icon: Building2,
     title: "Industry playbooks",
-    body: "How teams in six sectors configure a workspace — documents, flows, scoring and routing.",
+    body: "How teams in eight sectors configure a workspace — documents, flows, scoring and routing.",
     href: "/industries",
     cta: "Pick your industry",
   },

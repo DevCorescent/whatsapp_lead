@@ -310,7 +310,7 @@ export default function PortfolioPage() {
               href="/industries"
               className="group inline-flex items-center gap-2 rounded-xl bg-white px-5 py-3 text-sm font-semibold text-slate-700 shadow-sm ring-1 ring-inset ring-slate-200 transition hover:-translate-y-0.5 hover:text-slate-900 hover:ring-slate-300 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-600"
             >
-              See all six industries
+              See all eight industries
               <ArrowRight className="h-4 w-4 text-emerald-600 transition-transform duration-200 group-hover:translate-x-0.5" />
             </Link>
           </div>

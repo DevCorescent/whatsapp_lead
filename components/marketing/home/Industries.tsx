@@ -23,11 +23,11 @@ import { Container, Reveal, SectionHeading } from "./primitives";
  */
 
 function IndustryCard({ industry, hidden = false }: { industry: Industry; hidden?: boolean }) {
-  const { Icon, short, line } = industry;
+  const { id, Icon, short, line } = industry;
 
   return (
     <Link
-      href="/industries"
+      href={`/industries/${id}`}
       tabIndex={hidden ? -1 : undefined}
       aria-hidden={hidden || undefined}
       className={cn(
