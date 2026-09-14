@@ -9,6 +9,7 @@ import {
   Building2,
   CreditCard,
   IndianRupee,
+  PanelsTopLeft,
   ScrollText,
   ShieldCheck,
   LogOut,
@@ -23,6 +24,7 @@ const NAV = [
   { href: "/tenants", label: "Tenants", icon: Building2 },
   { href: "/plans", label: "Plans", icon: CreditCard },
   { href: "/revenue", label: "Revenue", icon: IndianRupee },
+  { href: "/admin/cms", label: "Website CMS", icon: PanelsTopLeft },
   // No page yet — Audit Logs ships with the admin APIs.
   { href: "/audit-logs", label: "Audit Logs", icon: ScrollText },
 ];

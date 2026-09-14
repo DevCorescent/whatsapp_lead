@@ -1018,3 +1018,67 @@ model AuditLog {
   @@index([tenantId, action])
   @@map("audit_logs")
 }
+
+// ─── WEBSITE CMS ──────────────────────────────────────────────────────────────
+//
+// Content for the public marketing site that a super-admin edits from /admin/cms
+// instead of a developer editing components. Deliberately separate from Plan:
+// that table is billing entitlement, and rewording a pricing card must never be
+// able to change what a tenant is allowed to do.
+//
+// One row per section of a page, one row per repeatable item inside it. The
+// field shapes live in lib/cms/sections.ts, which validates every write — the
+// JSON columns are only ever written through that spec, and the public loader
+// re-normalises what it reads, so a hand-edited row cannot break a page.
+
+model CmsSection {
+  id       String  @id @default(cuid())
+  /// The page the section belongs to. Only "home" exists today.
+  page     String  @default("home")
+  /// Section key from lib/cms/sections.ts, e.g. "hero" or "pricing".
+  key      String
+  /// Off hides the whole section on the public site without losing its content.
+  isActive Boolean @default(true)
+  /// Section-level fields (headings, CTA labels, chat demo text).
+  content  Json    @default("{}")
+  /// Item kinds that were saved with this section. Distinguishes "the admin
+  /// removed every FAQ" (kind listed, no rows) from "this kind was added to the
+  /// spec after the section was saved" (kind missing, defaults apply).
+  itemKinds   String[]
+  updatedById String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  items CmsItem[]
+
+  @@unique([page, key])
+  @@map("cms_sections")
+}
+
+model CmsItem {
+  id        String   @id @default(cuid())
+  sectionId String
+  /// Collection within the section, e.g. "faq", "plan", "step".
+  kind      String
+  sortOrder Int      @default(0)
+  /// Inactive items stay editable in the admin and never render publicly.
+  isActive  Boolean  @default(true)
+  data      Json     @default("{}")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  section CmsSection @relation(fields: [sectionId], references: [id], onDelete: Cascade)
+
+  @@index([sectionId, kind, sortOrder])
+  @@map("cms_items")
+}
+
+/// Addresses collected by the homepage newsletter form.
+model NewsletterSubscriber {
+  id        String   @id @default(cuid())
+  email     String   @unique
+  source    String   @default("homepage")
+  createdAt DateTime @default(now())
+
+  @@map("newsletter_subscribers")
+}

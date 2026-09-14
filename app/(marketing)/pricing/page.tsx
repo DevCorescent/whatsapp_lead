@@ -3,11 +3,13 @@ import type { Metadata } from "next";
 import { Check, Minus } from "lucide-react";
 import PricingPlans from "@/components/marketing/PricingPlans";
 import FaqAccordion, { type FaqItem } from "@/components/marketing/FaqAccordion";
+import { getSection } from "@/lib/cms/content";
 
+// Plan prices are managed in the CMS, so the description does not quote them.
 export const metadata: Metadata = {
   title: "Pricing — WhatsCRM",
   description:
-    "Simple, transparent pricing for WhatsCRM. Starter ₹999/mo, Growth ₹2,999/mo, Enterprise ₹9,999/mo. Save 20% with annual billing.",
+    "Simple, transparent pricing for WhatsCRM — plans for every stage of your WhatsApp sales team, with monthly or annual billing.",
 };
 
 type ComparisonRow = {
@@ -133,7 +135,9 @@ function ComparisonCell({ value }: { value: string | boolean }) {
   return <span className="block text-center text-sm text-gray-700">{value}</span>;
 }
 
-export default function PricingPage() {
+export default async function PricingPage() {
+  const pricing = await getSection("pricing");
+
   return (
     <div>
       {/* Header + cards */}
@@ -150,7 +154,7 @@ export default function PricingPage() {
           </div>
 
           <div className="mt-12">
-            <PricingPlans />
+            <PricingPlans section={pricing} />
           </div>
         </div>
       </section>

@@ -1,90 +1,35 @@
 import Link from "next/link";
-import { ArrowRight, MessageSquare, ShieldCheck, Sparkles, Zap } from "lucide-react";
-import type { SVGProps } from "react";
+import { ArrowRight, MessageSquare } from "lucide-react";
+import type { ComponentType, SVGProps } from "react";
+import type { PublicSection } from "@/lib/cms/sections";
+import { cn } from "@/lib/utils";
+import { CmsIcon } from "@/components/marketing/home/cmsIcon";
+import { CmsLink } from "@/components/marketing/home/CmsLink";
 
 /**
- * Marketing footer.
+ * Marketing footer, rendered on every marketing page from the CMS "Footer" section.
  *
- * EVERY LINK RESOLVES to a page that exists under app/(marketing) or app/(auth), or to
- * an anchor on the homepage. That is not a style preference: a footer link that 404s
- * is the kind of defect nobody reports, because everyone assumes it is deliberate.
- * Adding a column entry here means adding the `page.tsx` in the same change.
+ * THE SHAPE. A compact CTA rail, then brand plus the link columns, then a thin legal
+ * bar. The rail is one line and one button on the same dark gradient, so the footer
+ * never grows taller than the pages it closes.
  *
- * THE SHAPE. A compact CTA rail, then brand plus four link columns, then a thin legal
- * bar. Five columns of links with no CTA reads as a sitemap; a full-width CTA panel
- * stacked on top of five columns makes the footer taller than most of the pages it
- * closes. The rail is the compromise — one line, one button, on the same dark
- * gradient rather than in a card of its own.
- *
- * COLUMN ORDER IS AUDIENCE ORDER: who we are, what we sell, how to build on it, what
- * you are agreeing to. Someone scanning left to right is narrowing, not wandering.
+ * CONTENT IS THE ADMIN'S. Column headings, links (and whether each is shown), the
+ * trust points, social profiles, email and copyright all come from the CMS. The
+ * shipped defaults (lib/cms/defaults.ts) link only to pages that exist, and every
+ * href is validated on save — so a link an admin adds cannot be a scripted URL.
  *
  * The gradient runs navy → dark teal and matches the homepage's DarkBand, so the page
  * closes in the same register its centre was written in.
  */
 
-const COMPANY_LINKS = [
-  { label: "About Us", href: "/about" },
-  { label: "Why Choose Us", href: "/why-choose-us" },
-  { label: "Become a Partner", href: "/become-a-partner" },
-  { label: "Career", href: "/careers" },
-  { label: "Contact", href: "/contact" },
-];
-
-/**
- * Six items, and the API is deliberately not one of them.
- *
- * The API is a developer surface, not something a buyer scanning the Product column is
- * shopping for, and it already has two entries under Developers. Listing it in both
- * places made Product the longest column by two rows and said "API" three times in one
- * footer. It reaches /api-docs from Developers.
- */
-const PRODUCT_LINKS = [
-  { label: "Features", href: "/features" },
-  { label: "Solutions", href: "/solutions" },
-  { label: "Industry", href: "/industries" },
-  { label: "Pricing", href: "/pricing" },
-  { label: "Portfolio", href: "/portfolio" },
-  { label: "Resources", href: "/resources" },
-];
-
-/**
- * Documentation leads, and the two API entries sit under it.
- *
- * "Documentation" is the door a non-developer is looking for — the how-do-I pages —
- * and /api-docs and /api-reference are what a developer is looking for once they are
- * through it. Listing the API first made this column read as a developers-only column,
- * which is not what the fourth column of a marketing footer is for.
- */
-const DEVELOPER_LINKS = [
-  { label: "Documentation", href: "/documentation" },
-  { label: "API Docs", href: "/api-docs" },
-  { label: "API Reference", href: "/api-reference" },
-  { label: "Blog", href: "/blog" },
-  { label: "Site Map", href: "/site-map" },
-];
-
-const LEGAL_LINKS = [
-  { label: "Privacy Policy", href: "/privacy-policy" },
-  { label: "Terms & Conditions", href: "/terms" },
-  { label: "Refund Policy", href: "/refund-policy" },
-  { label: "Security", href: "/security" },
-  { label: "Cookies", href: "/cookies" },
-];
-
-const COLUMNS = [
-  { heading: "Company", links: COMPANY_LINKS },
-  { heading: "Product", links: PRODUCT_LINKS },
-  { heading: "Developers", links: DEVELOPER_LINKS },
-  { heading: "Legal", links: LEGAL_LINKS },
-];
-
-/** Three claims the repository can actually stand behind. No adoption figures. */
-const TRUST = [
-  { Icon: ShieldCheck, label: "Official Meta Cloud API" },
-  { Icon: Sparkles, label: "AI grounded in your docs" },
-  { Icon: Zap, label: "Free trial, no card" },
-];
+const COLUMN_GRID: Record<number, string> = {
+  1: "sm:grid-cols-1",
+  2: "sm:grid-cols-2",
+  3: "sm:grid-cols-3",
+  4: "sm:grid-cols-4",
+  5: "sm:grid-cols-3 lg:grid-cols-5",
+  6: "sm:grid-cols-3",
+};
 
 // lucide-react v1 no longer ships brand icons, so the social marks stay inline SVG.
 function TwitterIcon(props: SVGProps<SVGSVGElement>) {
@@ -127,15 +72,22 @@ function YouTubeIcon(props: SVGProps<SVGSVGElement>) {
   );
 }
 
-const SOCIAL_LINKS = [
-  { label: "Twitter", href: "https://twitter.com", Icon: TwitterIcon },
-  { label: "LinkedIn", href: "https://linkedin.com", Icon: LinkedInIcon },
-  { label: "Facebook", href: "https://facebook.com", Icon: FacebookIcon },
-  { label: "Instagram", href: "https://instagram.com", Icon: InstagramIcon },
-  { label: "YouTube", href: "https://youtube.com", Icon: YouTubeIcon },
-];
+const SOCIAL: Record<string, { label: string; Icon: ComponentType<SVGProps<SVGSVGElement>> }> = {
+  twitter: { label: "X (Twitter)", Icon: TwitterIcon },
+  linkedin: { label: "LinkedIn", Icon: LinkedInIcon },
+  facebook: { label: "Facebook", Icon: FacebookIcon },
+  instagram: { label: "Instagram", Icon: InstagramIcon },
+  youtube: { label: "YouTube", Icon: YouTubeIcon },
+};
 
-export default function Footer() {
+export default function Footer({ section }: { section: PublicSection<"footer"> }) {
+  const { content, items } = section;
+  const columns = items.group
+    .map((group) => ({ ...group, links: group.links.filter((link) => link.isActive) }))
+    .filter((group) => group.links.length > 0);
+  const socials = items.social.filter((social) => SOCIAL[social.platform]);
+  const showCta = section.isActive && content.ctaLabel && content.ctaHref;
+
   return (
     <footer className="relative isolate overflow-hidden bg-[linear-gradient(185deg,#07231f_0%,#08202a_34%,#0b1a24_70%,#0a1120_100%)]">
       {/* The same four-layer treatment as the homepage's dark band — grid, two mesh
@@ -161,111 +113,117 @@ export default function Footer() {
 
       <div className="relative mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
         {/* ── CTA rail ───────────────────────────────────────────────────────── */}
-        <div className="flex flex-col items-center gap-4 border-b border-white/10 py-8 text-center sm:flex-row sm:justify-between sm:text-left lg:py-9">
-          <div>
-            <p className="text-xl font-bold tracking-tight text-white sm:text-2xl">
-              Ready to grow on WhatsApp?
-            </p>
-            <p className="mt-1 text-sm text-slate-400">
-              Connect your number and let the AI handle the first reply.
-            </p>
-          </div>
-          <Link
-            href="/register"
-            className="group inline-flex shrink-0 items-center gap-2 rounded-xl bg-emerald-500 px-5 py-3 text-sm font-semibold text-slate-950 shadow-lg shadow-emerald-500/20 transition duration-300 hover:-translate-y-0.5 hover:bg-emerald-400 hover:shadow-xl hover:shadow-emerald-500/30 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-400"
-          >
-            Start Free Trial
-            <ArrowRight className="h-4 w-4 transition-transform duration-200 group-hover:translate-x-0.5" />
-          </Link>
-        </div>
-
-        {/* ── Brand + columns ────────────────────────────────────────────────── */}
-        <div className="grid gap-10 py-10 lg:grid-cols-[1.15fr_2.85fr] lg:gap-12 lg:py-12">
-          <div>
-            <Link
-              href="/"
-              className="group inline-flex items-center gap-2.5 rounded-lg focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-400"
+        {showCta && (
+          <div className="flex flex-col items-center gap-4 border-b border-white/10 py-8 text-center sm:flex-row sm:justify-between sm:text-left lg:py-9">
+            <div>
+              {content.ctaTitle && (
+                <p className="text-xl font-bold tracking-tight text-white sm:text-2xl">{content.ctaTitle}</p>
+              )}
+              {content.ctaDescription && <p className="mt-1 text-sm text-slate-400">{content.ctaDescription}</p>}
+            </div>
+            <CmsLink
+              href={content.ctaHref}
+              className="group inline-flex shrink-0 items-center gap-2 rounded-xl bg-emerald-500 px-5 py-3 text-sm font-semibold text-slate-950 shadow-lg shadow-emerald-500/20 transition duration-300 hover:-translate-y-0.5 hover:bg-emerald-400 hover:shadow-xl hover:shadow-emerald-500/30 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-400"
             >
-              <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-emerald-500 shadow-lg shadow-emerald-500/25 transition-transform duration-300 group-hover:scale-105">
-                <MessageSquare className="h-4 w-4 text-slate-950" />
-              </span>
-              <span className="text-lg font-bold tracking-tight text-white">WhatsCRM</span>
-            </Link>
-
-            <p className="mt-4 max-w-xs text-sm leading-relaxed text-slate-400">
-              An AI-powered WhatsApp CRM: one shared inbox, replies grounded in your own
-              documents, and leads qualified before anyone opens the app.
-            </p>
-
-            <ul className="mt-5 space-y-2">
-              {TRUST.map(({ Icon, label }) => (
-                <li key={label} className="flex items-center gap-2 text-xs text-slate-400">
-                  <Icon className="h-3.5 w-3.5 shrink-0 text-emerald-400" />
-                  {label}
-                </li>
-              ))}
-            </ul>
-
-            <ul className="mt-6 flex flex-wrap gap-2">
-              {SOCIAL_LINKS.map(({ label, href, Icon }) => (
-                <li key={label}>
-                  <a
-                    href={href}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    aria-label={label}
-                    className="flex h-9 w-9 items-center justify-center rounded-lg border border-white/10 bg-white/[0.04] text-slate-400 transition duration-300 hover:-translate-y-0.5 hover:scale-105 hover:border-emerald-400/40 hover:bg-emerald-400/15 hover:text-emerald-300 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-400"
-                  >
-                    <Icon className="h-3.5 w-3.5" />
-                  </a>
-                </li>
-              ))}
-            </ul>
-
-            <a
-              href="mailto:support@whatscrm.in"
-              className="wa-underline mt-5 inline-block text-sm text-slate-400 hover:text-emerald-400"
-            >
-              support@whatscrm.in
-            </a>
+              {content.ctaLabel}
+              <ArrowRight className="h-4 w-4 transition-transform duration-200 group-hover:translate-x-0.5" />
+            </CmsLink>
           </div>
+        )}
 
-          <div className="grid grid-cols-2 gap-x-6 gap-y-8 sm:grid-cols-4">
-            {COLUMNS.map((column) => (
-              <div key={column.heading}>
-                <h3 className="text-xs font-semibold uppercase tracking-wider text-white">
-                  {column.heading}
-                </h3>
-                <span
-                  aria-hidden
-                  className="mt-2 block h-px w-6 rounded-full bg-gradient-to-r from-emerald-400/70 to-transparent"
-                />
-                <ul className="mt-3 space-y-2.5">
-                  {column.links.map((link) => (
-                    <li key={link.label}>
-                      <Link
-                        href={link.href}
-                        className="wa-underline inline-block text-sm text-slate-400 hover:text-emerald-400 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-400"
-                      >
-                        {link.label}
-                      </Link>
+        {/* ── Brand + columns. An admin who hides the footer section keeps only the legal bar. ── */}
+        {section.isActive && (
+          <div className="grid gap-10 py-10 lg:grid-cols-[1.15fr_2.85fr] lg:gap-12 lg:py-12">
+            <div>
+              <Link
+                href="/"
+                className="group inline-flex items-center gap-2.5 rounded-lg focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-400"
+              >
+                <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-emerald-500 shadow-lg shadow-emerald-500/25 transition-transform duration-300 group-hover:scale-105">
+                  <MessageSquare className="h-4 w-4 text-slate-950" />
+                </span>
+                <span className="text-lg font-bold tracking-tight text-white">WhatsCRM</span>
+              </Link>
+
+              {content.description && (
+                <p className="mt-4 max-w-xs text-sm leading-relaxed text-slate-400">{content.description}</p>
+              )}
+
+              {items.trust.length > 0 && (
+                <ul className="mt-5 space-y-2">
+                  {items.trust.map((trust) => (
+                    <li key={trust.id} className="flex items-center gap-2 text-xs text-slate-400">
+                      <CmsIcon name={trust.icon} className="h-3.5 w-3.5 shrink-0 text-emerald-400" />
+                      {trust.label}
                     </li>
                   ))}
                 </ul>
+              )}
+
+              {socials.length > 0 && (
+                <ul className="mt-6 flex flex-wrap gap-2">
+                  {socials.map((social) => {
+                    const { label, Icon } = SOCIAL[social.platform];
+                    return (
+                      <li key={social.id}>
+                        <CmsLink
+                          href={social.href}
+                          ariaLabel={label}
+                          className="flex h-9 w-9 items-center justify-center rounded-lg border border-white/10 bg-white/[0.04] text-slate-400 transition duration-300 hover:-translate-y-0.5 hover:scale-105 hover:border-emerald-400/40 hover:bg-emerald-400/15 hover:text-emerald-300 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-400"
+                        >
+                          <Icon className="h-3.5 w-3.5" />
+                        </CmsLink>
+                      </li>
+                    );
+                  })}
+                </ul>
+              )}
+
+              {content.email && (
+                <a
+                  href={`mailto:${content.email}`}
+                  className="wa-underline mt-5 inline-block break-all text-sm text-slate-400 hover:text-emerald-400"
+                >
+                  {content.email}
+                </a>
+              )}
+            </div>
+
+            {columns.length > 0 && (
+              <div className={cn("grid grid-cols-2 gap-x-6 gap-y-8", COLUMN_GRID[Math.min(columns.length, 6)])}>
+                {columns.map((column) => (
+                  <div key={column.id} className="min-w-0">
+                    <h3 className="text-xs font-semibold uppercase tracking-wider text-white">{column.heading}</h3>
+                    <span
+                      aria-hidden
+                      className="mt-2 block h-px w-6 rounded-full bg-gradient-to-r from-emerald-400/70 to-transparent"
+                    />
+                    <ul className="mt-3 space-y-2.5">
+                      {column.links.map((link, index) => (
+                        <li key={`${link.href}-${index}`}>
+                          <CmsLink
+                            href={link.href}
+                            className="wa-underline inline-block text-sm text-slate-400 hover:text-emerald-400 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-400"
+                          >
+                            {link.label}
+                          </CmsLink>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                ))}
               </div>
-            ))}
+            )}
           </div>
-        </div>
+        )}
 
         {/* ── Legal bar ──────────────────────────────────────────────────────── */}
-        <div className="flex flex-col items-center justify-between gap-2 border-t border-white/10 py-6 sm:flex-row">
-          <p className="text-center text-xs text-slate-500 sm:text-left">
-            © WhatsCRM by Corescent Technologies Pvt Ltd. All rights reserved.
-          </p>
-          <p className="text-center text-xs text-slate-500 sm:text-right">
-            Built on the official Meta WhatsApp Business Cloud API.
-          </p>
-        </div>
+        {(content.copyright || content.legalNote) && (
+          <div className="flex flex-col items-center justify-between gap-2 border-t border-white/10 py-6 sm:flex-row">
+            <p className="text-center text-xs text-slate-500 sm:text-left">{content.copyright}</p>
+            <p className="text-center text-xs text-slate-500 sm:text-right">{content.legalNote}</p>
+          </div>
+        )}
       </div>
     </footer>
   );

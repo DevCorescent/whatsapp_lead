@@ -1,14 +1,22 @@
 import type { Metadata } from "next";
 
+import { getHomeContent } from "@/lib/cms/content";
 import { Hero } from "@/components/marketing/home/Hero";
+import { TrustedLogos } from "@/components/marketing/home/TrustedLogos";
+import { Stats } from "@/components/marketing/home/Stats";
 import { Problem } from "@/components/marketing/home/Problem";
 import { DarkBand } from "@/components/marketing/home/DarkBand";
 import { Workflow } from "@/components/marketing/home/Workflow";
 import { Capabilities } from "@/components/marketing/home/Capabilities";
+import { AiSpotlight } from "@/components/marketing/home/AiSpotlight";
+import { MessageTypes } from "@/components/marketing/home/MessageTypes";
+import { Integrations } from "@/components/marketing/home/Integrations";
 import { Industries } from "@/components/marketing/home/Industries";
+import { Testimonials } from "@/components/marketing/home/Testimonials";
 import { Pricing } from "@/components/marketing/home/Pricing";
 import { Faq } from "@/components/marketing/home/Faq";
 import { FinalCta } from "@/components/marketing/home/FinalCta";
+import { Newsletter } from "@/components/marketing/home/Newsletter";
 
 export const metadata: Metadata = {
   title: "WhatsCRM — Turn WhatsApp conversations into qualified leads",
@@ -25,52 +33,52 @@ export const metadata: Metadata = {
 /**
  * Public homepage.
  *
- * A server component that composes marketing-only sections. The interactive pieces —
- * the hero's product frame, the workflow demo, the pricing switcher, the FAQ —
- * declare "use client" individually, so the page shell itself still renders on the
- * server and the hero is in the first HTML response rather than waiting on hydration.
+ * CONTENT COMES FROM THE CMS. `getHomeContent()` reads the saved sections server-side
+ * (cached, expired on every admin save) and falls back to the shipped defaults for
+ * anything never saved. Hidden sections are skipped here; hidden items were already
+ * dropped by the loader. Interactive pieces declare "use client" individually, so
+ * the page itself still renders on the server.
  *
- * SECTION ORDER IS THE SALES CONVERSATION, in the order a stranger has it:
+ * SECTION ORDER IS THE SALES CONVERSATION:
  *
- *   what is it     → Hero: one line, and the product *running* beside it
- *   why care       → Problem: four readings off a broken dashboard
- *   how            → Workflow: six icons, animated left to right
- *   what else      → Capabilities: the checklist, one line per item
- *   is it for me   → Industries: a moving strip of six businesses
+ *   what is it     → Hero, with the WhatsApp demo running beside the claim
+ *   who uses it    → Trusted by, Stats
+ *   why care       → Problem
+ *   how            → How it works + Platform, together in the one dark band
+ *   the AI         → AI spotlight, Message types, Integrations
+ *   is it for me   → Industries, Testimonials
  *   what's it cost → Pricing
- *   objections     → Faq, collapsed
- *   act            → FinalCta
+ *   objections     → FAQ, collapsed
+ *   act            → Final CTA, Newsletter
  *
- * THE DEMO LIVES IN THE HERO. There used to be a separate "product in action"
- * section that played the same conversation the hero now plays. Two runs of one
- * sequence on one page is the page arguing with itself, and the hero is where it
- * earns the most — a visitor sees the product work before they have scrolled once.
- *
- * BACKGROUNDS CARRY THE RHYTHM. Adjacent sections never share a treatment, so the
- * page reads as chapters rather than as one long scroll: white→green in the hero,
- * green→white for the problem, then ONE dark band — navy→teal — carrying the workflow
- * and the feature grid together, blue→green for industries, green→white for pricing,
- * white→green for the FAQ, and navy→emerald for the close.
- *
- * THE DARK BAND IS THE SPINE. Workflow and Capabilities share a single background
- * (DarkBand) rather than painting two similar navies, which would leave a visible
- * seam and split one argument into two. It is the only dark section above the footer,
- * and that is the whole reason it carries weight — a page where everything is
- * emphasised has nothing emphasised.
+ * Industries is CMS-managed too — heading, link, and which industry cards show in
+ * which order — but each card resolves to an industry page defined in
+ * components/marketing/industries.ts, so it can never link somewhere that does not exist.
  */
-export default function HomePage() {
+export default async function HomePage() {
+  const home = await getHomeContent();
+
   return (
     <>
-      <Hero />
-      <Problem />
-      <DarkBand>
-        <Workflow />
-        <Capabilities />
-      </DarkBand>
-      <Industries />
-      <Pricing />
-      <Faq />
-      <FinalCta />
+      {home.hero.isActive && <Hero section={home.hero} />}
+      {home.logos.isActive && <TrustedLogos section={home.logos} />}
+      {home.stats.isActive && <Stats section={home.stats} />}
+      {home.problem.isActive && <Problem section={home.problem} />}
+      {(home.howItWorks.isActive || home.products.isActive) && (
+        <DarkBand>
+          {home.howItWorks.isActive && <Workflow section={home.howItWorks} />}
+          {home.products.isActive && <Capabilities section={home.products} />}
+        </DarkBand>
+      )}
+      {home.ai.isActive && <AiSpotlight section={home.ai} />}
+      {home.messageTypes.isActive && <MessageTypes section={home.messageTypes} />}
+      {home.integrations.isActive && <Integrations section={home.integrations} />}
+      {home.industries.isActive && <Industries section={home.industries} />}
+      {home.testimonials.isActive && <Testimonials section={home.testimonials} />}
+      {home.pricing.isActive && <Pricing section={home.pricing} />}
+      {home.faq.isActive && <Faq section={home.faq} />}
+      {home.cta.isActive && <FinalCta section={home.cta} />}
+      {home.newsletter.isActive && <Newsletter section={home.newsletter} />}
     </>
   );
 }
