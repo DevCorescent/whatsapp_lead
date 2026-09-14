@@ -1,3 +1,4 @@
+import Image from "next/image";
 import Link from "next/link";
 import { ArrowRight } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -5,6 +6,7 @@ import { INDUSTRIES, type Industry } from "@/components/marketing/industries";
 import type { PublicSection } from "@/lib/cms/sections";
 import { Container, Reveal, SectionHeading } from "./primitives";
 import { CmsLink } from "./CmsLink";
+import { INDUSTRY_IMAGES } from "./industryImages";
 
 /**
  * Who this is for, as a strip that moves.
@@ -27,6 +29,7 @@ type Card = { key: string; industry: Industry; line: string };
 
 function IndustryCard({ card, hidden = false }: { card: Card; hidden?: boolean }) {
   const { id, Icon, short } = card.industry;
+  const photo = INDUSTRY_IMAGES[id];
 
   return (
     <Link
@@ -39,6 +42,23 @@ function IndustryCard({ card, hidden = false }: { card: Card; hidden?: boolean }
         "focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-600",
       )}
     >
+      {/* The photo is decorative — the title below names the industry — so it carries
+          an empty alt. Statically imported, so it ships hashed from /_next/static and
+          next/image resizes it to the card's width. */}
+      {photo && (
+        <span className="relative -mx-1 -mt-1 mb-3.5 block aspect-[16/9] overflow-hidden rounded-xl bg-slate-100">
+          <Image
+            src={photo}
+            alt=""
+            fill
+            sizes="216px"
+            placeholder="blur"
+            className="object-cover transition-transform duration-500 group-hover:scale-[1.04]"
+          />
+          <span aria-hidden className="pointer-events-none absolute inset-0 rounded-xl ring-1 ring-inset ring-slate-900/5" />
+        </span>
+      )}
+
       <span className="flex h-11 w-11 items-center justify-center rounded-xl bg-emerald-50 ring-1 ring-inset ring-emerald-600/15 transition-colors duration-300 group-hover:bg-emerald-600 group-hover:ring-emerald-600">
         <Icon className="h-5 w-5 text-emerald-600 transition-all duration-300 group-hover:scale-110 group-hover:text-white" />
       </span>

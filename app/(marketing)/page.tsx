@@ -44,7 +44,7 @@ export const metadata: Metadata = {
  *   what is it     → Hero, with the WhatsApp demo running beside the claim
  *   who uses it    → Trusted by, Stats
  *   why care       → Problem
- *   how            → How it works + Platform, together in the one dark band
+ *   how            → How it works (light), then Platform in the one dark band
  *   the AI         → AI spotlight, Message types, Integrations
  *   is it for me   → Industries, Testimonials
  *   what's it cost → Pricing
@@ -64,10 +64,10 @@ export default async function HomePage() {
       {home.logos.isActive && <TrustedLogos section={home.logos} />}
       {home.stats.isActive && <Stats section={home.stats} />}
       {home.problem.isActive && <Problem section={home.problem} />}
-      {(home.howItWorks.isActive || home.products.isActive) && (
+      {home.howItWorks.isActive && <Workflow section={home.howItWorks} />}
+      {home.products.isActive && (
         <DarkBand>
-          {home.howItWorks.isActive && <Workflow section={home.howItWorks} />}
-          {home.products.isActive && <Capabilities section={home.products} />}
+          <Capabilities section={home.products} />
         </DarkBand>
       )}
       {home.ai.isActive && <AiSpotlight section={home.ai} />}
