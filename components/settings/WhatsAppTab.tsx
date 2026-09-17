@@ -6,6 +6,7 @@ import {
   AlertCircle,
   Check,
   CheckCircle2,
+  ChevronDown,
   ClipboardList,
   Copy,
   Eye,
@@ -18,6 +19,7 @@ import {
   XCircle,
 } from "lucide-react";
 import { Button, Card, Field, inputClass } from "@/components/ui";
+import { WhatsAppConnectCard } from "@/components/settings/WhatsAppConnectCard";
 import { cn } from "@/lib/utils";
 
 type SettingsData = {
@@ -164,6 +166,33 @@ export function WhatsAppTab() {
 
   return (
     <div className="space-y-5">
+      {/* Meta's official onboarding — the intended path for every new workspace. */}
+      <WhatsAppConnectCard />
+
+      {/*
+        Manual credential entry, kept and collapsed rather than removed.
+
+        Three things still need it: a workspace already running on hand-entered
+        credentials (whose values this form is the only way to correct), a
+        deployment whose Meta app has not yet passed App Review for Embedded
+        Signup, and support staff reproducing a customer's setup. It is closed by
+        default so it reads as the fallback it now is.
+      */}
+      <details className="group rounded-2xl bg-white shadow-sm ring-1 ring-slate-900/5">
+        <summary className="flex cursor-pointer list-none items-center justify-between gap-3 rounded-2xl px-5 py-4 text-sm font-medium text-slate-700 hover:bg-slate-50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-600">
+          <span>
+            Manual setup
+            <span className="ml-2 font-normal text-slate-400">
+              Enter Meta credentials by hand
+            </span>
+          </span>
+          <ChevronDown
+            className="h-4 w-4 shrink-0 text-slate-400 transition group-open:rotate-180"
+            aria-hidden
+          />
+        </summary>
+
+        <div className="space-y-5 border-t border-slate-100 p-5">
       {/* Status card */}
       <Card className={cn(
         "flex flex-wrap items-center justify-between gap-4 p-5",
@@ -381,6 +410,8 @@ export function WhatsAppTab() {
           </Button>
         </div>
       </Card>
+        </div>
+      </details>
     </div>
   );
 }

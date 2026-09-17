@@ -15,6 +15,7 @@ import {
 } from "@/components/ui";
 import { Toggle } from "@/components/ui/Toggle";
 import { UpgradeModal } from "@/components/billing/UpgradeModal";
+import { WhatsAppConnectCard } from "@/components/settings/WhatsAppConnectCard";
 import { upgradeReasonOf, type UpgradeReason } from "@/lib/billing/limits";
 import {
   useBusinesses,
@@ -77,6 +78,9 @@ export default function BusinessesPage() {
   const [confirmDelete, setConfirmDelete] = useState<BusinessDTO | null>(null);
   const [deleteError, setDeleteError] = useState<string | null>(null);
   const [upgrade, setUpgrade] = useState<UpgradeReason | null>(null);
+  // Which business the Meta onboarding dialog is acting on. Null while closed —
+  // the card reads its own state per business, so it must not be mounted for all of them.
+  const [connectFor, setConnectFor] = useState<BusinessDTO | null>(null);
 
   const businesses = data?.data ?? [];
   const currentId = data?.currentBusinessId;
@@ -215,6 +219,10 @@ export default function BusinessesPage() {
                       Switch
                     </Button>
                   )}
+                  <Button size="sm" variant="secondary" onClick={() => setConnectFor(b)}>
+                    <MessageSquare className="h-3.5 w-3.5" />
+                    {b.whatsappPhoneNumberId && b.hasWhatsappToken ? "WhatsApp" : "Connect"}
+                  </Button>
                   <Button size="sm" variant="secondary" onClick={() => openEdit(b)}>
                     <Pencil className="h-3.5 w-3.5" />
                     Edit
@@ -438,6 +446,17 @@ export default function BusinessesPage() {
             {deleteBusiness.isPending ? "Deleting…" : "Delete business"}
           </Button>
         </div>
+      </Modal>
+
+      {/* Meta onboarding for one business. Mounted only while open so the Facebook
+          SDK is not initialised on a page that merely lists workspaces. */}
+      <Modal
+        open={!!connectFor}
+        onClose={() => setConnectFor(null)}
+        title="WhatsApp connection"
+        description={connectFor ? `Connect "${connectFor.name}" to a WhatsApp Business account through Meta.` : ""}
+      >
+        {connectFor && <WhatsAppConnectCard businessId={connectFor.id} />}
       </Modal>
 
       <UpgradeModal reason={upgrade} onClose={() => setUpgrade(null)} />

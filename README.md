@@ -58,8 +58,60 @@ Demo login: `admin@demo.com` / `Demo@1234`
 | `GROQ_MODEL` | `llama-3.3-70b-versatile` |
 | `WHATSAPP_PHONE_NUMBER_ID` | Meta WhatsApp number ID (per tenant in DB) |
 | `WHATSAPP_VERIFY_TOKEN` | Webhook verification token |
+| `WHATSAPP_APP_ID` | Meta app ID — required for Embedded Signup |
+| `WHATSAPP_APP_SECRET` | Meta app secret — webhook HMAC **and** Embedded Signup code exchange. Server only |
+| `WHATSAPP_ES_CONFIG_ID` | Facebook Login for Business configuration ID for Embedded Signup |
+| `WHATSAPP_API_VERSION` | Graph API version. Defaults to `v19.0`; Meta recommends `v25.0` for Embedded Signup |
+| `WHATSAPP_REGISTER_PIN` | Optional 6-digit 2FA PIN used to register newly onboarded numbers. Registration is skipped when unset |
+| `ENCRYPTION_KEY` | AES-256-GCM key for secrets at rest (access tokens, app secrets) |
 | `PUSHER_APP_ID` / `PUSHER_KEY` / `PUSHER_SECRET` | Pusher real-time |
 | `NEXT_PUBLIC_APP_URL` | `http://localhost:3000` |
+
+> `WHATSAPP_APP_SECRET` must never be exposed to the browser. The app ID and the
+> Embedded Signup config ID reach the client through `/api/integrations/whatsapp/config`,
+> which is authenticated and returns no secrets — do not add `NEXT_PUBLIC_*` copies.
+
+---
+
+## WhatsApp Embedded Signup (Meta onboarding)
+
+Customers connect WhatsApp through Meta's official
+[Embedded Signup](https://developers.facebook.com/docs/whatsapp/embedded-signup) flow
+rather than by pasting credentials. Settings → WhatsApp (and each card on
+/businesses) shows a **Continue with Facebook** button that runs Meta's dialog;
+the result is verified server-side and written to the current `Business`.
+
+### One-time Meta app setup
+
+1. In the Meta app, add the **WhatsApp** product and complete App Review for
+   advanced access to `whatsapp_business_management` and `whatsapp_business_messaging`.
+2. Create a **Facebook Login for Business** configuration from the template
+   *"WhatsApp Embedded Signup Configuration With 60 Expiration Token"*, and copy the
+   configuration ID into `WHATSAPP_ES_CONFIG_ID`.
+3. Set the app's webhook callback to `<NEXT_PUBLIC_APP_URL>/api/webhook/whatsapp`
+   with `WHATSAPP_VERIFY_TOKEN` as the verify token. Embedded Signup subscribes each
+   customer's WABA to *this* app, so every customer's traffic arrives at that one URL,
+   signed with `WHATSAPP_APP_SECRET`. Customers never configure a webhook themselves.
+
+### What happens on connect
+
+| Step | Where | Graph call |
+|---|---|---|
+| Customer authorises, picks WABA + number | Meta's dialog | Facebook Login for Business |
+| Exchange the 30-second code for a business token | `/api/integrations/whatsapp/connect` | `GET /oauth/access_token` |
+| Confirm which WABAs the token really covers | same | `GET /debug_token` → `granular_scopes[].target_ids` |
+| Confirm the phone number is on that WABA | same | `GET /<WABA_ID>/phone_numbers` |
+| Point the customer's WABA at our webhook | same | `POST /<WABA_ID>/subscribed_apps` |
+| Register the number for Cloud API | same | `POST /<PHONE_NUMBER_ID>/register` |
+
+The `waba_id` and `phone_number_id` the browser reports are treated as hints and
+re-derived from Meta before anything is written — see `selectWaba()` /
+`selectPhoneNumber()` in `lib/whatsappEmbeddedSignup.ts` and the tests in
+`tests/whatsapp-embedded-signup.test.ts`.
+
+Manual credential entry is still available under Settings → WhatsApp → *Manual setup*
+for workspaces that predate this flow and for deployments whose Meta app is not yet
+approved.
 
 ---
 

@@ -13,9 +13,9 @@ import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { decryptSecret } from "@/lib/crypto";
+import { getPhoneNumberDetails, MetaApiError } from "@/lib/whatsapp";
 
 const EDIT_ROLES = ["SUPER_ADMIN", "TENANT_OWNER", "ADMIN"];
-const WA_BASE_URL = `https://graph.facebook.com/${process.env.WHATSAPP_API_VERSION ?? "v19.0"}`;
 
 export async function POST(req: NextRequest) {
   const session = await auth();
@@ -64,37 +64,25 @@ export async function POST(req: NextRequest) {
   }
 
   try {
-    const res = await fetch(
-      `${WA_BASE_URL}/${phoneNumberId}?fields=verified_name,display_phone_number,quality_rating`,
-      { headers: { Authorization: `Bearer ${apiKey}` } },
-    );
-
-    // Meta returns JSON on success and on most errors, but can emit HTML on
-    // gateway failures — read defensively so the handler never throws on parse.
-    const rawText = await res.text();
-    let parsed: Record<string, unknown> = {};
-    try {
-      parsed = rawText ? JSON.parse(rawText) : {};
-    } catch {
-      parsed = {};
-    }
-
-    if (!res.ok) {
-      const metaError =
-        (parsed.error as { message?: string } | undefined)?.message ??
-        `Meta returned ${res.status} ${res.statusText}`;
-      return NextResponse.json({ success: false, error: metaError }, { status: 400 });
-    }
+    // The Graph call itself lives in lib/whatsapp.ts so that this route, the
+    // business-scoped test and the Embedded Signup verification all make the same
+    // request with the same field list and the same error mapping.
+    const details = await getPhoneNumberDetails(phoneNumberId, apiKey);
 
     return NextResponse.json({
       success: true,
       data: {
-        verifiedName: parsed.verified_name ?? null,
-        displayPhoneNumber: parsed.display_phone_number ?? null,
-        qualityRating: parsed.quality_rating ?? null,
+        verifiedName: details.verified_name ?? null,
+        displayPhoneNumber: details.display_phone_number ?? null,
+        qualityRating: details.quality_rating ?? null,
       },
     });
   } catch (error) {
+    // Meta answering non-2xx keeps the 400 this route has always returned; only a
+    // transport failure falls through to the 502 below.
+    if (error instanceof MetaApiError) {
+      return NextResponse.json({ success: false, error: error.metaMessage }, { status: 400 });
+    }
     console.error("[WA TEST]", error);
     return NextResponse.json(
       { success: false, error: "Could not reach the WhatsApp Cloud API" },

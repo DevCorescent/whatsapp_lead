@@ -540,3 +540,83 @@ export async function getMessageTemplate(
   void businessAccountId;
   return res.json();
 }
+
+// ─── Phone number details (Meta Graph API) ───────────────────────────────────
+
+/** Fields Meta returns for a WhatsApp business phone number. All are optional per Meta. */
+export interface WAPhoneNumberDetails {
+  id?: string;
+  display_phone_number?: string;
+  verified_name?: string;
+  quality_rating?: string;
+  code_verification_status?: string;
+}
+
+/**
+ * A non-2xx answer from Meta, carrying Meta's own `error.message` separately from the
+ * transport failure that never reached Meta at all.
+ *
+ * The distinction is what lets a caller answer 400 ("Meta rejected these credentials,
+ * here is why") rather than 502 ("we could not reach Meta") — collapsing the two is how
+ * an expired token ends up reported to the operator as an outage.
+ */
+export class MetaApiError extends Error {
+  constructor(
+    /** HTTP status Meta answered with. */
+    readonly status: number,
+    /** Meta's `error.message`, already extracted — safe to show the operator. */
+    readonly metaMessage: string,
+    /** Meta's numeric `error.code`, when the body carried one. */
+    readonly code?: number,
+  ) {
+    super(metaMessage);
+    this.name = "MetaApiError";
+  }
+}
+
+/**
+ * Fetch a phone number's metadata from the Graph API — the single Graph call that every
+ * "Test Connection" in the app is built on.
+ *
+ * It exists as one function because the same request is made from the tenant settings test,
+ * the per-business test and the connect flow's post-onboarding verification; three copies of
+ * it would be three places for the field list and the error mapping to drift apart.
+ *
+ * The token travels in the Authorization header, never the query string: Meta accepts either,
+ * but a URL is the one part of a request that platforms routinely write to access logs.
+ *
+ * @param phoneNumberId - Meta phone_number_id to inspect.
+ * @param apiKey - A decrypted access token with access to that number.
+ * @throws {MetaApiError} When Meta answers non-2xx. Transport failures reject with the
+ *   original fetch error, so the caller can tell "rejected" from "unreachable".
+ */
+export async function getPhoneNumberDetails(
+  phoneNumberId: string,
+  apiKey: string,
+): Promise<WAPhoneNumberDetails> {
+  const res = await fetch(
+    `${WA_BASE_URL}/${phoneNumberId}?fields=id,display_phone_number,verified_name,quality_rating,code_verification_status`,
+    { headers: { Authorization: `Bearer ${apiKey}` } },
+  );
+
+  // Meta returns JSON on success and on most errors, but emits HTML on gateway failures —
+  // read as text so the error path never throws a SyntaxError over the real error.
+  const rawText = await res.text();
+  let parsed: Record<string, unknown> = {};
+  try {
+    parsed = rawText ? (JSON.parse(rawText) as Record<string, unknown>) : {};
+  } catch {
+    parsed = {};
+  }
+
+  if (!res.ok) {
+    const metaError = parsed.error as { message?: string; code?: number } | undefined;
+    throw new MetaApiError(
+      res.status,
+      metaError?.message ?? `Meta returned ${res.status} ${res.statusText}`,
+      metaError?.code,
+    );
+  }
+
+  return parsed as WAPhoneNumberDetails;
+}
