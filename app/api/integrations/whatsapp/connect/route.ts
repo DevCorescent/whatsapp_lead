@@ -180,11 +180,22 @@ export async function POST(req: NextRequest) {
     const phone = phoneChoice.phone;
 
     // ── 4. The phone_number_id is the webhook routing key and is globally unique ──
-    const taken = await prisma.business.findUnique({
-      where: { whatsappPhoneNumberId: phone.id },
-      select: { id: true, name: true, tenantId: true },
-    });
-    if (taken && taken.id !== business.id) {
+   const taken = await prisma.whatsAppIntegration.findFirst({
+  where: {
+    phoneNumberId: phone.id,
+  },
+  select: {
+    id: true,
+    businessId: true,
+    tenantId: true,
+    business: {
+      select: {
+        name: true,
+      },
+    },
+  },
+});
+   if (taken && taken.businessId !== business.id) {
       // Whether the clash is inside this tenant decides how much can be said about it:
       // naming another tenant's workspace would leak the existence of their account.
       const sameTenant = taken.tenantId === scope.tenantId;
@@ -192,7 +203,7 @@ export async function POST(req: NextRequest) {
         {
           success: false,
           error: sameTenant
-            ? `That WhatsApp number is already connected to "${taken.name}". Disconnect it there first.`
+         ? `That WhatsApp number is already connected to "${taken.business.name}". Disconnect it there first.`
             : "That WhatsApp number is already connected to another workspace.",
         },
         { status: 409 },
@@ -203,28 +214,77 @@ export async function POST(req: NextRequest) {
     const waba = await getWabaDetails(wabaId, businessToken);
 
     // ── 5. Save before anything optional runs ──
-    const previousPhoneNumberId = business.whatsappPhoneNumberId;
-    const updated = await prisma.business.update({
-      where: { id: business.id },
+  // ── 5. Save as a WhatsAppIntegration ──
+// Each WhatsApp number gets its own integration row.
+// Connecting another number therefore does not overwrite an existing number.
+
+const existingIntegration = await prisma.whatsAppIntegration.findUnique({
+  where: {
+    businessId_phoneNumberId: {
+      businessId: business.id,
+      phoneNumberId: phone.id,
+    },
+  },
+  select: {
+    id: true,
+    isDefault: true,
+  },
+});
+
+const existingDefault = await prisma.whatsAppIntegration.findFirst({
+  where: {
+    businessId: business.id,
+    isDefault: true,
+    ...(existingIntegration ? { id: { not: existingIntegration.id } } : {}),
+  },
+  select: {
+    id: true,
+  },
+});
+
+const integration = existingIntegration
+  ? await prisma.whatsAppIntegration.update({
+      where: {
+        id: existingIntegration.id,
+      },
       data: {
+        displayName: phone.verified_name ?? business.name,
+        phoneNumber: phone.display_phone_number ?? null,
         whatsappBusinessId: wabaId,
-        whatsappPhoneNumberId: phone.id,
-        // Meta already knows the display number; the customer never has to type it.
-        whatsappPhoneNumber: phone.display_phone_number ?? business.whatsappPhoneNumber,
-        // Encrypted at rest by the same mechanism as every other stored token.
-        whatsappAccessToken: encryptSecret(businessToken),
+        accessToken: encryptSecret(businessToken),
+        qualityRating: phone.quality_rating ?? null,
+        codeVerificationStatus: phone.code_verification_status ?? null,
+        isActive: true,
+      },
+    })
+  : await prisma.whatsAppIntegration.create({
+      data: {
+        tenantId: scope.tenantId,
+        businessId: business.id,
+
+        displayName: phone.verified_name ?? business.name,
+        phoneNumber: phone.display_phone_number ?? null,
+        phoneNumberId: phone.id,
+        whatsappBusinessId: wabaId,
+
+        // Store encrypted, never plaintext.
+        accessToken: encryptSecret(businessToken),
+
+        qualityRating: phone.quality_rating ?? null,
+        codeVerificationStatus: phone.code_verification_status ?? null,
+
+        isActive: true,
+
+        // First number becomes default.
+        isDefault: !existingDefault,
       },
     });
+
 
     // The row has changed; the cache still holds what it used to say. Dropped immediately
     // after the write and before anything that can fail, so the next webhook delivery and
     // the next campaign send both resolve from Postgres.
-    await invalidateCredsCache(updated.id);
-    // The old number first — that is the entry that could keep routing inbound messages
-    // to this business after it has stopped owning the number.
-    if (previousPhoneNumberId && previousPhoneNumberId !== phone.id) {
-      await invalidateTenantCache(previousPhoneNumberId);
-    }
+   await invalidateCredsCache(business.id);
     await invalidateTenantCache(phone.id);
 
     // ── 6. Optional steps. Reported, never fatal. ──
@@ -236,7 +296,7 @@ export async function POST(req: NextRequest) {
       // Sending will work and receiving will not — the one failure most easily mistaken
       // for a healthy connection, so it is surfaced rather than logged and forgotten.
       console.error("[WA CONNECT] Webhook subscription failed", {
-        businessId: updated.id,
+        businessId: business.id,
         meta: error instanceof MetaApiError ? error.metaMessage : "transport failure",
       });
       warnings.push(
@@ -247,7 +307,7 @@ export async function POST(req: NextRequest) {
     const registration = await registerPhoneNumber(phone.id, businessToken);
     if (registration.attempted && registration.error) {
       console.warn("[WA CONNECT] Phone registration reported an error", {
-        businessId: updated.id,
+businessId: business.id,
         meta: registration.error,
       });
       warnings.push(`Meta could not register the number for Cloud API: ${registration.error}`);
@@ -258,13 +318,13 @@ export async function POST(req: NextRequest) {
         tenantId: scope.tenantId,
         userId: scope.userId,
         action: "WHATSAPP_CONNECTED",
-        resource: "business",
-        resourceId: updated.id,
+       resource: "whatsapp_integration",
+       resourceId: integration.id,
       },
     });
 
     console.log("[WA CONNECT] Connected via Embedded Signup", {
-      businessId: updated.id,
+      businessId: business.id,
       tenantId: scope.tenantId,
       phoneNumberId: phone.id,
       wabaId,
@@ -275,7 +335,19 @@ export async function POST(req: NextRequest) {
     // publicBusiness() strips it to a boolean, and nothing below re-adds it.
     return NextResponse.json({
       success: true,
-      data: publicBusiness(updated),
+      data: {
+  integration: {
+    id: integration.id,
+    displayName: integration.displayName,
+    phoneNumber: integration.phoneNumber,
+    phoneNumberId: integration.phoneNumberId,
+    whatsappBusinessId: integration.whatsappBusinessId,
+    qualityRating: integration.qualityRating,
+    codeVerificationStatus: integration.codeVerificationStatus,
+    isActive: integration.isActive,
+    isDefault: integration.isDefault,
+  },
+},
       connection: {
         wabaId,
         wabaName: waba?.name ?? null,

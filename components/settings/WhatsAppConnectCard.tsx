@@ -16,8 +16,10 @@ import {
   useConnectWhatsApp,
   useDisconnectWhatsApp,
   useTestWhatsAppConnection,
+  useWhatsAppIntegrations,
   useWhatsAppSignupConfig,
   type WhatsAppConnectionDTO,
+  type WhatsAppIntegrationDTO,
   type WhatsAppTestDTO,
 } from "@/hooks/useWhatsAppConnection";
 import { cn } from "@/lib/utils";
@@ -216,12 +218,27 @@ function FacebookGlyph() {
 }
 
 export function WhatsAppConnectCard({ businessId }: { businessId?: string }) {
-  const { data: businessesData, isLoading: businessesLoading } = useBusinesses();
-  const { data: config, isLoading: configLoading, error: configError } = useWhatsAppSignupConfig();
+ const { data: businessesData, isLoading: businessesLoading } = useBusinesses();
 
-  const connect = useConnectWhatsApp();
-  const disconnect = useDisconnectWhatsApp();
-  const test = useTestWhatsAppConnection();
+const { data: config, isLoading: configLoading, error: configError } =
+  useWhatsAppSignupConfig();
+
+const target: BusinessDTO | undefined = (() => {
+  const list = businessesData?.data ?? [];
+  const wanted = businessId ?? businessesData?.currentBusinessId;
+
+  return list.find((b) => b.id === wanted);
+})();
+
+const {
+  data: integrationsData,
+  isLoading: integrationsLoading,
+  refetch: refetchIntegrations,
+} = useWhatsAppIntegrations(target?.id);
+
+const connect = useConnectWhatsApp();
+const disconnect = useDisconnectWhatsApp();
+const test = useTestWhatsAppConnection();
 
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
@@ -240,13 +257,13 @@ export function WhatsAppConnectCard({ businessId }: { businessId?: string }) {
 
   const sdkState = useFacebookSdk(config?.appId, config?.graphVersion);
 
-  const target: BusinessDTO | undefined = (() => {
-    const list = businessesData?.data ?? [];
-    const wanted = businessId ?? businessesData?.currentBusinessId;
-    return list.find((b) => b.id === wanted);
-  })();
 
-  const isConnected = Boolean(target?.whatsappPhoneNumberId && target?.hasWhatsappToken);
+  const integrations: WhatsAppIntegrationDTO[] =
+  integrationsData?.integrations ?? [];
+
+const isConnected =
+  integrations.length > 0 ||
+  Boolean(target?.whatsappPhoneNumberId && target?.hasWhatsappToken);
 
   useEffect(() => {
     const onMessage = (event: MessageEvent) => {
@@ -377,7 +394,7 @@ export function WhatsAppConnectCard({ businessId }: { businessId?: string }) {
     });
   };
 
-  if (configLoading || businessesLoading) {
+  if (configLoading || businessesLoading || integrationsLoading) {
     return (
       <Card className="p-5">
         <Skeleton className="h-5 w-48" />
@@ -403,9 +420,9 @@ export function WhatsAppConnectCard({ businessId }: { businessId?: string }) {
               )}
             </h2>
             <p className="mt-0.5 text-sm text-slate-500">
-              {isConnected
-                ? "This business sends and receives on the WhatsApp account below."
-                : "Connect your WhatsApp Business account through Meta. No credentials to copy."}
+             {isConnected
+  ? "Manage the WhatsApp numbers connected to this business."
+  : "Connect your WhatsApp Business account through Meta. No credentials to copy."}
             </p>
           </div>
           {target && (
@@ -432,7 +449,7 @@ export function WhatsAppConnectCard({ businessId }: { businessId?: string }) {
           </div>
         )}
 
-        {config?.enabled && !isConnected && (
+        {config?.enabled && (
           <div className="mt-5">
             <button
               type="button"
@@ -480,54 +497,103 @@ export function WhatsAppConnectCard({ businessId }: { businessId?: string }) {
           </div>
         )}
 
-        {isConnected && target && (
-          <div className="mt-5 rounded-xl border border-slate-200 bg-slate-50/70 p-4">
-            <dl className="grid gap-4 sm:grid-cols-2">
-              <DetailRow label="Business" value={target.name} />
-              <DetailRow
-                label="WhatsApp number"
-                value={
-                  connection?.displayPhoneNumber ??
-                  target.whatsappPhoneNumber ??
-                  testResult?.displayPhoneNumber ??
-                  "—"
-                }
-              />
-              <DetailRow
-                label="WABA ID"
-                value={maskId(connection?.wabaId ?? target.whatsappBusinessId)}
-                mono
-              />
-              <DetailRow
-                label="Phone number ID"
-                value={maskId(connection?.phoneNumberId ?? target.whatsappPhoneNumberId)}
-                mono
-              />
-            </dl>
+      {target && integrations.length > 0 && (
+  <div className="mt-5 space-y-3">
+    <div className="flex items-center justify-between gap-3">
+      <div>
+        <h3 className="text-sm font-semibold text-slate-900">
+          Connected WhatsApp Numbers
+        </h3>
+        <p className="mt-0.5 text-xs text-slate-500">
+          {integrations.length} number
+          {integrations.length === 1 ? "" : "s"} connected to this business.
+        </p>
+      </div>
 
-            <div className="mt-4 flex flex-wrap items-center gap-2 border-t border-slate-200 pt-4">
-              <Button variant="secondary" onClick={runTest} disabled={test.isPending}>
-                {test.isPending ? (
-                  <>
-                    <Loader2 className="h-4 w-4 animate-spin" aria-hidden /> Testing…
-                  </>
-                ) : (
-                  <>
-                    <PlugZap className="h-4 w-4" aria-hidden /> Test Connection
-                  </>
-                )}
-              </Button>
-              <Button
-                variant="ghost"
-                className="text-rose-600 hover:bg-rose-50 hover:text-rose-700"
-                onClick={() => setConfirmDisconnect(true)}
-                disabled={disconnect.isPending}
+      <Badge className="bg-slate-50 text-slate-600 ring-slate-500/15">
+        {integrations.length}
+      </Badge>
+    </div>
+
+    {integrations.map((integration) => (
+      <div
+        key={integration.id}
+        className="rounded-xl border border-slate-200 bg-slate-50/70 p-4"
+      >
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div className="min-w-0">
+            <div className="flex flex-wrap items-center gap-2">
+              <h4 className="font-semibold text-slate-900">
+                {integration.displayName || "WhatsApp Business"}
+              </h4>
+
+              {integration.isDefault && (
+                <Badge className="bg-emerald-50 text-emerald-700 ring-emerald-600/20">
+                  Default
+                </Badge>
+              )}
+
+              <Badge
+                className={
+                  integration.isActive
+                    ? "bg-emerald-50 text-emerald-700 ring-emerald-600/20"
+                    : "bg-slate-100 text-slate-500 ring-slate-500/15"
+                }
               >
-                <Link2Off className="h-4 w-4" aria-hidden /> Disconnect
-              </Button>
+                {integration.isActive ? "Active" : "Inactive"}
+              </Badge>
             </div>
+
+            <p className="mt-1 text-sm text-slate-500">
+              {integration.phoneNumber || "WhatsApp number unavailable"}
+            </p>
           </div>
-        )}
+        </div>
+
+        <dl className="mt-4 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+          <DetailRow
+            label="Display Name"
+            value={integration.displayName ?? "—"}
+          />
+
+          <DetailRow
+            label="WhatsApp Number"
+            value={integration.phoneNumber ?? "—"}
+          />
+
+          <DetailRow
+            label="WABA ID"
+            value={maskId(integration.whatsappBusinessId)}
+            mono
+          />
+
+          <DetailRow
+            label="Phone Number ID"
+            value={maskId(integration.phoneNumberId)}
+            mono
+          />
+
+          <DetailRow
+            label="Quality Rating"
+            value={integration.qualityRating ?? "—"}
+          />
+
+          <DetailRow
+            label="Verification Status"
+            value={integration.codeVerificationStatus ?? "—"}
+          />
+        </dl>
+
+        <div className="mt-4 border-t border-slate-200 pt-3">
+          <p className="text-xs text-slate-500">
+            Connected{" "}
+            {new Date(integration.createdAt).toLocaleDateString()}
+          </p>
+        </div>
+      </div>
+    ))}
+  </div>
+)}
 
         {/* One live region for every non-error outcome, so a screen reader hears the
             result of a button press without the focus moving. */}

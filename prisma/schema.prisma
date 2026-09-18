@@ -137,26 +137,27 @@ model Tenant {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  users            User[]
-  businesses       Business[]
-  contacts         Contact[]
-  conversations    Conversation[]
-  leads            Lead[]
-  pipelineStages   PipelineStage[]
-  campaigns        Campaign[]
-  templates        MessageTemplate[]
-  chatbotFlows     ChatbotFlow[]
-  tickets          Ticket[]
-  knowledgeDocs    KnowledgeDoc[]
-  knowledgeFaqSets KnowledgeFaqSet[]
-  faqInteractions  FaqInteraction[]
-  flowRuns         FlowRun[]
-  tags             Tag[]
-  subscription     Subscription?
-  customPlans      Plan[]            @relation("CustomPlans")
-  settings         TenantSettings?
-  auditLogs        AuditLog[]
-  quickReplies     QuickReply[]
+  users                User[]
+  businesses           Business[]
+  contacts             Contact[]
+  conversations        Conversation[]
+  leads                Lead[]
+  pipelineStages       PipelineStage[]
+  campaigns            Campaign[]
+  templates            MessageTemplate[]
+  chatbotFlows         ChatbotFlow[]
+  tickets              Ticket[]
+  knowledgeDocs        KnowledgeDoc[]
+  knowledgeFaqSets     KnowledgeFaqSet[]
+  faqInteractions      FaqInteraction[]
+  flowRuns             FlowRun[]
+  tags                 Tag[]
+  subscription         Subscription?
+  customPlans          Plan[]                @relation("CustomPlans")
+  settings             TenantSettings?
+  auditLogs            AuditLog[]
+  quickReplies         QuickReply[]
+  whatsAppIntegrations WhatsAppIntegration[]
 
   @@map("tenants")
 }
@@ -209,9 +210,48 @@ model Business {
   tags             Tag[]
   quickReplies     QuickReply[]
 
+  // Multiple WhatsApp numbers/integrations per business
+  whatsappIntegrations WhatsAppIntegration[]
+
   @@unique([slug, tenantId])
   @@index([tenantId])
   @@map("businesses")
+}
+
+// ─── WHATSAPP INTEGRATION ─────────────────────────────────────────────────────
+
+model WhatsAppIntegration {
+  id String @id @default(cuid())
+
+  tenantId   String
+  businessId String
+
+  tenant   Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  business Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+
+  displayName        String?
+  phoneNumber        String?
+  phoneNumberId      String
+  whatsappBusinessId String
+
+  accessToken String
+  verifyToken String?
+  appSecret   String?
+
+  qualityRating          String?
+  codeVerificationStatus String?
+
+  isActive  Boolean @default(true)
+  isDefault Boolean @default(false)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([businessId, phoneNumberId])
+  @@index([tenantId])
+  @@index([businessId])
+  @@index([phoneNumberId])
+  @@map("whatsapp_integrations")
 }
 
 // ─── TENANT SETTINGS ─────────────────────────────────────────────────────────
@@ -1032,15 +1072,15 @@ model AuditLog {
 // re-normalises what it reads, so a hand-edited row cannot break a page.
 
 model CmsSection {
-  id       String  @id @default(cuid())
+  id          String   @id @default(cuid())
   /// The page the section belongs to. Only "home" exists today.
-  page     String  @default("home")
+  page        String   @default("home")
   /// Section key from lib/cms/sections.ts, e.g. "hero" or "pricing".
-  key      String
+  key         String
   /// Off hides the whole section on the public site without losing its content.
-  isActive Boolean @default(true)
+  isActive    Boolean  @default(true)
   /// Section-level fields (headings, CTA labels, chat demo text).
-  content  Json    @default("{}")
+  content     Json     @default("{}")
   /// Item kinds that were saved with this section. Distinguishes "the admin
   /// removed every FAQ" (kind listed, no rows) from "this kind was added to the
   /// spec after the section was saved" (kind missing, defaults apply).
