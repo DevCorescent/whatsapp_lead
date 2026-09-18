@@ -45,6 +45,11 @@ export interface InboundMessageJob {
   tenantId: string;
   businessId: string;
   phoneNumberId: string;
+  /**
+   * The connected number the message arrived on; null when legacy-routed. Absent on jobs
+   * published before multi-number support — the worker re-derives it from phoneNumberId.
+   */
+  whatsappIntegrationId?: string | null;
   waMessageId: string;
   from: string;
   contactName?: string;

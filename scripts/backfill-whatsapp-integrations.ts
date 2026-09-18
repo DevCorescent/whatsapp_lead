@@ -1,99 +1,113 @@
+// ============================================================================
+// Backfill: mirror legacy hand-entered WhatsApp credentials into
+// WhatsAppIntegration rows.
+//
+//   npm run db:backfill-whatsapp             # apply
+//   npm run db:backfill-whatsapp -- --dry-run  # report only, write nothing
+//
+// Run AFTER prisma/migrations/20260918120000_whatsapp_integrations.
+//
+// Uses the exact code path the app uses (syncLegacyIntegration), so it is safe to
+// re-run and makes the same decisions the app would:
+//   · only complete credentials with a valid Meta token are mirrored;
+//   · a number already connected elsewhere is skipped, never duplicated;
+//   · the mirrored number becomes the business's default only if it has none;
+//   · the business's existing threads are attached to that number.
+//
+// Additive only: no legacy column is modified or cleared.
+//
+// TenantSettings credentials that no Business carries are reported, not moved:
+// re-saving Settings → WhatsApp once copies them onto a business and mirrors them.
+// ============================================================================
+
 import "dotenv/config";
 import { prisma } from "../lib/prisma";
+import { syncLegacyIntegration } from "../lib/whatsappIntegrations";
+
+const dryRun = process.argv.includes("--dry-run");
 
 async function main() {
-  console.log("Starting WhatsApp integration backfill...");
+  console.log(`WhatsApp integration backfill${dryRun ? " (dry run — nothing will be written)" : ""}`);
 
   const businesses = await prisma.business.findMany({
-    where: {
-      whatsappPhoneNumberId: {
-        not: null,
-      },
-    },
+    where: { whatsappPhoneNumberId: { not: null } },
     select: {
       id: true,
-      tenantId: true,
       name: true,
-      whatsappPhoneNumber: true,
       whatsappPhoneNumberId: true,
       whatsappBusinessId: true,
       whatsappAccessToken: true,
-      whatsappVerifyToken: true,
-      whatsappAppSecret: true,
     },
+    orderBy: { createdAt: "asc" },
   });
 
-  console.log(
-    `Found ${businesses.length} business(es) with WhatsApp configuration.`,
-  );
+  console.log(`Found ${businesses.length} business(es) with a legacy WhatsApp number.`);
 
-  let created = 0;
-  let skipped = 0;
+  const counts = { created: 0, updated: 0, skipped: 0 };
 
   for (const business of businesses) {
-    if (
-      !business.whatsappPhoneNumberId ||
-      !business.whatsappBusinessId ||
-      !business.whatsappAccessToken
-    ) {
-      console.log(
-        `Skipping ${business.name} (${business.id}) — incomplete WhatsApp configuration.`,
-      );
-      skipped++;
+    const label = `${business.name} (${business.id}) → ${business.whatsappPhoneNumberId}`;
+
+    if (dryRun) {
+      const complete = Boolean(business.whatsappBusinessId && business.whatsappAccessToken);
+      const existing = await prisma.whatsAppIntegration.findUnique({
+        where: { phoneNumberId: business.whatsappPhoneNumberId! },
+        select: { businessId: true },
+      });
+      const plan = !complete
+        ? "skip: incomplete credentials"
+        : existing && existing.businessId !== business.id
+          ? "skip: number connected to another business"
+          : existing
+            ? "update existing row"
+            : "create row";
+      console.log(`  ${label}: ${plan}`);
       continue;
     }
 
-    const existing = await prisma.whatsAppIntegration.findUnique({
-      where: {
-        businessId_phoneNumberId: {
-          businessId: business.id,
-          phoneNumberId: business.whatsappPhoneNumberId,
-        },
-      },
-    });
-
-    if (existing) {
-      console.log(
-        `Already exists: ${business.name} → ${business.whatsappPhoneNumberId}`,
-      );
-      skipped++;
-      continue;
+    const result = await syncLegacyIntegration(business.id);
+    if (result.status === "synced") {
+      if (result.created) counts.created++;
+      else counts.updated++;
+      console.log(`  ${label}: ${result.created ? "created" : "updated"} ${result.integrationId}`);
+    } else {
+      counts.skipped++;
+      console.log(`  ${label}: skipped (${result.reason})`);
     }
+  }
 
-    await prisma.whatsAppIntegration.create({
-      data: {
-        tenantId: business.tenantId,
-        businessId: business.id,
-
-        displayName: business.name,
-        phoneNumber: business.whatsappPhoneNumber,
-        phoneNumberId: business.whatsappPhoneNumberId,
-        whatsappBusinessId: business.whatsappBusinessId,
-
-        // Already encrypted in the legacy Business field.
-        accessToken: business.whatsappAccessToken,
-
-        verifyToken: business.whatsappVerifyToken,
-        appSecret: business.whatsappAppSecret,
-
-        isActive: true,
-        isDefault: true,
-      },
-    });
-
-    console.log(
-      `Created integration: ${business.name} → ${business.whatsappPhoneNumberId}`,
-    );
-
-    created++;
+  // TenantSettings-only credentials: report so an operator can re-save them.
+  const tenantOnly = await prisma.tenantSettings.findMany({
+    where: { waPhoneNumberId: { not: null }, waApiKey: { not: null } },
+    select: { tenantId: true, waPhoneNumberId: true },
+  });
+  for (const settings of tenantOnly) {
+    const [onBusiness, onIntegration] = await Promise.all([
+      prisma.business.findFirst({
+        where: { whatsappPhoneNumberId: settings.waPhoneNumberId },
+        select: { id: true },
+      }),
+      prisma.whatsAppIntegration.findUnique({
+        where: { phoneNumberId: settings.waPhoneNumberId! },
+        select: { id: true },
+      }),
+    ]);
+    if (!onBusiness && !onIntegration) {
+      console.log(
+        `  Tenant ${settings.tenantId}: number ${settings.waPhoneNumberId} exists only in TenantSettings — re-save Settings → WhatsApp to attach it to a business.`,
+      );
+    }
   }
 
   console.log("\nBackfill complete.");
-  console.log(`Created: ${created}`);
-  console.log(`Skipped: ${skipped}`);
+  if (!dryRun) {
+    console.log(`Created: ${counts.created}  Updated: ${counts.updated}  Skipped: ${counts.skipped}`);
+  }
 }
 
-main().catch((error) => {
-  console.error("Backfill failed:", error);
-  process.exit(1);
-});
+main()
+  .catch((error) => {
+    console.error("Backfill failed:", error instanceof Error ? error.message : error);
+    process.exitCode = 1;
+  })
+  .finally(() => prisma.$disconnect());

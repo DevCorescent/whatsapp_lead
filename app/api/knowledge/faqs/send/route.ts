@@ -18,7 +18,7 @@ import { MessageType, type Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { getBusinessScope } from "@/lib/business";
 import { guardFeature, guardLimit } from "@/lib/billing/guard";
-import { resolveWhatsAppCreds } from "@/lib/business";
+import { resolveConversationWhatsAppCreds } from "@/lib/business";
 import { sendInteractiveMessage } from "@/lib/whatsapp";
 import { readFaqList, readFaqState } from "@/lib/knowledgeFaq";
 import { buildFaqListPayload, WA_LIST_MAX_ROWS } from "@/lib/knowledgeFaqSend";
@@ -95,10 +95,14 @@ export async function POST(req: NextRequest) {
       if (overLimit) return overLimit;
     }
 
-    const creds = await resolveWhatsAppCreds(businessId);
+    // Sent into an existing thread, so it goes out from that thread's own number.
+    const creds = await resolveConversationWhatsAppCreds(conversation);
     if (!creds.phoneNumberId || !creds.apiKey) {
       return NextResponse.json(
-        { success: false, error: "WhatsApp is not connected for this workspace" },
+        {
+          success: false,
+          error: creds.unavailableReason ?? "WhatsApp is not connected for this workspace",
+        },
         { status: 409 },
       );
     }

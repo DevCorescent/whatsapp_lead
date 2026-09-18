@@ -51,6 +51,7 @@ export async function POST(req: NextRequest) {
     tenantId: job.tenantId,
     businessId: job.businessId,
     phoneNumberId: job.phoneNumberId,
+    whatsappIntegrationId: job.whatsappIntegrationId ?? null,
     type: job.type,
   });
 
@@ -75,7 +76,18 @@ export async function POST(req: NextRequest) {
       tenant = await resolveTenant(job.phoneNumberId);
       businessId = tenant.businessId;
     } else {
-      tenant = await resolveTenantById(job.tenantId, businessId);
+      // Jobs queued before multi-number support carry no integration id; the number the
+      // message was addressed to still identifies it, provided it belongs to this business.
+      const whatsappIntegrationId =
+        job.whatsappIntegrationId !== undefined
+          ? job.whatsappIntegrationId
+          : ((
+              await prisma.whatsAppIntegration.findFirst({
+                where: { phoneNumberId: job.phoneNumberId, businessId, isActive: true },
+                select: { id: true },
+              })
+            )?.id ?? null);
+      tenant = await resolveTenantById(job.tenantId, businessId, whatsappIntegrationId);
     }
 
     // 2. The ingestion spine, unchanged: contact → conversation → message, then the reactions

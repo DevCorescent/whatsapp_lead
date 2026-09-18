@@ -3,6 +3,7 @@ import { z } from "zod";
 import { auth } from "@/lib/auth";
 import { guardFeature } from "@/lib/billing/guard";
 import { invalidateCredsCache, invalidateTenantCache } from "@/lib/cache";
+import { syncLegacyIntegration } from "@/lib/whatsappIntegrations";
 import { encryptSecret, isMetaAccessToken, sanitizeWhatsAppToken } from "@/lib/crypto";
 import { prisma } from "@/lib/prisma";
 
@@ -130,14 +131,14 @@ export async function PATCH(req: NextRequest) {
         if (settings.waPhoneNumberId && (data.waApiKey || data.waPhoneNumberId || data.waBusinessAccountId)) {
           const byPhone = await prisma.business.findFirst({
             where: { tenantId, whatsappPhoneNumberId: settings.waPhoneNumberId },
-            select: { id: true },
+            select: { id: true, whatsappPhoneNumberId: true },
           });
           const target =
             byPhone ??
             (await prisma.business.findFirst({
               where: { tenantId },
               orderBy: { createdAt: "asc" },
-              select: { id: true },
+              select: { id: true, whatsappPhoneNumberId: true },
             }));
 
           if (target) {
@@ -155,6 +156,10 @@ export async function PATCH(req: NextRequest) {
               },
             });
             await invalidateCredsCache(target.id);
+            // ...and on into its WhatsAppIntegration row, which routing and sending read.
+            await syncLegacyIntegration(target.id, {
+              replacedPhoneNumberId: target.whatsappPhoneNumberId,
+            });
             console.log("[SETTINGS] Synced WhatsApp creds onto business", {
               businessId: target.id,
               phoneNumberId: settings.waPhoneNumberId,

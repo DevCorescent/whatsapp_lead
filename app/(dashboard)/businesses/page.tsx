@@ -221,7 +221,9 @@ export default function BusinessesPage() {
                   )}
                   <Button size="sm" variant="secondary" onClick={() => setConnectFor(b)}>
                     <MessageSquare className="h-3.5 w-3.5" />
-                    {b.whatsappPhoneNumberId && b.hasWhatsappToken ? "WhatsApp" : "Connect"}
+                    {/* Numbers connected through Meta live in their own table; the card
+                        in the modal shows the real state, so the label stays neutral. */}
+                    WhatsApp
                   </Button>
                   <Button size="sm" variant="secondary" onClick={() => openEdit(b)}>
                     <Pencil className="h-3.5 w-3.5" />

@@ -219,6 +219,20 @@ model Business {
 }
 
 // ─── WHATSAPP INTEGRATION ─────────────────────────────────────────────────────
+//
+// One row per connected WhatsApp number. This is the runtime source of truth for
+// multi-number workspaces: inbound webhooks route by `phoneNumberId`, and every
+// outbound send resolves its credentials from the conversation's integration (or
+// the business's default one). The legacy Business.whatsapp* columns are still
+// honoured as a fallback and are mirrored into a row here by
+// lib/whatsappIntegrations.ts#syncLegacyIntegration.
+//
+// Invariants (see prisma/migrations/20260918120000_whatsapp_integrations):
+//   · `phoneNumberId` is globally unique — it is Meta's webhook routing key.
+//   · At most one row per business has isDefault = true (partial unique index,
+//     created in raw SQL because Prisma cannot express it).
+//   · isDefault implies isActive. A disconnected row keeps its ids, so threads
+//     that used it refuse to send rather than switch numbers, but its token is wiped.
 
 model WhatsAppIntegration {
   id String @id @default(cuid())
@@ -231,10 +245,11 @@ model WhatsAppIntegration {
 
   displayName        String?
   phoneNumber        String?
-  phoneNumberId      String
+  phoneNumberId      String  @unique
   whatsappBusinessId String
 
-  accessToken String
+  /// Encrypted (enc:v1). Null once the number is disconnected.
+  accessToken String?
   verifyToken String?
   appSecret   String?
 
@@ -247,10 +262,10 @@ model WhatsAppIntegration {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  @@unique([businessId, phoneNumberId])
+  conversations Conversation[]
+
   @@index([tenantId])
   @@index([businessId])
-  @@index([phoneNumberId])
   @@map("whatsapp_integrations")
 }
 
@@ -451,9 +466,15 @@ model Conversation {
   faqInteractions FaqInteraction[]
   flowRuns        FlowRun[]
 
+  // The WhatsApp number this thread lives on. Replies go out from this number and no
+  // other; null for threads that predate multi-number support (legacy credentials).
+  whatsappIntegrationId String?
+  whatsappIntegration   WhatsAppIntegration? @relation(fields: [whatsappIntegrationId], references: [id], onDelete: SetNull)
+
   @@index([tenantId, status])
   @@index([businessId, status])
   @@index([businessId, lastMessageAt(sort: Desc)])
+  @@index([whatsappIntegrationId])
   @@map("conversations")
 }
 

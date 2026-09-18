@@ -1,6 +1,7 @@
 // ============================================================================
 // ROUTE  : /api/integrations/whatsapp/connect
-// POST   - Complete Meta's Embedded Signup and store the result on a Business.
+// POST   - Complete Meta's Embedded Signup and store the number as a
+//          WhatsAppIntegration of a Business (one row per connected number).
 //
 // ACCESS - Authenticated, tenant-scoped, manager roles only (same allowlist as
 //          the Businesses endpoints — connecting a number is a billing-relevant
@@ -24,8 +25,7 @@
 // ============================================================================
 
 import { NextRequest, NextResponse } from "next/server";
-import { getBusinessScope, publicBusiness } from "@/lib/business";
-import { invalidateCredsCache, invalidateTenantCache } from "@/lib/cache";
+import { getBusinessScope } from "@/lib/business";
 import { encryptSecret, isMetaAccessToken, sanitizeWhatsAppToken } from "@/lib/crypto";
 import { prisma } from "@/lib/prisma";
 import { MetaApiError } from "@/lib/whatsapp";
@@ -41,6 +41,7 @@ import {
   subscribeAppToWaba,
 } from "@/lib/whatsappEmbeddedSignup";
 import { connectWhatsAppSchema } from "@/lib/validators/whatsappIntegration";
+import { claimIntegration, syncLegacyIntegration } from "@/lib/whatsappIntegrations";
 
 /** Roles allowed to connect or disconnect a channel — mirrors /api/businesses. */
 const MANAGER_ROLES = new Set(["SUPER_ADMIN", "TENANT_OWNER", "ADMIN"]);
@@ -179,113 +180,49 @@ export async function POST(req: NextRequest) {
     }
     const phone = phoneChoice.phone;
 
-    // ── 4. The phone_number_id is the webhook routing key and is globally unique ──
-   const taken = await prisma.whatsAppIntegration.findFirst({
-  where: {
-    phoneNumberId: phone.id,
-  },
-  select: {
-    id: true,
-    businessId: true,
-    tenantId: true,
-    business: {
-      select: {
-        name: true,
-      },
-    },
-  },
-});
-   if (taken && taken.businessId !== business.id) {
+    // Best-effort label for the UI; a connection is valid without it.
+    const waba = await getWabaDetails(wabaId, businessToken);
+
+    // ── 4. Keep an existing hand-entered number as its own row ──
+    // A business that already sends through legacy credentials gets that number mirrored
+    // into a WhatsAppIntegration first, so it stays the default and keeps its threads.
+    // Without this, the first Meta-connected number would become the default and quietly
+    // take over sending from the number the business's customers already know.
+    await syncLegacyIntegration(business.id);
+
+    // ── 5. Save this number as its own integration ──
+    // One row per phone_number_id, globally: connecting another number adds a row,
+    // reconnecting a number refreshes its row in place, and a number held by another
+    // business is refused. Save happens before any optional step below, because the
+    // authorization code is already spent.
+    const claim = await claimIntegration({
+      tenantId: scope.tenantId,
+      businessId: business.id,
+      phoneNumberId: phone.id,
+      whatsappBusinessId: wabaId,
+      // Stored encrypted, never plaintext.
+      encryptedToken: encryptSecret(businessToken),
+      displayName: phone.verified_name ?? business.name,
+      phoneNumber: phone.display_phone_number ?? null,
+      qualityRating: phone.quality_rating ?? null,
+      codeVerificationStatus: phone.code_verification_status ?? null,
+    });
+
+    if (!claim.ok) {
       // Whether the clash is inside this tenant decides how much can be said about it:
       // naming another tenant's workspace would leak the existence of their account.
-      const sameTenant = taken.tenantId === scope.tenantId;
       return NextResponse.json(
         {
           success: false,
-          error: sameTenant
-         ? `That WhatsApp number is already connected to "${taken.business.name}". Disconnect it there first.`
-            : "That WhatsApp number is already connected to another workspace.",
+          error:
+            claim.sameTenant && claim.ownerBusinessName
+              ? `That WhatsApp number is already connected to "${claim.ownerBusinessName}". Disconnect it there first.`
+              : "That WhatsApp number is already connected to another workspace.",
         },
         { status: 409 },
       );
     }
-
-    // Best-effort label for the UI; a connection is valid without it.
-    const waba = await getWabaDetails(wabaId, businessToken);
-
-    // ── 5. Save before anything optional runs ──
-  // ── 5. Save as a WhatsAppIntegration ──
-// Each WhatsApp number gets its own integration row.
-// Connecting another number therefore does not overwrite an existing number.
-
-const existingIntegration = await prisma.whatsAppIntegration.findUnique({
-  where: {
-    businessId_phoneNumberId: {
-      businessId: business.id,
-      phoneNumberId: phone.id,
-    },
-  },
-  select: {
-    id: true,
-    isDefault: true,
-  },
-});
-
-const existingDefault = await prisma.whatsAppIntegration.findFirst({
-  where: {
-    businessId: business.id,
-    isDefault: true,
-    ...(existingIntegration ? { id: { not: existingIntegration.id } } : {}),
-  },
-  select: {
-    id: true,
-  },
-});
-
-const integration = existingIntegration
-  ? await prisma.whatsAppIntegration.update({
-      where: {
-        id: existingIntegration.id,
-      },
-      data: {
-        displayName: phone.verified_name ?? business.name,
-        phoneNumber: phone.display_phone_number ?? null,
-        whatsappBusinessId: wabaId,
-        accessToken: encryptSecret(businessToken),
-        qualityRating: phone.quality_rating ?? null,
-        codeVerificationStatus: phone.code_verification_status ?? null,
-        isActive: true,
-      },
-    })
-  : await prisma.whatsAppIntegration.create({
-      data: {
-        tenantId: scope.tenantId,
-        businessId: business.id,
-
-        displayName: phone.verified_name ?? business.name,
-        phoneNumber: phone.display_phone_number ?? null,
-        phoneNumberId: phone.id,
-        whatsappBusinessId: wabaId,
-
-        // Store encrypted, never plaintext.
-        accessToken: encryptSecret(businessToken),
-
-        qualityRating: phone.quality_rating ?? null,
-        codeVerificationStatus: phone.code_verification_status ?? null,
-
-        isActive: true,
-
-        // First number becomes default.
-        isDefault: !existingDefault,
-      },
-    });
-
-
-    // The row has changed; the cache still holds what it used to say. Dropped immediately
-    // after the write and before anything that can fail, so the next webhook delivery and
-    // the next campaign send both resolve from Postgres.
-   await invalidateCredsCache(business.id);
-    await invalidateTenantCache(phone.id);
+    const integration = claim.integration;
 
     // ── 6. Optional steps. Reported, never fatal. ──
     const warnings: string[] = [];
@@ -307,7 +244,7 @@ const integration = existingIntegration
     const registration = await registerPhoneNumber(phone.id, businessToken);
     if (registration.attempted && registration.error) {
       console.warn("[WA CONNECT] Phone registration reported an error", {
-businessId: business.id,
+        businessId: business.id,
         meta: registration.error,
       });
       warnings.push(`Meta could not register the number for Cloud API: ${registration.error}`);
@@ -318,8 +255,8 @@ businessId: business.id,
         tenantId: scope.tenantId,
         userId: scope.userId,
         action: "WHATSAPP_CONNECTED",
-       resource: "whatsapp_integration",
-       resourceId: integration.id,
+        resource: "whatsapp_integration",
+        resourceId: integration.id,
       },
     });
 
@@ -327,27 +264,29 @@ businessId: business.id,
       businessId: business.id,
       tenantId: scope.tenantId,
       phoneNumberId: phone.id,
+      integrationId: integration.id,
+      created: claim.created,
       wabaId,
       warnings: warnings.length,
     });
 
-    // Only non-secret values cross back to the browser. The token itself is never echoed —
-    // publicBusiness() strips it to a boolean, and nothing below re-adds it.
+    // Only non-secret values cross back to the browser. The token is never echoed.
     return NextResponse.json({
       success: true,
       data: {
-  integration: {
-    id: integration.id,
-    displayName: integration.displayName,
-    phoneNumber: integration.phoneNumber,
-    phoneNumberId: integration.phoneNumberId,
-    whatsappBusinessId: integration.whatsappBusinessId,
-    qualityRating: integration.qualityRating,
-    codeVerificationStatus: integration.codeVerificationStatus,
-    isActive: integration.isActive,
-    isDefault: integration.isDefault,
-  },
-},
+        integration: {
+          id: integration.id,
+          displayName: integration.displayName,
+          phoneNumber: integration.phoneNumber,
+          phoneNumberId: integration.phoneNumberId,
+          whatsappBusinessId: integration.whatsappBusinessId,
+          qualityRating: integration.qualityRating,
+          codeVerificationStatus: integration.codeVerificationStatus,
+          isActive: integration.isActive,
+          isDefault: integration.isDefault,
+        },
+        created: claim.created,
+      },
       connection: {
         wabaId,
         wabaName: waba?.name ?? null,

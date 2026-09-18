@@ -18,7 +18,6 @@ import {
   useTestWhatsAppConnection,
   useWhatsAppIntegrations,
   useWhatsAppSignupConfig,
-  type WhatsAppConnectionDTO,
   type WhatsAppIntegrationDTO,
   type WhatsAppTestDTO,
 } from "@/hooks/useWhatsAppConnection";
@@ -217,36 +216,181 @@ function FacebookGlyph() {
   );
 }
 
+/** Per-number outcome of the last Test press, shown on that number's card. */
+type TestOutcome = { ok: true; data: WhatsAppTestDTO } | { ok: false; error: string };
+
+/** A copy of `record` without `key`. */
+function withoutKey<T>(record: Record<string, T>, key: string): Record<string, T> {
+  const next = { ...record };
+  delete next[key];
+  return next;
+}
+
+/** Meta's quality rating as a coloured badge — GREEN/YELLOW/RED are Meta's own values. */
+function qualityClass(rating: string | null): string {
+  switch (rating?.toUpperCase()) {
+    case "GREEN":
+      return "text-emerald-700";
+    case "YELLOW":
+      return "text-amber-700";
+    case "RED":
+      return "text-rose-700";
+    default:
+      return "";
+  }
+}
+
+/** One connected number, with its own Test and Disconnect actions. */
+function IntegrationCard({
+  integration,
+  outcome,
+  testing,
+  onTest,
+  onDisconnect,
+}: {
+  integration: WhatsAppIntegrationDTO;
+  outcome: TestOutcome | undefined;
+  testing: boolean;
+  onTest: () => void;
+  onDisconnect: () => void;
+}) {
+  const label = integration.phoneNumber || integration.displayName || "this number";
+
+  return (
+    <div
+      className={cn(
+        "rounded-xl border p-4",
+        integration.isActive ? "border-slate-200 bg-slate-50/70" : "border-dashed border-slate-200 bg-white",
+      )}
+    >
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div className="min-w-0">
+          <div className="flex flex-wrap items-center gap-2">
+            <h4 className="font-semibold text-slate-900">
+              {integration.displayName || "WhatsApp Business"}
+            </h4>
+            {integration.isDefault && (
+              <Badge className="bg-emerald-50 text-emerald-700 ring-emerald-600/20">Default</Badge>
+            )}
+            <Badge
+              className={
+                integration.isActive
+                  ? "bg-emerald-50 text-emerald-700 ring-emerald-600/20"
+                  : "bg-slate-100 text-slate-500 ring-slate-500/15"
+              }
+            >
+              {integration.isActive ? "Active" : "Disconnected"}
+            </Badge>
+          </div>
+          <p className="mt-1 text-sm text-slate-500">
+            {integration.phoneNumber || "WhatsApp number unavailable"}
+          </p>
+        </div>
+
+        {integration.isActive && (
+          <div className="flex flex-wrap gap-2">
+            <Button
+              size="sm"
+              variant="secondary"
+              onClick={onTest}
+              disabled={testing}
+              aria-label={`Test connection for ${label}`}
+            >
+              {testing ? (
+                <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />
+              ) : (
+                <PlugZap className="h-3.5 w-3.5" aria-hidden />
+              )}
+              {testing ? "Testing…" : "Test"}
+            </Button>
+            <Button
+              size="sm"
+              variant="secondary"
+              onClick={onDisconnect}
+              aria-label={`Disconnect ${label}`}
+            >
+              <Link2Off className="h-3.5 w-3.5" aria-hidden />
+              Disconnect
+            </Button>
+          </div>
+        )}
+      </div>
+
+      <dl className="mt-4 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+        <DetailRow label="Display Name" value={integration.displayName ?? "—"} />
+        <DetailRow label="WhatsApp Number" value={integration.phoneNumber ?? "—"} />
+        <DetailRow label="WABA ID" value={maskId(integration.whatsappBusinessId)} mono />
+        <DetailRow label="Phone Number ID" value={maskId(integration.phoneNumberId)} mono />
+        <div className="min-w-0">
+          <dt className="text-xs font-medium uppercase tracking-wide text-slate-500">Quality Rating</dt>
+          <dd className={cn("mt-0.5 truncate text-sm text-slate-900", qualityClass(integration.qualityRating))}>
+            {integration.qualityRating ?? "—"}
+          </dd>
+        </div>
+        <DetailRow label="Verification Status" value={integration.codeVerificationStatus ?? "—"} />
+      </dl>
+
+      {outcome && (
+        <div
+          role={outcome.ok ? "status" : "alert"}
+          className={cn(
+            "mt-4 flex items-start gap-2 rounded-lg border px-3 py-2 text-sm",
+            outcome.ok
+              ? "border-emerald-200 bg-emerald-50 text-emerald-800"
+              : "border-rose-200 bg-rose-50 text-rose-800",
+          )}
+        >
+          {outcome.ok ? (
+            <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-emerald-600" aria-hidden />
+          ) : (
+            <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-rose-600" aria-hidden />
+          )}
+          <p className="min-w-0">
+            {outcome.ok
+              ? `Connection successful — Meta answered for ${outcome.data.displayPhoneNumber ?? label}${
+                  outcome.data.qualityRating ? ` (quality ${outcome.data.qualityRating})` : ""
+                }.`
+              : `Test failed: ${outcome.error}`}
+          </p>
+        </div>
+      )}
+
+      <div className="mt-4 border-t border-slate-200 pt-3">
+        <p className="text-xs text-slate-500">
+          Connected {new Date(integration.createdAt).toLocaleDateString()}
+          {!integration.isActive &&
+            " · Conversations on this number can't be answered until it is reconnected."}
+        </p>
+      </div>
+    </div>
+  );
+}
+
 export function WhatsAppConnectCard({ businessId }: { businessId?: string }) {
- const { data: businessesData, isLoading: businessesLoading } = useBusinesses();
+  const { data: businessesData, isLoading: businessesLoading } = useBusinesses();
+  const { data: config, isLoading: configLoading, error: configError } = useWhatsAppSignupConfig();
 
-const { data: config, isLoading: configLoading, error: configError } =
-  useWhatsAppSignupConfig();
+  const target: BusinessDTO | undefined = (() => {
+    const list = businessesData?.data ?? [];
+    const wanted = businessId ?? businessesData?.currentBusinessId;
+    return list.find((b) => b.id === wanted);
+  })();
 
-const target: BusinessDTO | undefined = (() => {
-  const list = businessesData?.data ?? [];
-  const wanted = businessId ?? businessesData?.currentBusinessId;
+  const {
+    data: integrationsData,
+    isLoading: integrationsLoading,
+    error: integrationsError,
+  } = useWhatsAppIntegrations(target?.id);
 
-  return list.find((b) => b.id === wanted);
-})();
-
-const {
-  data: integrationsData,
-  isLoading: integrationsLoading,
-  refetch: refetchIntegrations,
-} = useWhatsAppIntegrations(target?.id);
-
-const connect = useConnectWhatsApp();
-const disconnect = useDisconnectWhatsApp();
-const test = useTestWhatsAppConnection();
+  const connect = useConnectWhatsApp();
+  const disconnect = useDisconnectWhatsApp();
+  const test = useTestWhatsAppConnection();
 
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [warnings, setWarnings] = useState<string[]>([]);
-  const [connection, setConnection] = useState<WhatsAppConnectionDTO | null>(null);
-  const [testResult, setTestResult] = useState<WhatsAppTestDTO | null>(null);
-  const [testError, setTestError] = useState<string | null>(null);
-  const [confirmDisconnect, setConfirmDisconnect] = useState(false);
+  const [testOutcomes, setTestOutcomes] = useState<Record<string, TestOutcome>>({});
+  const [confirmDisconnect, setConfirmDisconnect] = useState<WhatsAppIntegrationDTO | null>(null);
 
   // What Meta posted on the message channel, held until the login callback supplies the code.
   // A ref rather than state: the FB.login callback reads it once, and a re-render in between
@@ -257,13 +401,10 @@ const test = useTestWhatsAppConnection();
 
   const sdkState = useFacebookSdk(config?.appId, config?.graphVersion);
 
-
-  const integrations: WhatsAppIntegrationDTO[] =
-  integrationsData?.integrations ?? [];
-
-const isConnected =
-  integrations.length > 0 ||
-  Boolean(target?.whatsappPhoneNumberId && target?.hasWhatsappToken);
+  const integrations: WhatsAppIntegrationDTO[] = integrationsData?.integrations ?? [];
+  const activeCount = integrations.filter((i) => i.isActive).length;
+  const hasLegacyCredentials = integrationsData?.hasLegacyCredentials ?? false;
+  const isConnected = activeCount > 0 || hasLegacyCredentials;
 
   useEffect(() => {
     const onMessage = (event: MessageEvent) => {
@@ -317,8 +458,6 @@ const isConnected =
     setError(null);
     setNotice(null);
     setWarnings([]);
-    setTestResult(null);
-    setTestError(null);
     signupDataRef.current = null;
     abortReasonRef.current = null;
 
@@ -347,9 +486,14 @@ const isConnected =
           },
           {
             onSuccess: (result) => {
-              setConnection(result.connection);
+              const number =
+                result.data.integration.phoneNumber ?? result.data.integration.displayName ?? "WhatsApp";
               setWarnings(result.warnings ?? []);
-              setNotice("WhatsApp is connected.");
+              setNotice(
+                result.data.created
+                  ? `${number} is connected.`
+                  : `${number} was already connected — its access and details were refreshed.`,
+              );
             },
             onError: (err) => {
               setError(err instanceof Error ? err.message : "Could not complete the connection");
@@ -366,29 +510,38 @@ const isConnected =
     );
   };
 
-  const runTest = () => {
-    setTestResult(null);
-    setTestError(null);
-    test.mutate(target?.id, {
-      onSuccess: (result) => setTestResult(result.data),
+  const runTest = (integration: WhatsAppIntegrationDTO) => {
+    setTestOutcomes((prev) => withoutKey(prev, integration.id));
+    test.mutate(integration.id, {
+      onSuccess: (result) =>
+        setTestOutcomes((prev) => ({ ...prev, [integration.id]: { ok: true, data: result.data } })),
       onError: (err) =>
-        setTestError(err instanceof Error ? err.message : "Connection test failed"),
+        setTestOutcomes((prev) => ({
+          ...prev,
+          [integration.id]: {
+            ok: false,
+            error: err instanceof Error ? err.message : "Connection test failed",
+          },
+        })),
     });
   };
 
   const runDisconnect = () => {
+    const integration = confirmDisconnect;
+    if (!integration) return;
     setError(null);
-    disconnect.mutate(target?.id, {
+    setNotice(null);
+    disconnect.mutate(integration.id, {
       onSuccess: (result) => {
-        setConfirmDisconnect(false);
-        setConnection(null);
-        setTestResult(null);
-        setTestError(null);
+        setConfirmDisconnect(null);
+        setTestOutcomes((prev) => withoutKey(prev, integration.id));
         setWarnings(result.warnings ?? []);
-        setNotice("WhatsApp has been disconnected. Your contacts and history are untouched.");
+        setNotice(
+          `${integration.phoneNumber ?? integration.displayName ?? "The number"} has been disconnected. Your other numbers, contacts and history are untouched.`,
+        );
       },
       onError: (err) => {
-        setConfirmDisconnect(false);
+        setConfirmDisconnect(null);
         setError(err instanceof Error ? err.message : "Could not disconnect");
       },
     });
@@ -420,9 +573,9 @@ const isConnected =
               )}
             </h2>
             <p className="mt-0.5 text-sm text-slate-500">
-             {isConnected
-  ? "Manage the WhatsApp numbers connected to this business."
-  : "Connect your WhatsApp Business account through Meta. No credentials to copy."}
+              {isConnected
+                ? "Manage the WhatsApp numbers connected to this business. Each conversation replies from the number the customer wrote to."
+                : "Connect your WhatsApp Business account through Meta. No credentials to copy."}
             </p>
           </div>
           {target && (
@@ -454,7 +607,7 @@ const isConnected =
             <button
               type="button"
               onClick={launchSignup}
-              disabled={sdkState !== "ready" || busy}
+              disabled={sdkState !== "ready" || busy || !target}
               aria-busy={busy}
               className={cn(
                 "inline-flex w-full items-center justify-center gap-2.5 rounded-lg px-4 py-2.5",
@@ -477,7 +630,7 @@ const isConnected =
               ) : (
                 <>
                   <FacebookGlyph />
-                  Continue with Facebook
+                  {isConnected ? "Connect another number" : "Continue with Facebook"}
                 </>
               )}
             </button>
@@ -497,103 +650,50 @@ const isConnected =
           </div>
         )}
 
-      {target && integrations.length > 0 && (
-  <div className="mt-5 space-y-3">
-    <div className="flex items-center justify-between gap-3">
-      <div>
-        <h3 className="text-sm font-semibold text-slate-900">
-          Connected WhatsApp Numbers
-        </h3>
-        <p className="mt-0.5 text-xs text-slate-500">
-          {integrations.length} number
-          {integrations.length === 1 ? "" : "s"} connected to this business.
-        </p>
-      </div>
+        {integrationsError && (
+          <p className="mt-4 text-sm text-rose-600">
+            {integrationsError instanceof Error
+              ? integrationsError.message
+              : "Could not load the connected numbers."}
+          </p>
+        )}
 
-      <Badge className="bg-slate-50 text-slate-600 ring-slate-500/15">
-        {integrations.length}
-      </Badge>
-    </div>
-
-    {integrations.map((integration) => (
-      <div
-        key={integration.id}
-        className="rounded-xl border border-slate-200 bg-slate-50/70 p-4"
-      >
-        <div className="flex flex-wrap items-start justify-between gap-3">
-          <div className="min-w-0">
-            <div className="flex flex-wrap items-center gap-2">
-              <h4 className="font-semibold text-slate-900">
-                {integration.displayName || "WhatsApp Business"}
-              </h4>
-
-              {integration.isDefault && (
-                <Badge className="bg-emerald-50 text-emerald-700 ring-emerald-600/20">
-                  Default
-                </Badge>
-              )}
-
-              <Badge
-                className={
-                  integration.isActive
-                    ? "bg-emerald-50 text-emerald-700 ring-emerald-600/20"
-                    : "bg-slate-100 text-slate-500 ring-slate-500/15"
-                }
-              >
-                {integration.isActive ? "Active" : "Inactive"}
-              </Badge>
-            </div>
-
-            <p className="mt-1 text-sm text-slate-500">
-              {integration.phoneNumber || "WhatsApp number unavailable"}
+        {hasLegacyCredentials && (
+          <div className="mt-4 flex items-start gap-3 rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-700">
+            <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0 text-slate-400" aria-hidden />
+            <p>
+              This business also sends through credentials entered under Manual setup. Re-save
+              them there (or ask an administrator to run the WhatsApp backfill) to list that
+              number here with its own Test and Disconnect.
             </p>
           </div>
-        </div>
+        )}
 
-        <dl className="mt-4 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-          <DetailRow
-            label="Display Name"
-            value={integration.displayName ?? "—"}
-          />
+        {target && integrations.length > 0 && (
+          <div className="mt-5 space-y-3">
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                <h3 className="text-sm font-semibold text-slate-900">Connected WhatsApp Numbers</h3>
+                <p className="mt-0.5 text-xs text-slate-500">
+                  {activeCount} active number{activeCount === 1 ? "" : "s"} on this business.
+                  Campaigns and templates use the default number.
+                </p>
+              </div>
+              <Badge className="bg-slate-50 text-slate-600 ring-slate-500/15">{activeCount}</Badge>
+            </div>
 
-          <DetailRow
-            label="WhatsApp Number"
-            value={integration.phoneNumber ?? "—"}
-          />
-
-          <DetailRow
-            label="WABA ID"
-            value={maskId(integration.whatsappBusinessId)}
-            mono
-          />
-
-          <DetailRow
-            label="Phone Number ID"
-            value={maskId(integration.phoneNumberId)}
-            mono
-          />
-
-          <DetailRow
-            label="Quality Rating"
-            value={integration.qualityRating ?? "—"}
-          />
-
-          <DetailRow
-            label="Verification Status"
-            value={integration.codeVerificationStatus ?? "—"}
-          />
-        </dl>
-
-        <div className="mt-4 border-t border-slate-200 pt-3">
-          <p className="text-xs text-slate-500">
-            Connected{" "}
-            {new Date(integration.createdAt).toLocaleDateString()}
-          </p>
-        </div>
-      </div>
-    ))}
-  </div>
-)}
+            {integrations.map((integration) => (
+              <IntegrationCard
+                key={integration.id}
+                integration={integration}
+                outcome={testOutcomes[integration.id]}
+                testing={test.isPending && test.variables === integration.id}
+                onTest={() => runTest(integration)}
+                onDisconnect={() => setConfirmDisconnect(integration)}
+              />
+            ))}
+          </div>
+        )}
 
         {/* One live region for every non-error outcome, so a screen reader hears the
             result of a button press without the focus moving. */}
@@ -602,30 +702,6 @@ const isConnected =
             <div className="mt-4 flex items-start gap-3 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-800">
               <CheckCircle2 className="mt-0.5 h-5 w-5 shrink-0 text-emerald-600" aria-hidden />
               <p>{notice}</p>
-            </div>
-          )}
-
-          {testResult && (
-            <div className="mt-3 flex items-start gap-3 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-800">
-              <CheckCircle2 className="mt-0.5 h-5 w-5 shrink-0 text-emerald-600" aria-hidden />
-              <div className="min-w-0">
-                <p className="font-semibold">Connection successful</p>
-                <p className="mt-0.5 text-emerald-700">
-                  Number: <strong>{testResult.displayPhoneNumber ?? "—"}</strong>
-                  {testResult.verifiedName && (
-                    <>
-                      {" "}
-                      · Name: <strong>{testResult.verifiedName}</strong>
-                    </>
-                  )}
-                  {testResult.qualityRating && (
-                    <>
-                      {" "}
-                      · Quality: <strong>{testResult.qualityRating}</strong>
-                    </>
-                  )}
-                </p>
-              </div>
             </div>
           )}
 
@@ -641,12 +717,12 @@ const isConnected =
         </div>
 
         <div role="alert" className="empty:hidden">
-          {(error || testError) && (
+          {error && (
             <div className="mt-4 flex items-start gap-3 rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-800">
               <AlertCircle className="mt-0.5 h-5 w-5 shrink-0 text-rose-600" aria-hidden />
               <div className="min-w-0">
-                <p className="font-semibold">{error ? "Connection failed" : "Test failed"}</p>
-                <p className="mt-0.5 text-rose-700">{error ?? testError}</p>
+                <p className="font-semibold">Something went wrong</p>
+                <p className="mt-0.5 text-rose-700">{error}</p>
               </div>
             </div>
           )}
@@ -654,21 +730,23 @@ const isConnected =
       </Card>
 
       <Modal
-        open={confirmDisconnect}
+        open={!!confirmDisconnect}
         onClose={() => {
-          if (!disconnect.isPending) setConfirmDisconnect(false);
+          if (!disconnect.isPending) setConfirmDisconnect(null);
         }}
-        title="Disconnect WhatsApp?"
+        title="Disconnect this WhatsApp number?"
         description={
-          target
-            ? `"${target.name}" will stop sending and receiving WhatsApp messages. Its contacts, conversations, campaigns and templates are kept — you can reconnect at any time.`
+          confirmDisconnect
+            ? `${confirmDisconnect.phoneNumber ?? confirmDisconnect.displayName ?? "This number"} will stop sending and receiving WhatsApp messages. Conversations on it can't be answered until it is reconnected. Other numbers${
+                confirmDisconnect.isDefault ? " keep working, and the next one becomes the default" : " keep working"
+              }. Contacts, conversations, campaigns and templates are kept.`
             : ""
         }
       >
         <div className="flex justify-end gap-2">
           <Button
             variant="secondary"
-            onClick={() => setConfirmDisconnect(false)}
+            onClick={() => setConfirmDisconnect(null)}
             disabled={disconnect.isPending}
           >
             Cancel

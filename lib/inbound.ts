@@ -29,8 +29,12 @@ import {
 } from "@prisma/client";
 import type { Contact, Conversation, Message } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
-import { ensureDefaultBusiness, resolveWhatsAppCreds } from "@/lib/business";
-import { decryptSecret } from "@/lib/crypto";
+import {
+  ensureDefaultBusiness,
+  resolveConversationWhatsAppCreds,
+  type ResolvedWhatsAppCreds,
+} from "@/lib/business";
+import { routeInbound } from "@/lib/whatsappIntegrationRules";
 import { generateReply } from "@/lib/ai";
 import { resolveSystemPrompt } from "@/lib/aiInstructions";
 import { hasCapacity, incrementAiUsage, planAllows } from "@/lib/billing/usage";
@@ -81,7 +85,14 @@ const META_TO_MESSAGE_TYPE: Record<string, MessageType> = {
  */
 export type ResolvedTenant = Prisma.TenantSettingsGetPayload<{
   include: { tenant: true };
-}> & { businessId: string };
+}> & {
+  businessId: string;
+  /**
+   * The connected WhatsApp number the event arrived on. Null when the number is only
+   * known through the legacy Business/TenantSettings columns.
+   */
+  whatsappIntegrationId: string | null;
+};
 
 /**
  * Resolve the owning tenant for an inbound WhatsApp event.
@@ -102,6 +113,42 @@ export type ResolvedTenant = Prisma.TenantSettingsGetPayload<{
  * @throws {Error} If no tenant has this number configured, or the resolved tenant is inactive.
  */
 export async function resolveTenant(phoneNumberId: string): Promise<ResolvedTenant> {
+  // A connected number (WhatsAppIntegration) is authoritative: it names the tenant, the
+  // business and the number itself, so the thread can be answered from the same number.
+  const integration = await prisma.whatsAppIntegration.findUnique({
+    where: { phoneNumberId },
+    select: {
+      id: true,
+      tenantId: true,
+      businessId: true,
+      isActive: true,
+      business: { select: { tenantId: true } },
+    },
+  });
+  const route = routeInbound(
+    integration ? { ...integration, businessTenantId: integration.business.tenantId } : null
+  );
+
+  if (route.kind === "disconnected") {
+    // Deliberately not handed to the legacy lookup below, which would re-attach the
+    // number to a business on the very next message.
+    throw new Error(`WhatsApp number "${phoneNumberId}" is disconnected — ignoring inbound event`);
+  }
+
+  if (route.kind === "integration") {
+    const settings = await prisma.tenantSettings.upsert({
+      where: { tenantId: route.tenantId },
+      create: { tenantId: route.tenantId },
+      update: {},
+      include: { tenant: true },
+    });
+    if (!settings.tenant.isActive) {
+      throw new Error(`Tenant inactive: "${settings.tenant.slug}" (${settings.tenantId})`);
+    }
+    return { ...settings, businessId: route.businessId, whatsappIntegrationId: route.integrationId };
+  }
+
+  // Legacy: no WhatsAppIntegration row for this number.
   // Prefer the Business that owns this Meta phone_number_id. That is what the inbox is scoped
   // to — routing via TenantSettings first and then falling back to the tenant's *oldest*
   // business is what made messages land in one workspace while the agent watched another.
@@ -125,7 +172,7 @@ export async function resolveTenant(phoneNumberId: string): Promise<ResolvedTena
         `Tenant inactive: "${settings.tenant.slug}" (${settings.tenantId})`
       );
     }
-    return { ...settings, businessId: ownedBusiness.id };
+    return { ...settings, businessId: ownedBusiness.id, whatsappIntegrationId: null };
   }
 
   // Legacy path: WhatsApp was configured on TenantSettings only, before multi-business.
@@ -174,7 +221,7 @@ export async function resolveTenant(phoneNumberId: string): Promise<ResolvedTena
     }
   }
 
-  return { ...settings, businessId: defaultBusiness.id };
+  return { ...settings, businessId: defaultBusiness.id, whatsappIntegrationId: null };
 }
 
 /**
@@ -192,7 +239,8 @@ export async function resolveTenant(phoneNumberId: string): Promise<ResolvedTena
  */
 export async function resolveTenantById(
   tenantId: string,
-  businessId: string
+  businessId: string,
+  whatsappIntegrationId: string | null = null
 ): Promise<ResolvedTenant> {
   const settings = await prisma.tenantSettings.findUnique({
     where: { tenantId },
@@ -209,7 +257,7 @@ export async function resolveTenantById(
     );
   }
 
-  return { ...settings, businessId };
+  return { ...settings, businessId, whatsappIntegrationId };
 }
 
 /**
@@ -571,17 +619,16 @@ async function saveInboundMessage(
  * because a tick did not turn blue.
  */
 async function markInboundAsRead(
-  tenant: ResolvedTenant,
+  creds: ResolvedWhatsAppCreds,
   waMessageId: string
 ): Promise<void> {
-  if (!tenant.waPhoneNumberId || !tenant.waApiKey) return;
+  // The receipt must come from the number the customer wrote to.
+  if (!creds.phoneNumberId || !creds.apiKey) return;
 
   try {
-    const apiKey = decryptSecret(tenant.waApiKey);
-    if (!apiKey) return;
     await markMessageAsRead(
-      tenant.waPhoneNumberId,
-      apiKey,
+      creds.phoneNumberId,
+      creds.apiKey,
       waMessageId
     );
   } catch (error) {
@@ -753,7 +800,8 @@ async function executeFlow(
   /** The tapped row id, when the customer chose from a menu rather than typing. */
   inboundReplyId: string | null = null,
 ): Promise<boolean> {
-  const flowCreds = await resolveWhatsAppCreds(tenant.businessId);
+  // The thread's own number — a flow step must not answer from a different one.
+  const flowCreds = await resolveConversationWhatsAppCreds(conversation);
   if (!flowCreds.phoneNumberId || !flowCreds.apiKey) return false;
 
   let flowId: string | null = conversation.activeFlowId ?? null;
@@ -1076,17 +1124,19 @@ export async function handleAutoReply(
     return;
   }
 
-  // Same credential resolution as POST /api/messages — conversation.businessId, not the
-  // webhook's routed tenant.businessId. Those can diverge after multi-business routing, which is
-  // why agent-typed messages succeeded while AI replies got Meta 400s.
-  const creds = await resolveWhatsAppCreds(conversation.businessId);
+  // Same credential resolution as POST /api/messages: the conversation's own WhatsApp number
+  // (or, for a pre multi-number thread, its business's legacy credentials) — never the
+  // webhook's routed tenant.businessId, and never another number of the same business.
+  const creds = await resolveConversationWhatsAppCreds(conversation);
   if (!creds.phoneNumberId || !creds.apiKey) {
     console.warn(
-      `[INBOUND] Auto-reply enabled but WhatsApp credentials missing on conversation business ${conversation.businessId}`,
+      `[INBOUND] Auto-reply enabled but WhatsApp credentials unavailable for conversation ${conversation.id}`,
       {
         tenantId: tenant.tenantId,
         routedBusinessId: tenant.businessId,
         conversationBusinessId: conversation.businessId,
+        whatsappIntegrationId: conversation.whatsappIntegrationId,
+        reason: creds.unavailableReason ?? "no credentials",
       }
     );
     return;
@@ -1439,14 +1489,21 @@ export async function processIncomingMessage(
   message: WAMessage,
   contactName?: string
 ): Promise<InboundMessageResult> {
-  // Stick to the business that already owns this phone's thread. Routing can flip between a
-  // legacy default business and the WhatsApp-connected one across deliveries; creating a second
-  // contact under the new businessId makes the inbox the agent is watching look like it was wiped.
-  const priorContact = await prisma.contact.findFirst({
-    where: { tenantId: tenant.tenantId, phone: message.from },
-    orderBy: { updatedAt: "desc" },
-    select: { id: true, businessId: true },
-  });
+  const integrationId = tenant.whatsappIntegrationId;
+
+  // Legacy routing only: stick to the business that already owns this phone's thread. Legacy
+  // routing can flip between a default business and the WhatsApp-connected one across
+  // deliveries; creating a second contact under the new businessId makes the inbox the agent is
+  // watching look like it was wiped. A connected number (integration) is authoritative — it
+  // belongs to exactly one business, and a reply must go out from that number — so there is
+  // nothing to stick to.
+  const priorContact = integrationId
+    ? null
+    : await prisma.contact.findFirst({
+        where: { tenantId: tenant.tenantId, phone: message.from },
+        orderBy: { updatedAt: "desc" },
+        select: { id: true, businessId: true },
+      });
 
   const businessId = priorContact?.businessId ?? tenant.businessId;
   if (priorContact && priorContact.businessId !== tenant.businessId) {
@@ -1468,9 +1525,17 @@ export async function processIncomingMessage(
     contactName
   );
 
+  // One thread per contact per WhatsApp number: a customer who writes to number A and to
+  // number B has two threads, each answered from the number it lives on. Legacy-routed
+  // messages keep to the threads that have no number, as they always did.
   // Fetch conversation with flow session fields so executeFlow can resume mid-Q&A.
   const existingConv = await prisma.conversation.findFirst({
-    where: { tenantId: scopedTenant.tenantId, businessId, contactId: contact.id },
+    where: {
+      tenantId: scopedTenant.tenantId,
+      businessId,
+      contactId: contact.id,
+      whatsappIntegrationId: integrationId,
+    },
     orderBy: { createdAt: "desc" },
     select: { id: true, activeFlowId: true, activeNodeId: true, flowVars: true },
   });
@@ -1482,6 +1547,7 @@ export async function processIncomingMessage(
           tenantId: scopedTenant.tenantId,
           businessId,
           contactId: contact.id,
+          whatsappIntegrationId: integrationId,
           // Match the inbox AI toggle to workspace auto-reply so new threads reply by default.
           isAiActive: autoCfg.aiEnabled && autoCfg.autoReply,
         },
@@ -1496,7 +1562,20 @@ export async function processIncomingMessage(
   );
 
   if (isNew) {
-    await markInboundAsRead(scopedTenant, message.id);
+    // Every reaction below answers from the number this thread lives on. Resolved once —
+    // the FAQ, opt-out and read-receipt paths used to read TenantSettings directly, which
+    // on a multi-number workspace is a different number (and was passed still encrypted).
+    const replyCreds = await resolveConversationWhatsAppCreds(conversation);
+    const canReply = Boolean(replyCreds.phoneNumberId && replyCreds.apiKey);
+    if (!canReply) {
+      console.warn("[INBOUND] Cannot reply on this conversation's number", {
+        conversationId: conversation.id,
+        whatsappIntegrationId: conversation.whatsappIntegrationId,
+        reason: replyCreds.unavailableReason ?? "no credentials",
+      });
+    }
+
+    await markInboundAsRead(replyCreds, message.id);
     await broadcastMessage(scopedTenant.tenantId, saved);
 
     // ── FAQ menu tap ──────────────────────────────────────────────────────────
@@ -1514,11 +1593,11 @@ export async function processIncomingMessage(
         message.interactive?.list_reply?.title ?? message.interactive?.button_reply?.title,
     });
 
-    if (tap?.answer && scopedTenant.waPhoneNumberId && scopedTenant.waApiKey) {
+    if (tap?.answer && canReply) {
       try {
         const reply = await sendTextMessage(
-          scopedTenant.waPhoneNumberId,
-          scopedTenant.waApiKey,
+          replyCreds.phoneNumberId!,
+          replyCreds.apiKey!,
           message.from,
           tap.answer,
         );
@@ -1549,10 +1628,10 @@ export async function processIncomingMessage(
 
     if (OPT_OUT.has(msgKeyword)) {
       await prisma.contact.update({ where: { id: contact.id }, data: { optedOut: true } });
-      if (scopedTenant.waPhoneNumberId && scopedTenant.waApiKey) {
+      if (canReply) {
         await sendTextMessage(
-          scopedTenant.waPhoneNumberId,
-          scopedTenant.waApiKey,
+          replyCreds.phoneNumberId!,
+          replyCreds.apiKey!,
           message.from,
           "You have been unsubscribed and will no longer receive messages from us. Reply START to re-subscribe at any time."
         ).catch(() => {/* best-effort */});
@@ -1568,10 +1647,10 @@ export async function processIncomingMessage(
     if (contactStatus?.optedOut) {
       if (OPT_IN.has(msgKeyword)) {
         await prisma.contact.update({ where: { id: contact.id }, data: { optedOut: false } });
-        if (scopedTenant.waPhoneNumberId && scopedTenant.waApiKey) {
+        if (canReply) {
           await sendTextMessage(
-            scopedTenant.waPhoneNumberId,
-            scopedTenant.waApiKey,
+            replyCreds.phoneNumberId!,
+            replyCreds.apiKey!,
             message.from,
             "You have been re-subscribed and will receive messages from us again. Reply STOP at any time to unsubscribe."
           ).catch(() => {/* best-effort */});

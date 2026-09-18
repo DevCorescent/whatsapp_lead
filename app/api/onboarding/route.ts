@@ -31,12 +31,14 @@ export async function GET() {
     // Derive step completion from real workspace state so the checklist reflects
     // what the tenant has actually done, not just what they've clicked. WhatsApp and
     // knowledge are checked for the CURRENT business; team stays tenant-wide.
-    const [teamCount, knowledgeCount] = await Promise.all([
+    const [teamCount, knowledgeCount, connectedNumbers] = await Promise.all([
       prisma.user.count({ where: { tenantId } }),
       prisma.knowledgeDoc.count({ where: { businessId } }),
+      prisma.whatsAppIntegration.count({ where: { businessId, isActive: true } }),
     ]);
 
     const whatsappConnected =
+      connectedNumbers > 0 ||
       Boolean(business.whatsappAccessToken && business.whatsappPhoneNumberId) ||
       Boolean(settings.waApiKey && settings.waPhoneNumberId);
 

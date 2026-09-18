@@ -19,10 +19,12 @@
 // settings, so a single-business installation keeps working with zero manual steps.
 
 import { cookies } from "next/headers";
-import type { Business } from "@prisma/client";
+import type { Business, WhatsAppIntegration } from "@prisma/client";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { decryptSecret, isMetaAccessToken } from "@/lib/crypto";
+import { findDefaultIntegration } from "@/lib/whatsappIntegrations";
+import { checkIntegrationOwnership } from "@/lib/whatsappIntegrationRules";
 
 /** Cookie that remembers the business the user last switched to. */
 export const CURRENT_BUSINESS_COOKIE = "current_business";
@@ -188,19 +190,117 @@ export interface ResolvedWhatsAppCreds {
   /** Decrypted access token, or null when unavailable / undecryptable. */
   apiKey: string | null;
   verifyToken: string | null;
+  /** The WhatsAppIntegration these came from; null for legacy Business/TenantSettings creds. */
+  integrationId: string | null;
+  /**
+   * Set when no usable credentials were returned and the caller must refuse rather than
+   * look elsewhere — e.g. the thread's own number was disconnected. Safe to show operators.
+   */
+  unavailableReason?: string;
+}
+
+const NO_CREDS: ResolvedWhatsAppCreds = {
+  phoneNumberId: null,
+  businessAccountId: null,
+  apiKey: null,
+  verifyToken: null,
+  integrationId: null,
+};
+
+/** Decrypt one integration's token. Never falls back to another number's token. */
+function credsFromIntegration(row: WhatsAppIntegration): ResolvedWhatsAppCreds {
+  let apiKey: string | null = null;
+  try {
+    apiKey = decryptSecret(row.accessToken);
+  } catch (error) {
+    console.error("[WA CREDS] Failed to decrypt integration token", {
+      integrationId: row.id,
+      businessId: row.businessId,
+      reason: error instanceof Error ? error.message : "unknown",
+    });
+  }
+  if (apiKey && !isMetaAccessToken(apiKey)) apiKey = null;
+
+  return {
+    phoneNumberId: row.phoneNumberId,
+    businessAccountId: row.whatsappBusinessId,
+    apiKey,
+    verifyToken: row.verifyToken ?? null,
+    integrationId: row.id,
+    ...(!apiKey && {
+      unavailableReason: "The access token for this WhatsApp number is unusable. Reconnect the number.",
+    }),
+  };
 }
 
 /**
- * Resolve a business's WhatsApp credentials for sending, decrypting the token.
+ * Credentials a business sends with when no conversation pins a number — campaigns,
+ * template management, anything addressed to "the business" rather than to a thread.
+ *
+ * The business's default WhatsApp number wins; a business with no connected numbers
+ * falls back to the legacy Business columns and then TenantSettings, exactly as before
+ * multi-number support existed.
+ */
+export async function resolveWhatsAppCreds(businessId: string): Promise<ResolvedWhatsAppCreds> {
+  const integration = await findDefaultIntegration(businessId);
+  if (integration) return credsFromIntegration(integration);
+  return resolveLegacyWhatsAppCreds(businessId);
+}
+
+/**
+ * Credentials for replying inside a conversation: always the number the customer wrote to.
+ *
+ * A thread with a number is answered from that number or not at all. If the number was
+ * disconnected, or now belongs to another business, the result carries
+ * `unavailableReason` and no token — silently answering from a different number would
+ * show the customer a stranger's number mid-conversation.
+ *
+ * Threads from before multi-number support have no number. Those were received on the
+ * legacy credentials, so the legacy chain is tried first and the default number is only
+ * used when there are no legacy credentials at all.
+ */
+export async function resolveConversationWhatsAppCreds(conversation: {
+  businessId: string;
+  tenantId?: string;
+  whatsappIntegrationId?: string | null;
+}): Promise<ResolvedWhatsAppCreds> {
+  if (conversation.whatsappIntegrationId) {
+    const row = await prisma.whatsAppIntegration.findUnique({
+      where: { id: conversation.whatsappIntegrationId },
+    });
+    const owned = checkIntegrationOwnership(row, {
+      businessId: conversation.businessId,
+      tenantId: conversation.tenantId,
+    });
+    if (!owned.ok) {
+      return {
+        ...NO_CREDS,
+        unavailableReason:
+          owned.reason === "inactive"
+            ? "The WhatsApp number this conversation uses has been disconnected. Reconnect it to reply."
+            : "The WhatsApp number this conversation uses is no longer connected to this business.",
+      };
+    }
+    return credsFromIntegration(owned.integration);
+  }
+
+  const legacy = await resolveLegacyWhatsAppCreds(conversation.businessId);
+  if (legacy.phoneNumberId && legacy.apiKey) return legacy;
+
+  const integration = await findDefaultIntegration(conversation.businessId);
+  return integration ? credsFromIntegration(integration) : legacy;
+}
+
+/**
+ * Legacy (pre multi-number) credential resolution, decrypting the token.
  *
  * Business-level credentials win; anything the business hasn't set falls back to
  * the tenant's legacy TenantSettings so a workspace that configured WhatsApp
  * before businesses existed (or only ever uses one business) keeps sending
- * without re-entering anything. This is the single creds source for the campaign
- * runner and template service, so per-business isolation and backward
- * compatibility are decided in exactly one place.
+ * without re-entering anything. Only reached through resolveWhatsAppCreds /
+ * resolveConversationWhatsAppCreds above, after WhatsAppIntegration rows.
  */
-export async function resolveWhatsAppCreds(businessId: string): Promise<ResolvedWhatsAppCreds> {
+async function resolveLegacyWhatsAppCreds(businessId: string): Promise<ResolvedWhatsAppCreds> {
   const business = await prisma.business.findUnique({
     where: { id: businessId },
     select: {
@@ -212,7 +312,7 @@ export async function resolveWhatsAppCreds(businessId: string): Promise<Resolved
       whatsappVerifyToken: true,
     },
   });
-  if (!business) return { phoneNumberId: null, businessAccountId: null, apiKey: null, verifyToken: null };
+  if (!business) return NO_CREDS;
 
   let phoneNumberId = business.whatsappPhoneNumberId;
   let businessAccountId = business.whatsappBusinessId;
@@ -319,7 +419,7 @@ export async function resolveWhatsAppCreds(businessId: string): Promise<Resolved
     });
   }
 
-  return { phoneNumberId, businessAccountId, apiKey, verifyToken };
+  return { phoneNumberId, businessAccountId, apiKey, verifyToken, integrationId: null };
 }
 
 /**
@@ -328,10 +428,11 @@ export async function resolveWhatsAppCreds(businessId: string): Promise<Resolved
  * to expose to any member of the owning tenant.
  */
 export function publicBusiness(b: Business) {
-  const { whatsappAccessToken, whatsappVerifyToken, ...rest } = b;
+  const { whatsappAccessToken, whatsappVerifyToken, whatsappAppSecret, ...rest } = b;
   return {
     ...rest,
     hasWhatsappToken: Boolean(whatsappAccessToken),
     hasWhatsappVerifyToken: Boolean(whatsappVerifyToken),
+    hasWhatsappAppSecret: Boolean(whatsappAppSecret),
   };
 }

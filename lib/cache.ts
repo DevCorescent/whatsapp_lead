@@ -126,14 +126,29 @@ async function cacheDel(key: string): Promise<void> {
 
 // ─── Typed helpers ────────────────────────────────────────────────────────────
 
-/** Resolved tenant + businessId, keyed by WhatsApp phoneNumberId. TTL: 5 minutes. */
+/** Where an inbound phone_number_id routes: tenant, business, and the number's integration. */
+export interface CachedTenantRoute {
+  tenantId: string;
+  businessId: string;
+  /** Null when the number is routed through legacy Business/TenantSettings columns. */
+  whatsappIntegrationId: string | null;
+}
+
+/**
+ * Resolved route, keyed by WhatsApp phoneNumberId. TTL: 5 minutes.
+ *
+ * The key is versioned: entries written before multi-number support carry no
+ * whatsappIntegrationId, and reading one would file a message on a numbered line
+ * as a legacy thread for the rest of its TTL.
+ */
 const TENANT_RESOLVE_TTL = 300;
+const tenantRouteKey = (phoneNumberId: string) => `tenant:resolve:v2:${phoneNumberId}`;
 export async function cachedResolveTenant(
   phoneNumberId: string,
-  fallback: () => Promise<{ tenantId: string; businessId: string }>
-): Promise<{ tenantId: string; businessId: string }> {
-  const key = `tenant:resolve:${phoneNumberId}`;
-  const cached = await cacheGet<{ tenantId: string; businessId: string }>(key);
+  fallback: () => Promise<CachedTenantRoute>
+): Promise<CachedTenantRoute> {
+  const key = tenantRouteKey(phoneNumberId);
+  const cached = await cacheGet<CachedTenantRoute>(key);
   if (cached) return cached;
   const value = await fallback();
   await cacheSet(key, value, TENANT_RESOLVE_TTL);
@@ -170,6 +185,8 @@ export async function cachedAiReply(
 
 /** Invalidate tenant cache when business credentials are updated. */
 export async function invalidateTenantCache(phoneNumberId: string) {
+  await cacheDel(tenantRouteKey(phoneNumberId));
+  // Pre-v2 entry, harmless to drop; nothing reads it any more.
   await cacheDel(`tenant:resolve:${phoneNumberId}`);
 }
 

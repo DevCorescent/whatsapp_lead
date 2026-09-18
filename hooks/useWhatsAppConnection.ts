@@ -35,6 +35,7 @@ export interface WhatsAppConnectionDTO {
 
 /** Result returned by the WhatsApp connection test. */
 export interface WhatsAppTestDTO {
+  integrationId: string | null;
   phoneNumberId: string;
   wabaId: string | null;
   displayPhoneNumber: string | null;
@@ -46,36 +47,29 @@ export interface WhatsAppTestDTO {
 /**
  * A persisted WhatsApp number connected to a Business.
  *
- * This intentionally contains only non-secret fields.
- * accessToken / verifyToken / appSecret are never returned to the client.
+ * Only non-secret fields: accessToken / verifyToken / appSecret are never returned.
  */
 export interface WhatsAppIntegrationDTO {
   id: string;
   businessId: string;
-
   displayName: string | null;
   phoneNumber: string | null;
-
   phoneNumberId: string;
   whatsappBusinessId: string;
-
   qualityRating: string | null;
   codeVerificationStatus: string | null;
-
   isActive: boolean;
   isDefault: boolean;
-
   createdAt: string;
   updatedAt: string;
 }
 
 /** Response returned by GET /api/integrations/whatsapp. */
 export interface WhatsAppIntegrationsDTO {
-  business: {
-    id: string;
-    name: string;
-  };
+  business: { id: string; name: string };
   integrations: WhatsAppIntegrationDTO[];
+  /** Hand-entered credentials exist that are not listed as a number yet. */
+  hasLegacyCredentials: boolean;
 }
 
 /** The payload the browser collects from Meta and hands to our server to verify. */
@@ -86,50 +80,44 @@ export interface ConnectWhatsAppInput {
   businessId?: string;
 }
 
-async function postJson<T>(
-  url: string,
-  body: unknown,
-  fallbackError: string,
-): Promise<T> {
+/** Response of POST /api/integrations/whatsapp/connect. */
+export interface ConnectWhatsAppResult {
+  data: {
+    integration: Omit<WhatsAppIntegrationDTO, "businessId" | "createdAt" | "updatedAt">;
+    /** False when an already-connected number was reconnected (refreshed in place). */
+    created: boolean;
+  };
+  connection: WhatsAppConnectionDTO;
+  warnings: string[];
+}
+
+async function postJson<T>(url: string, body: unknown, fallbackError: string): Promise<T> {
   const res = await fetch(url, {
     method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-    },
+    headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
   });
-
   const json = await res.json().catch(() => ({}));
-
   if (!res.ok || json?.success === false) {
     throw new Error(json?.error ?? fallbackError);
   }
-
   return json as T;
 }
 
-/**
- * Loads the public Meta Embedded Signup configuration.
- *
- * This is separate from the connected WhatsApp integrations.
- */
+const INTEGRATIONS_KEY = ["whatsapp-integrations"] as const;
+
+/** Loads the public Meta Embedded Signup configuration. */
 export function useWhatsAppSignupConfig() {
   return useQuery<EmbeddedSignupConfigDTO>({
     queryKey: ["whatsapp-signup-config"],
-
     queryFn: async () => {
       const res = await fetch("/api/integrations/whatsapp/config");
       const json = await res.json().catch(() => ({}));
-
       if (!res.ok) {
-        throw new Error(
-          json?.error ?? "Could not load the connection settings",
-        );
+        throw new Error(json?.error ?? "Could not load the connection settings");
       }
-
       return json.data as EmbeddedSignupConfigDTO;
     },
-
     // The app id and config id change only when an administrator edits the
     // deployment's environment, so this is effectively static for a session.
     staleTime: 5 * 60_000,
@@ -137,139 +125,70 @@ export function useWhatsAppSignupConfig() {
   });
 }
 
-/**
- * Loads all WhatsApp numbers connected to the selected Business.
- *
- * This is the new source of truth for displaying multiple WhatsApp numbers.
- */
+/** Loads every WhatsApp number connected to a Business. */
 export function useWhatsAppIntegrations(businessId?: string) {
   return useQuery<WhatsAppIntegrationsDTO>({
-    queryKey: ["whatsapp-integrations", businessId],
-
+    queryKey: [...INTEGRATIONS_KEY, businessId],
     queryFn: async () => {
-      const query = businessId
-        ? `?businessId=${encodeURIComponent(businessId)}`
-        : "";
-
+      const query = businessId ? `?businessId=${encodeURIComponent(businessId)}` : "";
       const res = await fetch(`/api/integrations/whatsapp${query}`);
       const json = await res.json().catch(() => ({}));
-
       if (!res.ok || json?.success === false) {
-        throw new Error(
-          json?.error ?? "Could not load WhatsApp integrations",
-        );
+        throw new Error(json?.error ?? "Could not load WhatsApp integrations");
       }
-
       return json.data as WhatsAppIntegrationsDTO;
     },
-
-    // Don't request integrations until a Business is available.
     enabled: Boolean(businessId),
-
-    // Keep the UI responsive without repeatedly hitting the API.
     staleTime: 30_000,
   });
 }
 
-/**
- * Connect a WhatsApp Business account through Meta Embedded Signup.
- */
+/** Everything that shows connection state: the number list, businesses, settings, onboarding. */
+function invalidateConnectionState(queryClient: ReturnType<typeof useQueryClient>) {
+  queryClient.invalidateQueries({ queryKey: INTEGRATIONS_KEY });
+  queryClient.invalidateQueries({ queryKey: ["businesses"] });
+  queryClient.invalidateQueries({ queryKey: ["settings"] });
+  queryClient.invalidateQueries({ queryKey: ["onboarding"] });
+}
+
+/** Connect (or reconnect) a WhatsApp number through Meta Embedded Signup. */
 export function useConnectWhatsApp() {
   const queryClient = useQueryClient();
-
   return useMutation({
     mutationFn: (input: ConnectWhatsAppInput) =>
-      postJson<{
-        connection: WhatsAppConnectionDTO;
-        warnings: string[];
-      }>(
+      postJson<ConnectWhatsAppResult>(
         "/api/integrations/whatsapp/connect",
         input,
         "Could not complete the WhatsApp connection",
       ),
-
-    onSuccess: (_result, variables) => {
-      // Keep the existing cache invalidation.
-      queryClient.invalidateQueries({
-        queryKey: ["businesses"],
-      });
-
-      queryClient.invalidateQueries({
-        queryKey: ["settings"],
-      });
-
-      // Refresh the new multi-number list.
-      queryClient.invalidateQueries({
-        queryKey: ["whatsapp-integrations"],
-      });
-
-      // If a specific Business was connected, refresh its integration query
-      // immediately as well.
-      if (variables.businessId) {
-        queryClient.invalidateQueries({
-          queryKey: ["whatsapp-integrations", variables.businessId],
-        });
-      }
-    },
+    onSuccess: () => invalidateConnectionState(queryClient),
   });
 }
 
-/**
- * Disconnect WhatsApp.
- *
- * IMPORTANT:
- * Keep this businessId-based for now.
- * The existing API endpoint is still business-based, so changing this to
- * integrationId here would require changing the API route at the same time.
- */
+/** Disconnect ONE WhatsApp number. The business's other numbers are untouched. */
 export function useDisconnectWhatsApp() {
   const queryClient = useQueryClient();
-
   return useMutation({
-    mutationFn: (businessId?: string) =>
+    mutationFn: (integrationId: string) =>
       postJson<{ warnings: string[] }>(
         "/api/integrations/whatsapp/disconnect",
-        businessId ? { businessId } : {},
+        { integrationId },
         "Could not disconnect WhatsApp",
       ),
-
-    onSuccess: (_result, businessId) => {
-      // Preserve existing behaviour.
-      queryClient.invalidateQueries({
-        queryKey: ["businesses"],
-      });
-
-      queryClient.invalidateQueries({
-        queryKey: ["settings"],
-      });
-
-      // Refresh the multi-number list.
-      queryClient.invalidateQueries({
-        queryKey: ["whatsapp-integrations"],
-      });
-
-      if (businessId) {
-        queryClient.invalidateQueries({
-          queryKey: ["whatsapp-integrations", businessId],
-        });
-      }
-    },
+    onSuccess: () => invalidateConnectionState(queryClient),
   });
 }
 
-/**
- * Test the current WhatsApp connection.
- *
- * Keep this businessId-based until the test API is migrated to
- * integrationId-based operation.
- */
+/** Test ONE WhatsApp number against Meta. Refreshes that number's stored details. */
 export function useTestWhatsAppConnection() {
+  const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (businessId?: string) =>
+    mutationFn: (integrationId: string) =>
       postJson<{ data: WhatsAppTestDTO }>(
         "/api/integrations/whatsapp/test",
-        businessId ? { businessId } : {},
+        { integrationId },
         "Connection test failed",
       ),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: INTEGRATIONS_KEY }),
   });
 }

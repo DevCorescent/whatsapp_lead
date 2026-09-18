@@ -13,6 +13,7 @@ import { guardFeature } from "@/lib/billing/guard";
 import { modelAllowed, resolveTenantPlan } from "@/lib/billing/usage";
 import { getBusinessScope, publicBusiness, CURRENT_BUSINESS_COOKIE } from "@/lib/business";
 import { invalidateCredsCache, invalidateTenantCache } from "@/lib/cache";
+import { syncLegacyIntegration } from "@/lib/whatsappIntegrations";
 import { prisma } from "@/lib/prisma";
 import { encryptSecret, isMetaAccessToken, sanitizeWhatsAppToken } from "@/lib/crypto";
 import { updateBusinessSchema } from "@/lib/validators/business";
@@ -84,11 +85,18 @@ export async function PATCH(req: NextRequest, { params }: Params) {
 
   // Keep the webhook routing key 1:1 — reject a phone_number_id owned by a different business.
   if (whatsappPhoneNumberId && whatsappPhoneNumberId !== existing.whatsappPhoneNumberId) {
-    const taken = await prisma.business.findUnique({
-      where: { whatsappPhoneNumberId },
-      select: { id: true },
-    });
-    if (taken && taken.id !== id) {
+    const [taken, connected] = await Promise.all([
+      prisma.business.findUnique({
+        where: { whatsappPhoneNumberId },
+        select: { id: true },
+      }),
+      // A number connected through Meta to another business is taken too.
+      prisma.whatsAppIntegration.findFirst({
+        where: { phoneNumberId: whatsappPhoneNumberId, isActive: true, NOT: { businessId: id } },
+        select: { id: true },
+      }),
+    ]);
+    if ((taken && taken.id !== id) || connected) {
       return NextResponse.json(
         { success: false, error: "That WhatsApp phone number ID is already connected to another business" },
         { status: 409 },
@@ -131,6 +139,24 @@ export async function PATCH(req: NextRequest, { params }: Params) {
       business.whatsappPhoneNumberId !== existing.whatsappPhoneNumberId
     ) {
       await invalidateTenantCache(business.whatsappPhoneNumberId);
+    }
+
+    // Mirror hand-entered credentials into the number's WhatsAppIntegration row, which is
+    // what routing and sending resolve through — otherwise an edited token would be
+    // shadowed by the row's stale copy. Replacing the number disconnects the old row.
+    const whatsappEdited =
+      whatsappPhoneNumberId !== undefined ||
+      Boolean(whatsappAccessToken) ||
+      rest.whatsappBusinessId !== undefined;
+    if (whatsappEdited) {
+      await syncLegacyIntegration(business.id, {
+        replacedPhoneNumberId: existing.whatsappPhoneNumberId,
+      }).catch((error) =>
+        console.error("[BUSINESSES PATCH] WhatsApp integration sync failed", {
+          businessId: business.id,
+          reason: error instanceof Error ? error.message : "unknown error",
+        }),
+      );
     }
 
     await prisma.auditLog.create({

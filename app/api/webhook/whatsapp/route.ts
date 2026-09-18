@@ -107,11 +107,22 @@ function extractPhoneNumberId(rawBody: string): string | null {
 
 /**
  * Look up the App Secret for the business that owns this phone number.
- * Checks the Business table first, then TenantSettings, then falls back to the
- * global WHATSAPP_APP_SECRET env var. Returns null when nothing is configured.
+ * Checks the number's WhatsAppIntegration first (legacy numbers mirrored from a Business
+ * carry that business's secret), then the Business table, then TenantSettings, then falls
+ * back to the global WHATSAPP_APP_SECRET env var — which is the one Embedded Signup numbers
+ * use, since Meta signs their webhooks with our own app's secret. Returns null when nothing
+ * is configured.
  */
 async function resolveAppSecret(phoneNumberId: string | null): Promise<string | null> {
   if (phoneNumberId) {
+    const integration = await prisma.whatsAppIntegration.findUnique({
+      where: { phoneNumberId },
+      select: { appSecret: true, isActive: true },
+    });
+    if (integration?.isActive && integration.appSecret) {
+      return decryptSecret(integration.appSecret);
+    }
+
     const business = await prisma.business.findFirst({
       where: { whatsappPhoneNumberId: phoneNumberId },
       select: { whatsappAppSecret: true },
@@ -363,6 +374,8 @@ interface TenantIdentity {
   tenantId: string;
   businessId: string;
   phoneNumberId: string;
+  /** The connected number the change arrived on; null for legacy-routed numbers. */
+  whatsappIntegrationId: string | null;
 }
 
 /**
@@ -396,7 +409,11 @@ async function dispatchInboundMessage(
       phoneNumberId: identity.phoneNumberId,
       type: message.type,
     });
-    const tenant = await resolveTenantById(identity.tenantId, identity.businessId);
+    const tenant = await resolveTenantById(
+      identity.tenantId,
+      identity.businessId,
+      identity.whatsappIntegrationId
+    );
     await processIncomingMessage(tenant, message, contactName);
     console.log("[WEBHOOK] Inline inbound processing finished", {
       waMessageId: message.id,
@@ -419,6 +436,7 @@ async function dispatchInboundMessage(
     tenantId: identity.tenantId,
     businessId: identity.businessId,
     phoneNumberId: identity.phoneNumberId,
+    whatsappIntegrationId: identity.whatsappIntegrationId,
     waMessageId: message.id,
     from: message.from,
     contactName,
@@ -463,12 +481,25 @@ async function processChange(change: WAChange): Promise<void> {
   // inactive-tenant guard, so only active workspaces are ever cached — it simply runs on a miss
   // instead of on every message. A credential change invalidates the entry explicitly rather than
   // waiting the window out; see invalidateTenantCache.
-  const { tenantId, businessId } = await cachedResolveTenant(phoneNumberId, async () => {
-    const tenant = await resolveTenant(phoneNumberId);
-    return { tenantId: tenant.tenantId, businessId: tenant.businessId };
-  });
+  const { tenantId, businessId, whatsappIntegrationId } = await cachedResolveTenant(
+    phoneNumberId,
+    async () => {
+      const tenant = await resolveTenant(phoneNumberId);
+      return {
+        tenantId: tenant.tenantId,
+        businessId: tenant.businessId,
+        whatsappIntegrationId: tenant.whatsappIntegrationId,
+      };
+    }
+  );
 
-  console.log("[WEBHOOK] Tenant resolved", { tenantId, businessId, phoneNumberId, messageCount: messages?.length ?? 0 });
+  console.log("[WEBHOOK] Tenant resolved", {
+    tenantId,
+    businessId,
+    phoneNumberId,
+    whatsappIntegrationId,
+    messageCount: messages?.length ?? 0,
+  });
 
   for (const message of messages ?? []) {
     // Match each sender to their own profile entry. Meta can batch messages from several contacts
@@ -479,7 +510,7 @@ async function processChange(change: WAChange): Promise<void> {
     console.log("[WEBHOOK] Dispatching message", { waMessageId: message.id, from: message.from, type: message.type, skipQueue: process.env.SKIP_QUEUE === "true" });
 
     await dispatchInboundMessage(
-      { tenantId, businessId, phoneNumberId },
+      { tenantId, businessId, phoneNumberId, whatsappIntegrationId },
       message,
       profile?.profile?.name
     );

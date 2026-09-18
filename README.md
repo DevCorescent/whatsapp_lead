@@ -79,7 +79,8 @@ Customers connect WhatsApp through Meta's official
 [Embedded Signup](https://developers.facebook.com/docs/whatsapp/embedded-signup) flow
 rather than by pasting credentials. Settings → WhatsApp (and each card on
 /businesses) shows a **Continue with Facebook** button that runs Meta's dialog;
-the result is verified server-side and written to the current `Business`.
+the result is verified server-side and saved as a `WhatsAppIntegration` of the
+business — one row per connected number, so a business can connect several.
 
 ### One-time Meta app setup
 
@@ -111,7 +112,35 @@ re-derived from Meta before anything is written — see `selectWaba()` /
 
 Manual credential entry is still available under Settings → WhatsApp → *Manual setup*
 for workspaces that predate this flow and for deployments whose Meta app is not yet
-approved.
+approved. Hand-entered credentials are mirrored into a `WhatsAppIntegration` row
+whenever they are saved, so they behave like any other connected number.
+
+### Multiple numbers per business
+
+`WhatsAppIntegration` is the runtime source of truth (`lib/whatsappIntegrations.ts`,
+rules in `lib/whatsappIntegrationRules.ts`):
+
+| Path | Which number |
+|---|---|
+| Inbound webhook | `metadata.phone_number_id` → its active `WhatsAppIntegration` → tenant + business. A disconnected number is ignored. Numbers with no row fall back to the legacy Business/TenantSettings lookup. |
+| Conversations | One thread per contact per number; `Conversation.whatsappIntegrationId` records it. |
+| Manual replies, AI, chatbot flows, FAQ, opt-out, read receipts | The conversation's own number (`resolveConversationWhatsAppCreds`). If that number is disconnected the send is refused — never re-sent from a different number. |
+| Campaigns, templates | The business's default number (`resolveWhatsAppCreds`), then legacy credentials. |
+| Test / Disconnect | Per number (`integrationId`). Disconnect keeps the row (inactive, token wiped) and promotes the next number to default. |
+
+Guarantees: a `phone_number_id` is globally unique (unique index; concurrent
+connects of the same number get a 409), and a business has at most one default
+(row lock + partial unique index).
+
+### Deploying the multi-number change
+
+1. Apply `prisma/migrations/20260918120000_whatsapp_integrations/migration.sql`
+   (idempotent; safe on a database that already has the table from `db push`).
+   It refuses to run if two rows share a `phoneNumberId`.
+   `prisma db push` does not know the partial "one default per business" index and
+   may drop it — re-apply the migration file afterwards.
+2. `npm run db:backfill-whatsapp -- --dry-run`, review, then `npm run db:backfill-whatsapp`
+   to mirror existing hand-entered numbers and attach their conversations.
 
 ---
 

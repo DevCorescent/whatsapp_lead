@@ -28,11 +28,19 @@ export const connectWhatsAppSchema = z.object({
   businessId: z.string().trim().min(1).max(64).optional(),
 });
 
+/** Our own row id (cuid). Always re-checked against the caller's tenant before use. */
+const integrationId = z.string().trim().min(1).max(64);
+
 export const disconnectWhatsAppSchema = z.object({
+  /** The number to disconnect. Required once a business has any connected number. */
+  integrationId: integrationId.optional(),
+  /** Legacy: disconnect a business that only has hand-entered credentials. */
   businessId: z.string().trim().min(1).max(64).optional(),
 });
 
 export const testWhatsAppSchema = z.object({
+  /** The number to test. Without it, the business's default sender is tested. */
+  integrationId: integrationId.optional(),
   businessId: z.string().trim().min(1).max(64).optional(),
 });
 

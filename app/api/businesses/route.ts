@@ -13,6 +13,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { guardLimit } from "@/lib/billing/guard";
 import { getBusinessScope, listBusinesses, publicBusiness, uniqueBusinessSlug } from "@/lib/business";
 import { invalidateTenantCache } from "@/lib/cache";
+import { syncLegacyIntegration } from "@/lib/whatsappIntegrations";
 import { prisma } from "@/lib/prisma";
 import { encryptSecret } from "@/lib/crypto";
 import { createBusinessSchema } from "@/lib/validators/business";
@@ -61,11 +62,18 @@ export async function POST(req: NextRequest) {
   // The Meta phone_number_id is the webhook routing key and is globally unique —
   // reject a number already claimed by any business so inbound routing stays 1:1.
   if (whatsappPhoneNumberId) {
-    const taken = await prisma.business.findUnique({
-      where: { whatsappPhoneNumberId },
-      select: { id: true },
-    });
-    if (taken) {
+    const [taken, connected] = await Promise.all([
+      prisma.business.findUnique({
+        where: { whatsappPhoneNumberId },
+        select: { id: true },
+      }),
+      // A number connected through Meta (or mirrored from another business) is taken too.
+      prisma.whatsAppIntegration.findFirst({
+        where: { phoneNumberId: whatsappPhoneNumberId, isActive: true },
+        select: { id: true },
+      }),
+    ]);
+    if (taken || connected) {
       return NextResponse.json(
         { success: false, error: "That WhatsApp phone number ID is already connected to another business" },
         { status: 409 },
@@ -97,6 +105,14 @@ export async function POST(req: NextRequest) {
     // so no entry can exist under it yet.
     if (business.whatsappPhoneNumberId) {
       await invalidateTenantCache(business.whatsappPhoneNumberId);
+      // Mirror the hand-entered number into its WhatsAppIntegration row, which is what
+      // inbound routing and sending resolve through. Never fails the create.
+      await syncLegacyIntegration(business.id).catch((error) =>
+        console.error("[BUSINESSES POST] WhatsApp integration sync failed", {
+          businessId: business.id,
+          reason: error instanceof Error ? error.message : "unknown error",
+        }),
+      );
     }
 
     await prisma.auditLog.create({

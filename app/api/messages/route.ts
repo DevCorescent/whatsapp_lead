@@ -25,7 +25,7 @@ import { guardLimit } from "@/lib/billing/guard";
 import { prisma } from "@/lib/prisma";
 import { pusher, tenantChannel, PusherEvent } from "@/lib/pusher";
 import { sendTextMessage, sendInteractiveMessage } from "@/lib/whatsapp";
-import { resolveWhatsAppCreds } from "@/lib/business";
+import { resolveConversationWhatsAppCreds } from "@/lib/business";
 import { sendMessageSchema } from "@/lib/validators/message";
 
 /**
@@ -272,10 +272,15 @@ export async function POST(req: NextRequest) {
       if (overLimit) return overLimit;
     }
 
-    const creds = await resolveWhatsAppCreds(conversation.businessId);
+    // The thread's own WhatsApp number — the customer must get the reply from the number
+    // they wrote to. A disconnected number is refused, never swapped for another one.
+    const creds = await resolveConversationWhatsAppCreds(conversation);
     if (!creds.phoneNumberId || !creds.apiKey) {
       return NextResponse.json(
-        { success: false, error: "WhatsApp is not connected for this workspace" },
+        {
+          success: false,
+          error: creds.unavailableReason ?? "WhatsApp is not connected for this workspace",
+        },
         { status: 409 }
       );
     }

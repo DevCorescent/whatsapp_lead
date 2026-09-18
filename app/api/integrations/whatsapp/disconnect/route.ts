@@ -1,20 +1,29 @@
 // ============================================================================
 // ROUTE  : /api/integrations/whatsapp/disconnect
-// POST   - Detach a Business from its WhatsApp connection.
+// POST   - Disconnect ONE WhatsApp number from a Business.
 //
 // ACCESS - Authenticated, tenant-scoped, manager roles only.
 //
-// Disconnect clears exactly four columns: the access token, the WABA id, the
-// phone number id and the display number. Nothing else on the business is
-// touched — not its contacts, conversations, campaigns, templates, knowledge or
-// AI settings — because a customer who is moving a number between workspaces, or
-// re-running onboarding after a token was revoked, still owns all of that data.
-// Deleting the business is a different, deliberate action with its own endpoint.
+// Body: { integrationId } — the number to disconnect. Every other number of the
+// business keeps sending and receiving. The integration is looked up inside the
+// caller's tenant, so an id from another workspace is indistinguishable from one
+// that does not exist.
 //
-// Meta is told first, while the token is still available: once the row is
-// cleared there is nothing left to authenticate an unsubscribe with, so the
-// customer's WABA would go on delivering webhooks to an app that no longer has
-// credentials for it.
+// What disconnecting does (lib/whatsappIntegrations.ts#disconnectIntegration):
+//   · tells Meta to stop sending this WABA's webhooks, unless another connected
+//     number still uses the same WABA;
+//   · marks the row inactive and wipes its token — the row itself is kept so the
+//     threads that lived on this number refuse to send rather than answer
+//     customers from a different number;
+//   · promotes another number to default when the default was disconnected;
+//   · clears the legacy Business / TenantSettings columns when they describe
+//     this same number, so the fallback path cannot keep using it.
+// Contacts, conversations, campaigns, templates, knowledge and AI settings are
+// never touched.
+//
+// Legacy body: { businessId } with no integrationId is still accepted for a
+// business that has never had a connected number, and clears its hand-entered
+// credentials exactly as before.
 // ============================================================================
 
 import { NextRequest, NextResponse } from "next/server";
@@ -24,6 +33,7 @@ import { decryptSecret } from "@/lib/crypto";
 import { prisma } from "@/lib/prisma";
 import { MetaApiError } from "@/lib/whatsapp";
 import { unsubscribeAppFromWaba } from "@/lib/whatsappEmbeddedSignup";
+import { disconnectIntegration } from "@/lib/whatsappIntegrations";
 import { disconnectWhatsAppSchema } from "@/lib/validators/whatsappIntegration";
 
 const MANAGER_ROLES = new Set(["SUPER_ADMIN", "TENANT_OWNER", "ADMIN"]);
@@ -40,7 +50,6 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  // The body is optional — an empty POST disconnects the caller's current business.
   let body: unknown = {};
   try {
     const raw = await req.text();
@@ -57,7 +66,64 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  const { businessId } = parsed.data;
+  const { integrationId, businessId } = parsed.data;
+
+  // ── Per-number disconnect ──────────────────────────────────────────────────
+  if (integrationId) {
+    // Tenant isolation lives in this where clause.
+    const integration = await prisma.whatsAppIntegration.findFirst({
+      where: { id: integrationId, tenantId: scope.tenantId },
+      select: { id: true, businessId: true, phoneNumberId: true },
+    });
+    if (!integration || (businessId && integration.businessId !== businessId)) {
+      return NextResponse.json({ success: false, error: "WhatsApp number not found" }, { status: 404 });
+    }
+
+    try {
+      const result = await disconnectIntegration({
+        tenantId: scope.tenantId,
+        businessId: integration.businessId,
+        integrationId: integration.id,
+      });
+      if (!result.ok) {
+        return NextResponse.json({ success: false, error: "WhatsApp number not found" }, { status: 404 });
+      }
+
+      if (!result.alreadyDisconnected) {
+        await prisma.auditLog.create({
+          data: {
+            tenantId: scope.tenantId,
+            userId: scope.userId,
+            action: "WHATSAPP_DISCONNECTED",
+            resource: "whatsapp_integration",
+            resourceId: integration.id,
+          },
+        });
+      }
+
+      return NextResponse.json({
+        success: true,
+        data: {
+          integrationId: integration.id,
+          alreadyDisconnected: result.alreadyDisconnected,
+          promotedIntegrationId: result.promotedIntegrationId,
+        },
+        warnings: result.warnings,
+      });
+    } catch (error) {
+      console.error("[WA DISCONNECT] Failed", {
+        integrationId: integration.id,
+        tenantId: scope.tenantId,
+        reason: error instanceof Error ? error.message : "unknown error",
+      });
+      return NextResponse.json(
+        { success: false, error: "Could not disconnect WhatsApp. Please try again." },
+        { status: 500 },
+      );
+    }
+  }
+
+  // ── Legacy: a business with hand-entered credentials only ──────────────────
   const business = businessId
     ? await prisma.business.findFirst({ where: { id: businessId, tenantId: scope.tenantId } })
     : scope.business;
@@ -65,12 +131,21 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ success: false, error: "Business not found" }, { status: 404 });
   }
 
+  const connectedNumbers = await prisma.whatsAppIntegration.count({
+    where: { businessId: business.id, isActive: true },
+  });
+  if (connectedNumbers > 0) {
+    // Clearing "the business" would be ambiguous once it has numbers of its own.
+    return NextResponse.json(
+      { success: false, error: "Choose which WhatsApp number to disconnect." },
+      { status: 400 },
+    );
+  }
+
   const warnings: string[] = [];
 
-  // Tell Meta while we still hold a token that can say it. Best-effort throughout: a
-  // revoked or expired token is the most common reason to be disconnecting in the first
-  // place, and refusing to clear the row because Meta will not talk to us would leave the
-  // workspace permanently stuck with credentials it cannot use.
+  // Tell Meta while we still hold a token that can say it. Best-effort: a revoked token is
+  // the most common reason to be disconnecting, and must not leave the workspace stuck.
   if (business.whatsappBusinessId && business.whatsappAccessToken) {
     try {
       const token = decryptSecret(business.whatsappAccessToken);
@@ -101,9 +176,6 @@ export async function POST(req: NextRequest) {
       },
     });
 
-    // Both keys this business could be reached under. Without the routing drop, inbound
-    // messages would keep resolving to a business whose credentials no longer exist —
-    // and if the number is re-connected elsewhere, to the wrong workspace entirely.
     await invalidateCredsCache(updated.id);
     if (previousPhoneNumberId) {
       await invalidateTenantCache(previousPhoneNumberId);
