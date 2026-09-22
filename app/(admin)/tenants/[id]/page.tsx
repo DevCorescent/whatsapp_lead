@@ -56,7 +56,8 @@ interface TenantDetail {
   } | null;
   settings: {
     waPhoneNumberId: string | null;
-    waApiKey: string | null;
+    // Presence only — the API no longer sends the token itself. See lib/publicSettings.ts.
+    hasWaApiKey: boolean;
     timezone: string | null;
   } | null;
   _count: {
@@ -314,8 +315,8 @@ export default function TenantDetailPage({ params }: { params: Promise<{ id: str
                 </code>
               </Row>
               <Row label="API Key configured">
-                <AdminBadge tone={tenant.settings.waApiKey ? "emerald" : "slate"}>
-                  {tenant.settings.waApiKey ? <><CheckCircle2 className="h-3 w-3" /> Yes</> : "Not set"}
+                <AdminBadge tone={tenant.settings.hasWaApiKey ? "emerald" : "slate"}>
+                  {tenant.settings.hasWaApiKey ? <><CheckCircle2 className="h-3 w-3" /> Yes</> : "Not set"}
                 </AdminBadge>
               </Row>
               <Row label="Timezone">{tenant.settings.timezone ?? "UTC"}</Row>

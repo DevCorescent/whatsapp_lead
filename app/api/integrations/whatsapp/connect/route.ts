@@ -26,7 +26,12 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { getBusinessScope } from "@/lib/business";
-import { encryptSecret, isMetaAccessToken, sanitizeWhatsAppToken } from "@/lib/crypto";
+import {
+  encryptSecret,
+  isEncryptionConfigured,
+  isMetaAccessToken,
+  sanitizeWhatsAppToken,
+} from "@/lib/crypto";
 import { prisma } from "@/lib/prisma";
 import { MetaApiError } from "@/lib/whatsapp";
 import {
@@ -68,6 +73,30 @@ export async function POST(req: NextRequest) {
       {
         success: false,
         error: `WhatsApp onboarding is not configured on this deployment (missing ${missing.join(", ")}). Ask an administrator to finish Meta app setup.`,
+      },
+      { status: 503 },
+    );
+  }
+
+  // Refuse before the exchange rather than store an unprotected token after it.
+  //
+  // encryptSecret() returns its input unchanged when ENCRYPTION_KEY is unset — tolerance
+  // that exists so workspaces predating encryption keep working. On this path it would
+  // mean minting a brand-new Meta token and writing it to the database in plaintext,
+  // while the card the customer just used says their token is encrypted before storage.
+  // Failing loudly is the only honest option; the check is here, ahead of the code
+  // exchange, so the customer's single-use code is not spent on a connection that cannot
+  // be stored safely. Legacy read paths are untouched and still accept plaintext rows.
+  if (!isEncryptionConfigured()) {
+    console.error("[WA CONNECT] Refused: ENCRYPTION_KEY is not configured", {
+      businessId: scope.businessId,
+      tenantId: scope.tenantId,
+    });
+    return NextResponse.json(
+      {
+        success: false,
+        error:
+          "WhatsApp cannot be connected because this deployment has no encryption key configured, and the access token would be stored unprotected. Ask an administrator to set ENCRYPTION_KEY.",
       },
       { status: 503 },
     );

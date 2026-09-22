@@ -3,7 +3,7 @@
 import { useState, useEffect } from "react";
 import { useMutation } from "@tanstack/react-query";
 import { Bot, CheckCircle2, MessageSquare, Rocket, X } from "lucide-react";
-import { Button, Field, inputClass } from "@/components/ui";
+import { Button } from "@/components/ui";
 import { cn } from "@/lib/utils";
 
 const STORAGE_KEY = (tenantId: string) => `onboarded_v1_${tenantId}`;
@@ -32,7 +32,7 @@ const STEPS: Step[] = ["welcome", "whatsapp", "ai", "done"];
 
 const STEP_INFO: Record<Step, { icon: React.ComponentType<{className?: string}>; title: string; description: string }> = {
   welcome: { icon: Rocket, title: "Welcome to WhatsCRM!", description: "Let's get your workspace set up in 3 quick steps." },
-  whatsapp: { icon: MessageSquare, title: "Connect WhatsApp", description: "Add your Meta credentials to start sending and receiving messages." },
+  whatsapp: { icon: MessageSquare, title: "Connect WhatsApp", description: "Sign in with Meta to start sending and receiving messages." },
   ai: { icon: Bot, title: "Set up AI assistant", description: "Configure how the AI should respond to your customers." },
   done: { icon: CheckCircle2, title: "You're all set!", description: "Your workspace is ready. You can change any of these settings later." },
 };
@@ -40,31 +40,19 @@ const STEP_INFO: Record<Step, { icon: React.ComponentType<{className?: string}>;
 export function OnboardingWizard({ tenantId, tenantName }: { tenantId: string; tenantName?: string | null }) {
   const { visible, dismiss } = useOnboardingVisible(tenantId);
   const [step, setStep] = useState<Step>("welcome");
-  const [waPhoneNumberId, setWaPhoneNumberId] = useState("");
-  const [waApiKey, setWaApiKey] = useState("");
   const [aiEnabled, setAiEnabled] = useState(false);
   const [autoReply, setAutoReply] = useState(false);
 
   const saveSettings = useMutation({
+    // WhatsApp is no longer part of what this wizard saves. Connecting a number runs
+    // Meta's Embedded Signup from Settings → WhatsApp, which needs a popup and a
+    // server round-trip that do not belong inside a dismissible welcome dialog.
     mutationFn: async () => {
-      const promises = [];
-      if (waPhoneNumberId || waApiKey) {
-        promises.push(
-          fetch("/api/settings", {
-            method: "PATCH",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ waPhoneNumberId, waApiKey }),
-          })
-        );
-      }
-      promises.push(
-        fetch("/api/settings/ai", {
-          method: "PATCH",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ aiEnabled, autoReply }),
-        })
-      );
-      await Promise.all(promises);
+      await fetch("/api/settings/ai", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ aiEnabled, autoReply }),
+      });
     },
     onSuccess: () => {
       setStep("done");
@@ -130,17 +118,19 @@ export function OnboardingWizard({ tenantId, tenantName }: { tenantId: string; t
           )}
 
           {step === "whatsapp" && (
-            <div className="space-y-4">
-              <Field label="Phone Number ID" htmlFor="ob-phone-id">
-                <input id="ob-phone-id" value={waPhoneNumberId} onChange={(e) => setWaPhoneNumberId(e.target.value)}
-                  className={cn(inputClass, "font-mono text-xs")} placeholder="109876543210987" />
-                <p className="mt-1 text-xs text-slate-500">Find this in Meta Business Suite → WhatsApp → API Setup</p>
-              </Field>
-              <Field label="Access Token (API Key)" htmlFor="ob-api-key">
-                <input id="ob-api-key" type="password" value={waApiKey} onChange={(e) => setWaApiKey(e.target.value)}
-                  className={cn(inputClass, "font-mono text-xs")} placeholder="EAAG..." />
-              </Field>
-              <p className="text-xs text-slate-400">You can also skip this and add credentials later in Settings → WhatsApp.</p>
+            <div className="space-y-3">
+              <div className="rounded-xl border border-slate-100 bg-slate-50 p-4 text-sm text-slate-600">
+                <p className="font-semibold text-slate-800">No credentials to copy</p>
+                <p className="mt-1">
+                  You&apos;ll connect WhatsApp by signing in with Meta and picking your WhatsApp
+                  Business account. We read the number and its access for you — there is nothing
+                  to find in Meta Business Suite and nothing to paste.
+                </p>
+              </div>
+              <p className="text-xs text-slate-400">
+                Finish this wizard, then go to Settings → WhatsApp and press{" "}
+                <strong className="font-medium text-slate-500">Continue with Facebook</strong>.
+              </p>
             </div>
           )}
 

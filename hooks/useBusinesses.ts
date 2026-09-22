@@ -29,6 +29,10 @@ export interface BusinessDTO {
   offHoursMessage: string | null;
   hasWhatsappToken: boolean;
   hasWhatsappVerifyToken: boolean;
+  /** True when a live WhatsAppIntegration exists, or legacy credentials are still in use. */
+  whatsappConnected: boolean;
+  /** Active WhatsAppIntegration rows. 0 for a business still on legacy credentials. */
+  whatsappNumberCount: number;
   createdAt: string;
   updatedAt: string;
 }

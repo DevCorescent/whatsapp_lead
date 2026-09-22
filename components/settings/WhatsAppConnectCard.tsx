@@ -662,9 +662,10 @@ export function WhatsAppConnectCard({ businessId }: { businessId?: string }) {
           <div className="mt-4 flex items-start gap-3 rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-700">
             <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0 text-slate-400" aria-hidden />
             <p>
-              This business also sends through credentials entered under Manual setup. Re-save
-              them there (or ask an administrator to run the WhatsApp backfill) to list that
-              number here with its own Test and Disconnect.
+              This business still sends through credentials that were entered by hand before
+              Meta onboarding existed. They keep working, but the number is not listed here
+              with its own Test and Disconnect. Connect it through Meta above to move it
+              across, or ask an administrator to run the WhatsApp backfill.
             </p>
           </div>
         )}

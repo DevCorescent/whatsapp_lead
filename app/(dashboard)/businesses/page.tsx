@@ -29,14 +29,12 @@ import {
 
 type FormState = BusinessInput;
 
+// WhatsApp credentials are deliberately absent from this form. A number is attached
+// to a business through Meta's Embedded Signup (the "WhatsApp" button on each card),
+// which derives the Phone Number ID, WABA ID and access token from Meta server-side.
 const EMPTY_FORM: FormState = {
   name: "",
   timezone: "Asia/Kolkata",
-  whatsappPhoneNumber: "",
-  whatsappPhoneNumberId: "",
-  whatsappBusinessId: "",
-  whatsappAccessToken: "",
-  whatsappVerifyToken: "",
   aiEnabled: false,
   autoReply: false,
   aiModel: "",
@@ -50,11 +48,6 @@ function toForm(b: BusinessDTO): FormState {
     name: b.name,
     timezone: b.timezone,
     status: b.status,
-    whatsappPhoneNumber: b.whatsappPhoneNumber ?? "",
-    whatsappPhoneNumberId: b.whatsappPhoneNumberId ?? "",
-    whatsappBusinessId: b.whatsappBusinessId ?? "",
-    whatsappAccessToken: "", // never prefilled — leaving blank keeps the stored token
-    whatsappVerifyToken: "",
     aiEnabled: b.aiEnabled,
     autoReply: b.autoReply,
     aiModel: b.aiModel ?? "",
@@ -105,10 +98,9 @@ export default function BusinessesPage() {
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
-    // Empty secret means "leave unchanged" — don't send it.
+    // No WhatsApp credentials are collected here, so the form state is the payload.
+    // Existing stored credentials are untouched by a save: the fields are simply absent.
     const payload: BusinessInput = { ...form };
-    if (!payload.whatsappAccessToken) delete payload.whatsappAccessToken;
-    if (!payload.whatsappVerifyToken) delete payload.whatsappVerifyToken;
 
     try {
       if (editing) {
@@ -183,15 +175,22 @@ export default function BusinessesPage() {
                     <p className="truncate text-xs text-slate-400">/{b.slug}</p>
 
                     <div className="mt-2 flex flex-wrap gap-1.5">
+                      {/* A number connected through Meta lives in WhatsAppIntegration, so
+                          `whatsappConnected` is what says "connected" — the legacy columns
+                          are only still read to label businesses that predate onboarding. */}
                       <Badge
                         className={
-                          b.whatsappPhoneNumberId
+                          b.whatsappConnected
                             ? "bg-sky-50 text-sky-700 ring-sky-600/15"
                             : "bg-slate-50 text-slate-400 ring-slate-500/15"
                         }
                       >
                         <MessageSquare className="mr-1 h-3 w-3" />
-                        {b.whatsappPhoneNumber || b.whatsappPhoneNumberId || "No number"}
+                        {b.whatsappNumberCount > 1
+                          ? `${b.whatsappNumberCount} numbers`
+                          : b.whatsappPhoneNumber ||
+                            b.whatsappPhoneNumberId ||
+                            (b.whatsappConnected ? "Connected" : "Not connected")}
                       </Badge>
                       <Badge
                         className={
@@ -294,57 +293,21 @@ export default function BusinessesPage() {
             <p className="mb-3 flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-slate-500">
               <MessageSquare className="h-3.5 w-3.5" /> WhatsApp
             </p>
-            <div className="space-y-3">
-              <div className="grid grid-cols-2 gap-3">
-                <Field label="Display number" htmlFor="b-wa-num">
-                  <input
-                    id="b-wa-num"
-                    value={form.whatsappPhoneNumber ?? ""}
-                    onChange={(e) => set("whatsappPhoneNumber", e.target.value)}
-                    placeholder="+91 98765 43210"
-                    className={inputClass}
-                  />
-                </Field>
-                <Field label="Phone number ID" htmlFor="b-wa-id">
-                  <input
-                    id="b-wa-id"
-                    value={form.whatsappPhoneNumberId ?? ""}
-                    onChange={(e) => set("whatsappPhoneNumberId", e.target.value)}
-                    placeholder="Meta phone_number_id"
-                    className={inputClass}
-                  />
-                </Field>
-              </div>
-              <Field label="WhatsApp Business Account ID" htmlFor="b-waba">
-                <input
-                  id="b-waba"
-                  value={form.whatsappBusinessId ?? ""}
-                  onChange={(e) => set("whatsappBusinessId", e.target.value)}
-                  className={inputClass}
-                />
-              </Field>
-              <div className="grid grid-cols-2 gap-3">
-                <Field label="Access token" htmlFor="b-token">
-                  <input
-                    id="b-token"
-                    type="password"
-                    value={form.whatsappAccessToken ?? ""}
-                    onChange={(e) => set("whatsappAccessToken", e.target.value)}
-                    placeholder={editing ? "•••••• (unchanged)" : "Meta access token"}
-                    className={inputClass}
-                  />
-                </Field>
-                <Field label="Verify token" htmlFor="b-verify">
-                  <input
-                    id="b-verify"
-                    value={form.whatsappVerifyToken ?? ""}
-                    onChange={(e) => set("whatsappVerifyToken", e.target.value)}
-                    placeholder={editing ? "•••••• (unchanged)" : "Webhook verify token"}
-                    className={inputClass}
-                  />
-                </Field>
-              </div>
-            </div>
+            <p className="text-sm text-slate-600">
+              {editing ? (
+                <>
+                  Numbers are connected through Meta. Close this form and use the{" "}
+                  <strong className="font-medium text-slate-700">WhatsApp</strong> button on this
+                  business to connect one, or to manage the numbers already connected.
+                </>
+              ) : (
+                <>
+                  Create the business first. You can then connect its WhatsApp number through
+                  Meta from the <strong className="font-medium text-slate-700">WhatsApp</strong>{" "}
+                  button on its card — there are no credentials to copy.
+                </>
+              )}
+            </p>
           </div>
 
           <div className="rounded-xl bg-slate-50 p-3.5">

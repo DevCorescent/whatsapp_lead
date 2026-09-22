@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
+import { publicTenantSettings } from "@/lib/publicSettings";
 
 type Params = { params: Promise<{ id: string }> };
 
@@ -22,7 +23,20 @@ export async function GET(req: NextRequest, { params }: Params) {
 
   if (!tenant) return NextResponse.json({ success: false, error: "Tenant not found" }, { status: 404 });
 
-  return NextResponse.json({ success: true, data: tenant });
+  // `settings: true` includes the tenant's WhatsApp access token, WhatsApp App Secret,
+  // webhook verify token and SMTP password. The admin screen only reads them to render
+  // "Yes / Not set", so it is served the same allowlisted projection as /api/settings.
+  // Being SUPER_ADMIN is a reason to see that a credential exists, not to be handed a
+  // token that can send as that customer.
+  const { settings, ...rest } = tenant;
+
+  return NextResponse.json({
+    success: true,
+    data: {
+      ...rest,
+      settings: settings ? publicTenantSettings(settings, null) : null,
+    },
+  });
 }
 
 export async function PATCH(req: NextRequest, { params }: Params) {

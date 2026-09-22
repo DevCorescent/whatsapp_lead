@@ -39,6 +39,23 @@ function getKey(): Buffer | null {
   return createHash("sha256").update(secret).digest();
 }
 
+/**
+ * Whether this deployment can actually encrypt.
+ *
+ * `encryptSecret` deliberately degrades to returning plaintext when ENCRYPTION_KEY is
+ * unset, so that a workspace which stored credentials before this module existed keeps
+ * working. That tolerance is right for reads and for legacy writes, and wrong for a
+ * credential this application is about to obtain for the first time: storing a freshly
+ * minted Meta token in plaintext while telling the customer it is "encrypted before it
+ * is stored" is a promise the deployment cannot keep.
+ *
+ * Callers on a new-credential path check this first and refuse, rather than writing a
+ * secret the operator believes is protected. See /api/integrations/whatsapp/connect.
+ */
+export function isEncryptionConfigured(): boolean {
+  return getKey() !== null;
+}
+
 /** True when a value carries our encryption envelope (rather than being plaintext). */
 export function isEncrypted(value: string): boolean {
   return value.trimStart().startsWith(ENVELOPE_PREFIX);

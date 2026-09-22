@@ -23,7 +23,11 @@ import type { Business, WhatsAppIntegration } from "@prisma/client";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { decryptSecret, isMetaAccessToken } from "@/lib/crypto";
-import { findDefaultIntegration } from "@/lib/whatsappIntegrations";
+import {
+  findDefaultIntegration,
+  PUBLIC_INTEGRATION_SELECT,
+  type PublicIntegration,
+} from "@/lib/whatsappIntegrations";
 import { checkIntegrationOwnership } from "@/lib/whatsappIntegrationRules";
 
 /** Cookie that remembers the business the user last switched to. */
@@ -180,6 +184,17 @@ export async function listBusinesses(tenantId: string) {
   return prisma.business.findMany({
     where: { tenantId },
     orderBy: { createdAt: "asc" },
+    // The connected numbers, so a business onboarded through Embedded Signup reads as
+    // connected in the list. Its details live in WhatsAppIntegration, not in the legacy
+    // Business columns, so without this a freshly connected business showed "No number".
+    // Only the public columns are selected — no token, verify token or app secret.
+    include: {
+      whatsappIntegrations: {
+        where: { isActive: true },
+        select: PUBLIC_INTEGRATION_SELECT,
+        orderBy: [{ isDefault: "desc" }, { createdAt: "asc" }],
+      },
+    },
   });
 }
 
@@ -427,12 +442,23 @@ async function resolveLegacyWhatsAppCreds(businessId: string): Promise<ResolvedW
  * only a boolean flag saying whether one is configured. Everything else is safe
  * to expose to any member of the owning tenant.
  */
-export function publicBusiness(b: Business) {
+export function publicBusiness(
+  b: Business & { whatsappIntegrations?: PublicIntegration[] },
+) {
   const { whatsappAccessToken, whatsappVerifyToken, whatsappAppSecret, ...rest } = b;
+
+  // Present only when the caller asked for the relation (listBusinesses does). Callers
+  // that pass a bare Business row keep their existing response shape untouched.
+  const integrations = b.whatsappIntegrations ?? [];
+
   return {
     ...rest,
     hasWhatsappToken: Boolean(whatsappAccessToken),
     hasWhatsappVerifyToken: Boolean(whatsappVerifyToken),
     hasWhatsappAppSecret: Boolean(whatsappAppSecret),
+    // Non-secret connection summary. A business is "connected" when it has a live
+    // WhatsAppIntegration row or still runs on legacy hand-entered credentials.
+    whatsappConnected: integrations.length > 0 || Boolean(whatsappAccessToken),
+    whatsappNumberCount: integrations.length,
   };
 }

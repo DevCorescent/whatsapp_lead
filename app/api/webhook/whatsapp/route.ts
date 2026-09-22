@@ -163,12 +163,10 @@ function verifySignature(
     .update(rawBody, "utf8")
     .digest();
 
-  console.log("[WEBHOOK] HMAC check", {
-    receivedPrefix: received.toString("hex").slice(0, 8),
-    expectedPrefix: expected.toString("hex").slice(0, 8),
-    secretLength: appSecret.length,
-    source: "db-or-env",
-  });
+  // No logging here by design. This line runs on every inbound delivery, and the
+  // signature comparison is exactly the place where logging anything about the app
+  // secret — its length included — writes a property of a live credential into the
+  // log stream on every message. A failure is reported by the caller instead.
 
   if (received.length !== expected.length) return false;
 

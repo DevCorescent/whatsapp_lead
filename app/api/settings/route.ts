@@ -6,6 +6,7 @@ import { invalidateCredsCache, invalidateTenantCache } from "@/lib/cache";
 import { syncLegacyIntegration } from "@/lib/whatsappIntegrations";
 import { encryptSecret, isMetaAccessToken, sanitizeWhatsAppToken } from "@/lib/crypto";
 import { prisma } from "@/lib/prisma";
+import { publicTenantSettings } from "@/lib/publicSettings";
 
 const patchSchema = z.object({
   waPhoneNumberId: z.string().optional(),
@@ -42,7 +43,12 @@ export async function GET() {
       select: { name: true, slug: true, logo: true, domain: true },
     });
 
-    return NextResponse.json({ success: true, data: { ...settings, tenant } });
+    // Allowlisted projection — see lib/publicSettings.ts for why this is not a spread
+    // and why the rule is enforced by a test rather than by review.
+    return NextResponse.json({
+      success: true,
+      data: publicTenantSettings(settings, tenant),
+    });
   } catch (error) {
     console.error("[SETTINGS GET]", error);
     return NextResponse.json({ success: false, error: "Failed to fetch settings" }, { status: 500 });
@@ -66,6 +72,15 @@ export async function PATCH(req: NextRequest) {
     if (!parsed.success) return NextResponse.json({ success: false, error: parsed.error.issues[0].message }, { status: 400 });
 
     const data = { ...parsed.data };
+
+    // A blank secret means "leave the stored one alone", never "erase it". The browser is
+    // no longer sent these values (see GET above), so a form that renders them can only
+    // ever submit an empty string — and without this, saving an unrelated field on such a
+    // form would silently wipe a working credential. Clearing one is a deliberate act that
+    // belongs to the flow that owns it: Disconnect for WhatsApp, not a settings PATCH.
+    for (const key of ["waApiKey", "waAppSecret", "waWebhookVerifyToken", "smtpPass"] as const) {
+      if (data[key] !== undefined && !data[key]?.trim()) delete data[key];
+    }
 
     // Encrypt WhatsApp secrets the same way Businesses does — plaintext in TenantSettings
     // was a common source of "works in UI, 401 on send" when mixed with enc:v1: business tokens.
@@ -198,7 +213,10 @@ export async function PATCH(req: NextRequest) {
       await prisma.tenant.update({ where: { id: tenantId }, data: tenantData });
     }
 
-    return NextResponse.json({ success: true, data: settings });
+    // Same projection as GET. The upsert above returns the whole row, secrets included,
+    // and echoing it back would have reopened on save exactly the exposure the GET
+    // allowlist closed on load.
+    return NextResponse.json({ success: true, data: publicTenantSettings(settings, null) });
   } catch (error) {
     console.error("[SETTINGS PATCH]", error);
     return NextResponse.json({ success: false, error: "Failed to update settings" }, { status: 500 });
