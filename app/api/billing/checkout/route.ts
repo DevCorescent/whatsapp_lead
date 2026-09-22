@@ -10,6 +10,8 @@ import { prisma } from "@/lib/prisma";
 import { getStripe, isStripeConfigured, appBaseUrl } from "@/lib/stripe";
 import { getOrCreateStripeCustomer } from "@/lib/billing/subscription";
 import { findPurchasablePlan } from "@/lib/billing/plans";
+import { PLAN_CURRENCY } from "@/lib/billing/planChange";
+import { toMinor } from "@/lib/billing/proration";
 
 const EDIT_ROLES = ["SUPER_ADMIN", "TENANT_OWNER", "ADMIN"];
 const schema = z.object({ planId: z.string().min(1) });
@@ -41,7 +43,15 @@ export async function POST(req: NextRequest) {
     }
 
     // Free plan — assign directly, no Stripe involved.
-    if (plan.priceMonthly <= 0 || !plan.stripePriceId) {
+    //
+    // Decided by PRICE ALONE. This condition used to read
+    //   plan.priceMonthly <= 0 || !plan.stripePriceId
+    // which handed out any paid plan that had no Stripe price configured — and on
+    // this deployment that was every plan, so a single POST to this route granted
+    // the ₹9,999 tier free for thirty days. A missing stripePriceId is a setup gap
+    // on our side, never a reason to give a customer a paid plan for nothing; the
+    // paid branch below prices such a plan inline instead.
+    if (plan.priceMonthly <= 0) {
       const now = new Date();
       const end = new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000);
       const data = {
@@ -70,7 +80,26 @@ export async function POST(req: NextRequest) {
     const checkout = await stripe.checkout.sessions.create({
       mode: "subscription",
       customer: customerId,
-      line_items: [{ price: plan.stripePriceId, quantity: 1 }],
+      // A catalogue price when the plan has one, otherwise the same figure priced
+      // inline from the database. Inline `price_data` is what lets a plan that was
+      // never mirrored into Stripe still be *sold* rather than given away — the
+      // amount charged is always Plan.priceMonthly, read here on the server.
+      line_items: [
+        plan.stripePriceId
+          ? { price: plan.stripePriceId, quantity: 1 }
+          : {
+              quantity: 1,
+              price_data: {
+                currency: PLAN_CURRENCY,
+                unit_amount: toMinor(plan.priceMonthly),
+                recurring: { interval: "month" as const },
+                product_data: {
+                  name: plan.displayName,
+                  ...(plan.description ? { description: plan.description } : {}),
+                },
+              },
+            },
+      ],
       success_url: `${appBaseUrl()}/billing?checkout=success`,
       cancel_url: `${appBaseUrl()}/billing/plans?checkout=cancelled`,
       metadata: { tenantId, planId: plan.id },

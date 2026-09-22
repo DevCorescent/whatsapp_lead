@@ -6,9 +6,11 @@ import { Check, Sparkles, ArrowLeft } from "lucide-react";
 import { Badge, Button, Card, PageHeader, Skeleton } from "@/components/ui";
 import { cn, formatCurrency } from "@/lib/utils";
 import {
+  fetchPlanChangeQuote,
   useBillingPlans,
   useCheckout,
   useChangePlan,
+  type PlanChangeQuote,
   type PlanDTO,
 } from "@/hooks/useBilling";
 
@@ -19,17 +21,20 @@ export default function PlansPage() {
   const [busyId, setBusyId] = useState<string | null>(null);
   const [planError, setPlanError] = useState<string | null>(null);
   const [planSuccess, setPlanSuccess] = useState<string | null>(null);
+  // The server's quote, held until the customer confirms it. Nothing changes and
+  // nothing is charged while this is on screen.
+  const [quote, setQuote] = useState<PlanChangeQuote | null>(null);
+  const [confirming, setConfirming] = useState(false);
 
   const plans = data?.plans ?? [];
   const currentPlanId = data?.currentPlanId ?? null;
   const currentPlan = plans.find((p) => p.id === currentPlanId) ?? null;
-  // stripePriceId, not just a non-zero price. A workspace on a custom tier pays
-  // against an invoice rather than a Stripe subscription, so there is no
-  // subscription item to swap and /api/billing/change would refuse — sending it
-  // there would dead-end the one customer most likely to be calling their rep.
-  // Checkout is the right path: it creates the Stripe subscription they lack.
+  // A paid, active subscription is what makes a change prorateable — there is a
+  // period with unused value in it. stripePriceId is deliberately NOT part of this
+  // any more: /api/billing/change prices the move itself and charges it as a
+  // one-off, so a plan that was never mirrored into Stripe is no longer a dead end.
   const hasActivePaid = Boolean(
-    currentPlan && currentPlan.priceMonthly > 0 && currentPlan.stripePriceId && data?.status === "ACTIVE",
+    currentPlan && currentPlan.priceMonthly > 0 && data?.status === "ACTIVE",
   );
 
   const choose = async (plan: PlanDTO) => {
@@ -37,23 +42,48 @@ export default function PlansPage() {
     setPlanError(null);
     setPlanSuccess(null);
     try {
-      // An existing paid subscriber switching plans goes through change (proration);
-      // otherwise start a fresh checkout.
+      // An existing paid subscriber is quoted first and shown what it costs before
+      // anything happens. Everyone else starts a fresh checkout.
       if (hasActivePaid && plan.priceMonthly > 0) {
-        await change.mutateAsync(plan.id);
-        setPlanSuccess("Your plan has been updated.");
-      } else {
-        const res = await checkout.mutateAsync(plan.id);
-        if (res?.url) {
-          window.location.assign(res.url);
-          return;
-        }
-        setPlanSuccess("Your plan is now active.");
+        setQuote(await fetchPlanChangeQuote(plan.id));
+        return;
       }
+      const res = await checkout.mutateAsync(plan.id);
+      if (res?.url) {
+        window.location.assign(res.url);
+        return;
+      }
+      setPlanSuccess("Your plan is now active.");
     } catch (e) {
       setPlanError((e as Error).message);
     } finally {
       setBusyId(null);
+    }
+  };
+
+  /** Act on the quote the customer just accepted. */
+  const confirmChange = async () => {
+    if (!quote) return;
+    setConfirming(true);
+    setPlanError(null);
+    try {
+      const res = await change.mutateAsync(quote.targetPlan.id);
+      // A payable upgrade hands back a Stripe URL and changes nothing yet — the
+      // plan moves only once Stripe confirms the payment.
+      if (res?.url) {
+        window.location.assign(res.url);
+        return;
+      }
+      setQuote(null);
+      setPlanSuccess(
+        res?.grantedDays
+          ? `You're on ${quote.targetPlan.displayName}. Your remaining balance covers ${res.grantedDays} days, through ${new Date(res.periodEnd).toLocaleDateString()}.`
+          : `You're now on ${quote.targetPlan.displayName}.`,
+      );
+    } catch (e) {
+      setPlanError((e as Error).message);
+    } finally {
+      setConfirming(false);
     }
   };
 
@@ -83,6 +113,91 @@ export default function PlansPage() {
       )}
       {planSuccess && (
         <div className="mb-4 rounded-lg bg-emerald-50 px-4 py-3 text-sm text-emerald-700">{planSuccess}</div>
+      )}
+
+      {/* The quote. Every figure below came from the server; none is computed here. */}
+      {quote && (
+        <Card className="mb-5 p-5">
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div className="min-w-0">
+              <h2 className="font-semibold text-slate-900">
+                {quote.kind === "UPGRADE" ? "Confirm upgrade" : "Confirm downgrade"}
+              </h2>
+              <p className="mt-0.5 text-sm text-slate-500">
+                {quote.currentPlan.displayName} → {quote.targetPlan.displayName}
+              </p>
+            </div>
+            <Badge
+              className={
+                quote.kind === "UPGRADE"
+                  ? "bg-emerald-50 text-emerald-700 ring-emerald-600/20"
+                  : "bg-slate-50 text-slate-600 ring-slate-500/15"
+              }
+            >
+              {quote.kind === "UPGRADE" ? "Upgrade" : "Downgrade"}
+            </Badge>
+          </div>
+
+          <dl className="mt-4 grid gap-3 sm:grid-cols-3">
+            <div>
+              <dt className="text-xs font-medium uppercase tracking-wide text-slate-500">
+                {quote.requiresPayment ? "Due now" : "To pay"}
+              </dt>
+              <dd className="mt-0.5 text-lg font-semibold text-slate-900">
+                {quote.requiresPayment ? formatCurrency(quote.amountDue) : "Nothing"}
+              </dd>
+            </div>
+            <div>
+              <dt className="text-xs font-medium uppercase tracking-wide text-slate-500">
+                Credit for unused time
+              </dt>
+              <dd className="mt-0.5 text-lg font-semibold text-slate-900">
+                {formatCurrency(quote.credit)}
+              </dd>
+            </div>
+            <div>
+              <dt className="text-xs font-medium uppercase tracking-wide text-slate-500">
+                {quote.kind === "UPGRADE" ? "Renews" : "New period ends"}
+              </dt>
+              <dd className="mt-0.5 text-lg font-semibold text-slate-900">
+                {new Date(quote.periodEnd).toLocaleDateString()}
+              </dd>
+            </div>
+          </dl>
+
+          <p className="mt-3 text-sm text-slate-600">
+            {quote.kind === "UPGRADE" ? (
+              quote.requiresPayment ? (
+                <>
+                  You&apos;ll pay the difference for the rest of your current period. Your renewal
+                  date doesn&apos;t change, and the upgrade applies once payment is confirmed.
+                </>
+              ) : (
+                <>There&apos;s nothing left to charge for this period, so the upgrade applies right away.</>
+              )
+            ) : (
+              <>
+                Your remaining balance carries over as {quote.grantedDays} days on{" "}
+                {quote.targetPlan.displayName}. Nothing you&apos;ve already paid for is lost.
+              </>
+            )}
+          </p>
+
+          <div className="mt-4 flex flex-wrap justify-end gap-2 border-t border-slate-100 pt-4">
+            <Button variant="secondary" onClick={() => setQuote(null)} disabled={confirming}>
+              Cancel
+            </Button>
+            <Button onClick={confirmChange} disabled={confirming}>
+              {confirming
+                ? "Working…"
+                : quote.requiresPayment
+                  ? `Pay ${formatCurrency(quote.amountDue)}`
+                  : quote.kind === "UPGRADE"
+                    ? "Upgrade"
+                    : "Confirm downgrade"}
+            </Button>
+          </div>
+        </Card>
       )}
 
       {isLoading ? (
