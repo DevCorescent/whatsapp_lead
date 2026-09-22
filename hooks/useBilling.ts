@@ -107,6 +107,41 @@ export function useCheckout() {
   });
 }
 
+/**
+ * What a plan change costs and what it results in, priced by the server.
+ *
+ * Every figure here is computed in /api/billing/change from the plans and the
+ * subscription in the database. Nothing in this shape is recalculated in the
+ * browser — a price worked out client-side is a price that can disagree with the
+ * one actually charged, and the customer would be right to believe the screen.
+ */
+export interface PlanChangeQuote {
+  kind: "UPGRADE" | "DOWNGRADE";
+  currentPlan: { id: string; displayName: string };
+  targetPlan: { id: string; displayName: string };
+  /** Payable now, in rupees, already rounded by the server. */
+  amountDue: number;
+  amountDueMinor: number;
+  /** Unused value of the current plan, credited against the change. */
+  credit: number;
+  currency: string;
+  periodStart: string;
+  periodEnd: string;
+  /** Days the carried-over value buys on the cheaper plan. Downgrades only. */
+  grantedDays: number | null;
+  requiresPayment: boolean;
+}
+
+/** Ask the server to price a move onto `planId`. Read-only — changes nothing. */
+export async function fetchPlanChangeQuote(planId: string): Promise<PlanChangeQuote> {
+  const res = await fetch(`/api/billing/change?planId=${encodeURIComponent(planId)}`);
+  const json = await res.json().catch(() => ({}));
+  if (!res.ok || json.success === false) {
+    throw new Error((json as { error?: string }).error ?? "Could not price this change");
+  }
+  return json.data as PlanChangeQuote;
+}
+
 export function useChangePlan() {
   const queryClient = useQueryClient();
   return useMutation({

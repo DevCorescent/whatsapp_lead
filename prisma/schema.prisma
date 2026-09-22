@@ -1055,7 +1055,85 @@ model Subscription {
   tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   plan   Plan   @relation(fields: [planId], references: [id])
 
+  planChanges PlanChange[]
+
   @@map("subscriptions")
+}
+
+/// One requested move between plans, priced by the server.
+///
+/// This row exists so that the amount a customer is charged is decided once, on the
+/// server, and then *re-read* when the payment comes back — rather than being
+/// recomputed from a request the browser could shape. The browser is only ever told
+/// which PlanChange to pay for; it never names a plan or an amount at the point of
+/// payment.
+///
+/// It is also what makes the flow safe to repeat. Stripe retries webhooks, customers
+/// refresh the success page, and double-clicks happen: `status` moves PENDING → PAID
+/// → APPLIED exactly once, so a replayed event finds the row already APPLIED and
+/// does nothing.
+model PlanChange {
+  id       String @id @default(cuid())
+  tenantId String
+
+  /// The plan they were on when the quote was made. Kept so a stale PENDING row
+  /// can be detected — if the subscription has moved on since, the quote is void.
+  fromPlanId String
+  toPlanId   String
+
+  kind   PlanChangeKind
+  status PlanChangeStatus @default(PENDING)
+
+  /// Payable amount in minor units (paise), as computed by lib/billing/proration.ts.
+  /// Integer, never a float: this is money.
+  amountDueMinor Int
+  currency       String @default("inr")
+
+  /// The window the change results in, computed at quote time. An upgrade keeps the
+  /// existing end date; a downgrade converts unused value into a new one.
+  resultPeriodStart DateTime
+  resultPeriodEnd   DateTime
+
+  /// Stripe Checkout Session for the one-off proration charge. Unique so the same
+  /// session can never be applied to two rows.
+  stripeSessionId  String? @unique
+  stripePaymentRef String?
+
+  appliedAt DateTime?
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+
+  subscription Subscription @relation(fields: [tenantId], references: [tenantId], onDelete: Cascade)
+
+  @@index([tenantId, status])
+  @@map("plan_changes")
+}
+
+enum PlanChangeKind {
+  UPGRADE
+  DOWNGRADE
+}
+
+enum PlanChangeStatus {
+  PENDING
+  PAID
+  APPLIED
+  FAILED
+  CANCELLED
+}
+
+/// Stripe event ids already handled, so a redelivery is a no-op.
+///
+/// Stripe guarantees at-least-once delivery, and two of the handlers are not
+/// naturally idempotent — resetAiUsage() would hand out a second month of AI
+/// credits, and applying a PlanChange twice would move a period end twice. The
+/// primary key is Stripe's own event id, so the insert itself is the lock.
+model ProcessedStripeEvent {
+  id          String   @id
+  type        String
+  processedAt DateTime @default(now())
+
+  @@map("processed_stripe_events")
 }
 
 // ─── AUDIT LOG ────────────────────────────────────────────────────────────────
