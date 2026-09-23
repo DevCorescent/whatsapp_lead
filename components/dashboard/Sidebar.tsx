@@ -19,6 +19,7 @@ import {
   LogOut,
   Menu,
   X,
+  FileText,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Avatar } from "@/components/ui";
@@ -38,6 +39,7 @@ const NAV = [
     section: "Automate",
     items: [
       { href: "/campaigns", label: "Campaigns", icon: Megaphone, roles: ["SUPER_ADMIN", "TENANT_OWNER", "ADMIN", "MANAGER", "MARKETING_USER"] },
+      { href: "/templates", label: "Templates", icon: FileText, roles: ["SUPER_ADMIN", "TENANT_OWNER", "ADMIN", "MANAGER", "MARKETING_USER"] },
       { href: "/chatbot", label: "Chatbot", icon: Bot, roles: ["SUPER_ADMIN", "TENANT_OWNER", "ADMIN", "MANAGER"] },
       { href: "/ai-settings", label: "AI Settings", icon: Sparkles, roles: ["SUPER_ADMIN", "TENANT_OWNER", "ADMIN", "MANAGER"] },
       { href: "/knowledge-base", label: "Knowledge Base", icon: BookOpen, roles: ["SUPER_ADMIN", "TENANT_OWNER", "ADMIN", "MANAGER"] },

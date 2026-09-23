@@ -37,8 +37,10 @@ export function useTemplates() {
     queryKey: ["templates"],
     queryFn: async () => {
       const res = await fetch("/api/templates");
-      if (!res.ok) throw new Error("Failed to fetch templates");
-      return res.json() as Promise<TemplateDTO[]>;
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error((json as { error?: string }).error ?? "Failed to fetch templates");
+      // API returns { success, data: TemplateDTO[] }
+      return (json.data ?? json) as TemplateDTO[];
     },
   });
 }
