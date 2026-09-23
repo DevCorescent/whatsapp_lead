@@ -44,42 +44,9 @@ import { cn } from "@/lib/utils";
 // the POST goes out immediately on the callback.
 // ─────────────────────────────────────────────────────────────────────────────
 
-const FB_SDK_SRC = "https://connect.facebook.net/en_US/sdk.js";
-const FB_SDK_SCRIPT_ID = "facebook-jssdk";
-
-interface FbAuthResponse {
-  code?: string;
-  accessToken?: string;
-  userID?: string | null;
-  expiresIn?: number | null;
-}
-
-interface FbLoginResponse {
-  authResponse?: FbAuthResponse | null;
-  status?: string;
-}
-
-interface FbLoginOptions {
-  config_id: string;
-  response_type?: "code";
-  override_default_response_type?: boolean;
-  extras: { setup: Record<string, unknown> };
-}
-
-declare global {
-  interface Window {
-    FB?: {
-      init(options: {
-        appId: string;
-        autoLogAppEvents?: boolean;
-        xfbml?: boolean;
-        version: string;
-      }): void;
-      login(cb: (response: FbLoginResponse) => void, options: FbLoginOptions): void;
-    };
-    fbAsyncInit?: () => void;
-  }
-}
+// The OAuth callback URL — Facebook redirects the popup here after auth.
+// Must be registered in: Facebook Login for Business → Settings → Valid OAuth Redirect URIs.
+const OAUTH_CALLBACK_PATH = "/api/integrations/whatsapp/oauth-callback";
 
 /** Payload Meta posts to the opener window as the customer moves through the flow. */
 interface EmbeddedSignupMessage {
@@ -94,71 +61,12 @@ interface EmbeddedSignupMessage {
   };
 }
 
-type SdkState = "loading" | "ready" | "error";
-
-/**
- * Load Facebook's JavaScript SDK once per page and report when FB.init has run.
- *
- * `fbAsyncInit` is assigned before the script is appended because the SDK calls it the moment
- * it finishes parsing — assigning afterwards is a race that passes locally on a warm cache and
- * fails on a cold one. Re-mounting is safe: an already-initialised SDK is detected by the
- * presence of window.FB rather than by loading a second copy.
- */
-function useFacebookSdk(appId: string | undefined, version: string | undefined): SdkState {
-  // Starts "loading" on both server and client so the first client render matches the
-  // markup React hydrates, and every transition out of it comes from a callback rather
-  // than from the effect body — a synchronous setState there would re-render the whole
-  // card before it has painted once.
-  const [state, setState] = useState<SdkState>("loading");
-
-  useEffect(() => {
-    if (!appId || !version) return;
-
-    let cancelled = false;
-    const markReady = () => {
-      if (!cancelled) setState("ready");
-    };
-    const markError = () => {
-      if (!cancelled) setState("error");
-    };
-
-    // Assigned before the script is appended: the SDK calls fbAsyncInit the moment it
-    // finishes parsing, and assigning afterwards is a race that passes on a warm cache
-    // and fails on a cold one.
-    window.fbAsyncInit = () => {
-      window.FB?.init({ appId, autoLogAppEvents: true, xfbml: true, version });
-      markReady();
-    };
-
-    // Already initialised by an earlier mount of this card. The SDK will not call
-    // fbAsyncInit a second time, so the transition is scheduled rather than made here.
-    if (window.FB) {
-      const timer = setTimeout(markReady, 0);
-      return () => {
-        cancelled = true;
-        clearTimeout(timer);
-      };
-    }
-
-    // A script tag already in the document is still loading; its own onload will call the
-    // fbAsyncInit just assigned, so appending another would only load the SDK twice.
-    if (!document.getElementById(FB_SDK_SCRIPT_ID)) {
-      const script = document.createElement("script");
-      script.id = FB_SDK_SCRIPT_ID;
-      script.src = FB_SDK_SRC;
-      script.async = true;
-      script.defer = true;
-      script.crossOrigin = "anonymous";
-      script.onerror = markError;
-      document.body.appendChild(script);
-    }
-
-    return () => {
-      cancelled = true;
-    };
-  }, [appId, version]);
-
-  return state;
+/** Payload our own OAuth callback page posts back to the opener. */
+interface OAuthCallbackMessage {
+  type: "WA_OAUTH_CALLBACK";
+  code: string;
+  error: string;
+  errorDescription: string;
 }
 
 /**
@@ -402,7 +310,8 @@ export function WhatsAppConnectCard({ businessId }: { businessId?: string }) {
   // Why the flow ended without a code, when Meta told us. Read in the same callback.
   const abortReasonRef = useRef<string | null>(null);
 
-  const sdkState = useFacebookSdk(config?.appId, config?.graphVersion);
+  // Ref that guards against processing the same code twice (e.g. strict-mode double-fire).
+  const codeHandledRef = useRef(false);
 
   const integrations: WhatsAppIntegrationDTO[] = integrationsData?.integrations ?? [];
   const activeCount = integrations.filter((i) => i.isActive).length;
@@ -411,102 +320,39 @@ export function WhatsAppConnectCard({ businessId }: { businessId?: string }) {
 
   useEffect(() => {
     const onMessage = (event: MessageEvent) => {
-      if (!isFacebookOrigin(event.origin)) return;
+      // ── Our own OAuth callback page (same origin) ──────────────────────────
+      if (event.origin === window.location.origin) {
+        const msg = event.data as Partial<OAuthCallbackMessage>;
+        if (msg?.type !== "WA_OAUTH_CALLBACK") return;
 
-      let payload: EmbeddedSignupMessage | null = null;
-      try {
-        payload =
-          typeof event.data === "string"
-            ? (JSON.parse(event.data) as EmbeddedSignupMessage)
-            : (event.data as EmbeddedSignupMessage);
-      } catch {
-        // Meta also posts non-JSON strings on this channel for its own bookkeeping.
-        return;
-      }
-      if (payload?.type !== "WA_EMBEDDED_SIGNUP") return;
+        if (codeHandledRef.current) return;
+        codeHandledRef.current = true;
 
-      if (payload.event === "CANCEL") {
-        const step = payload.data?.current_step;
-        abortReasonRef.current = payload.data?.error_message
-          ? `Meta reported a problem during onboarding: ${payload.data.error_message}`
-          : step
-            ? `You closed Meta's window before finishing (last step: ${step.replace(/_/g, " ").toLowerCase()}).`
-            : "You closed Meta's window before finishing.";
-        return;
-      }
+        const code = msg.code;
+        const error = msg.error;
 
-      if (payload.event === "ERROR") {
-        abortReasonRef.current =
-          payload.data?.error_message ??
-          "Meta could not complete the onboarding. Please try again.";
-        return;
-      }
-
-      // Every other event is a FINISH variant — the ids are what we want from it.
-      if (payload.data) {
-        signupDataRef.current = payload.data;
-        abortReasonRef.current = null;
-      }
-    };
-
-    window.addEventListener("message", onMessage);
-    return () => window.removeEventListener("message", onMessage);
-  }, []);
-
-  // Not wrapped in useCallback: the React Compiler memoizes it, and hand-rolled
-  // memoization here is what it reports it cannot preserve.
-  const launchSignup = () => {
-    if (!config?.configId || !window.FB) return;
-
-    if (window.location.protocol !== "https:") {
-      setError(
-        "WhatsApp Embedded Signup requires a secure (HTTPS) connection. " +
-        "Please access this page over HTTPS and try again.",
-      );
-      return;
-    }
-
-    setError(null);
-    setNotice(null);
-    setWarnings([]);
-    signupDataRef.current = null;
-    abortReasonRef.current = null;
-
-    // Try root origin first (config may point there), then full path as fallback logged
-    const pageOrigin = window.location.origin;
-    const pagePath = `${window.location.origin}${window.location.pathname}`;
-    console.log("[WA Signup] redirect candidates — origin:", pageOrigin, "path:", pagePath);
-
-    window.FB.login(
-      (response) => {
-        console.log("[WA Signup] FB.login callback response status:", response?.status);
-        const code = response?.authResponse?.code;
-        console.log("[WA Signup] code received:", code ? `${code.slice(0, 8)}...` : "NONE");
-        console.log("[WA Signup] postMessage data captured:", JSON.stringify(signupDataRef.current));
-
-        if (!code) {
+        if (error || !code) {
           setError(
-            abortReasonRef.current ??
-              "Meta did not return an authorization. Nothing was changed — you can try again.",
+            msg.errorDescription
+              ? `Meta returned an error: ${msg.errorDescription}`
+              : error
+                ? `Meta returned an error: ${error}`
+                : "Meta did not return an authorization. Nothing was changed — you can try again.",
           );
           return;
         }
 
+        const redirectUri = `${window.location.origin}${OAUTH_CALLBACK_PATH}`;
         const data = signupDataRef.current;
-        console.log("[WA Signup] POSTing to /api/integrations/whatsapp/connect", {
-          hasCode: !!code,
-          wabaId: data?.waba_id,
-          phoneNumberId: data?.phone_number_id,
-          businessId: target?.id,
-          redirectUri: pageOrigin,
-        });
+        console.log("[WA Signup] code from popup:", code.slice(0, 8) + "...");
+        console.log("[WA Signup] postMessage data:", JSON.stringify(data));
         connect.mutate(
           {
             token: code,
             wabaId: data?.waba_id,
             phoneNumberId: data?.phone_number_id,
             businessId: target?.id,
-            redirectUri: pageOrigin,
+            redirectUri,
           },
           {
             onSuccess: (result) => {
@@ -524,14 +370,106 @@ export function WhatsAppConnectCard({ businessId }: { businessId?: string }) {
             },
           },
         );
-      },
-      {
-        config_id: config.configId,
-        response_type: "code",
-        override_default_response_type: true,
-        extras: { setup: {} },
-      },
+        return;
+      }
+
+      // ── Meta's Embedded Signup postMessage (WABA / phone data) ────────────
+      if (!isFacebookOrigin(event.origin)) return;
+
+      let payload: EmbeddedSignupMessage | null = null;
+      try {
+        payload =
+          typeof event.data === "string"
+            ? (JSON.parse(event.data) as EmbeddedSignupMessage)
+            : (event.data as EmbeddedSignupMessage);
+      } catch {
+        return;
+      }
+      if (payload?.type !== "WA_EMBEDDED_SIGNUP") return;
+
+      if (payload.event === "CANCEL") {
+        const step = payload.data?.current_step;
+        abortReasonRef.current = payload.data?.error_message
+          ? `Meta reported a problem during onboarding: ${payload.data.error_message}`
+          : step
+            ? `You closed Meta's window before finishing (last step: ${step.replace(/_/g, " ").toLowerCase()}).`
+            : "You closed Meta's window before finishing.";
+        return;
+      }
+      if (payload.event === "ERROR") {
+        abortReasonRef.current =
+          payload.data?.error_message ?? "Meta could not complete the onboarding. Please try again.";
+        return;
+      }
+      if (payload.data) {
+        signupDataRef.current = payload.data;
+        abortReasonRef.current = null;
+      }
+    };
+
+    window.addEventListener("message", onMessage);
+    return () => window.removeEventListener("message", onMessage);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [target?.id]);
+
+  // Not wrapped in useCallback: the React Compiler memoizes it, and hand-rolled
+  // memoization here is what it reports it cannot preserve.
+  const launchSignup = () => {
+    if (!config?.configId || !config?.appId) return;
+
+    if (window.location.protocol !== "https:") {
+      setError(
+        "WhatsApp Embedded Signup requires a secure (HTTPS) connection. " +
+        "Please access this page over HTTPS and try again.",
+      );
+      return;
+    }
+
+    setError(null);
+    setNotice(null);
+    setWarnings([]);
+    signupDataRef.current = null;
+    abortReasonRef.current = null;
+    codeHandledRef.current = false;
+
+    // We open the Facebook OAuth dialog manually so that WE control the redirect_uri
+    // on both sides — the popup URL and the server-side code exchange. The FB JS SDK's
+    // FB.login() uses an internal Facebook redirect_uri that the exchange cannot match.
+    const redirectUri = `${window.location.origin}${OAUTH_CALLBACK_PATH}`;
+    const params = new URLSearchParams({
+      client_id: config.appId,
+      config_id: config.configId,
+      response_type: "code",
+      redirect_uri: redirectUri,
+      override_default_response_type: "true",
+      extras: JSON.stringify({ setup: {} }),
+    });
+
+    const popup = window.open(
+      `https://www.facebook.com/dialog/oauth?${params.toString()}`,
+      "wa-embedded-signup",
+      "width=600,height=700,scrollbars=yes,resizable=yes",
     );
+
+    if (!popup) {
+      setError(
+        "The sign-in popup was blocked. Please allow popups for this site and try again.",
+      );
+      return;
+    }
+
+    // Detect if the popup is closed without posting a code (user cancelled).
+    const closedTimer = window.setInterval(() => {
+      if (popup.closed) {
+        clearInterval(closedTimer);
+        if (!codeHandledRef.current) {
+          setError(
+            abortReasonRef.current ??
+              "Meta's window was closed before finishing. Nothing was changed — you can try again.",
+          );
+        }
+      }
+    }, 500);
   };
 
   const runTest = (integration: WhatsAppIntegrationDTO) => {
@@ -631,7 +569,7 @@ export function WhatsAppConnectCard({ businessId }: { businessId?: string }) {
             <button
               type="button"
               onClick={launchSignup}
-              disabled={sdkState !== "ready" || busy || !target}
+              disabled={busy || !target}
               aria-busy={busy}
               className={cn(
                 "inline-flex w-full items-center justify-center gap-2.5 rounded-lg px-4 py-2.5",
@@ -646,11 +584,6 @@ export function WhatsAppConnectCard({ businessId }: { businessId?: string }) {
                   <Loader2 className="h-4 w-4 animate-spin" aria-hidden />
                   Finishing connection…
                 </>
-              ) : sdkState === "loading" ? (
-                <>
-                  <Loader2 className="h-4 w-4 animate-spin" aria-hidden />
-                  Loading Meta…
-                </>
               ) : (
                 <>
                   <FacebookGlyph />
@@ -658,13 +591,6 @@ export function WhatsAppConnectCard({ businessId }: { businessId?: string }) {
                 </>
               )}
             </button>
-
-            {sdkState === "error" && (
-              <p className="mt-2 text-xs text-rose-600">
-                Meta&apos;s sign-in script could not be loaded. Check your network or any content
-                blocker, then reload this page.
-              </p>
-            )}
 
             <p className="mt-3 flex items-start gap-1.5 text-xs text-slate-500">
               <ShieldCheck className="mt-0.5 h-3.5 w-3.5 shrink-0 text-slate-400" aria-hidden />
