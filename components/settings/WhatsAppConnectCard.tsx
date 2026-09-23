@@ -455,6 +455,14 @@ export function WhatsAppConnectCard({ businessId }: { businessId?: string }) {
   const launchSignup = () => {
     if (!config?.configId || !window.FB) return;
 
+    if (window.location.protocol !== "https:") {
+      setError(
+        "WhatsApp Embedded Signup requires a secure (HTTPS) connection. " +
+        "Please access this page over HTTPS and try again.",
+      );
+      return;
+    }
+
     setError(null);
     setNotice(null);
     setWarnings([]);

@@ -30,7 +30,11 @@ export async function GET() {
         },
       }),
       prisma.message.findMany({
-        where: { tenantId, direction: "INBOUND" },
+        where: {
+          tenantId,
+          direction: "INBOUND",
+          conversation: { contactId: { not: null } },
+        },
         orderBy: { createdAt: "desc" },
         take: 5,
         select: {
@@ -43,15 +47,19 @@ export async function GET() {
     ]);
 
     const notifications = [
-      ...newMessages.map((m) => ({
-        id: `msg-${m.id}`,
-        type: "message" as const,
-        title: `New message from ${m.conversation.contact.name}`,
-        body: m.content?.slice(0, 80) ?? "Media message",
-        avatar: m.conversation.contact.avatarUrl ?? null,
-        createdAt: m.createdAt,
-        href: "/inbox",
-      })),
+      ...newMessages.flatMap((m) => {
+        const contact = m.conversation?.contact;
+        if (!contact) return [];
+        return [{
+          id: `msg-${m.id}`,
+          type: "message" as const,
+          title: `New message from ${contact.name}`,
+          body: m.content?.slice(0, 80) ?? "Media message",
+          avatar: contact.avatarUrl ?? null,
+          createdAt: m.createdAt,
+          href: "/inbox",
+        }];
+      }),
       ...logs.map((l) => ({
         id: `log-${l.id}`,
         type: "activity" as const,
