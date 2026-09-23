@@ -3,6 +3,7 @@ import bcrypt from "bcryptjs";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { sendInviteEmail } from "@/lib/email";
+import { FREE_TIER_LIMITS, planLimits } from "@/lib/billing/tiers";
 
 export async function GET(req: NextRequest) {
   const session = await auth();
@@ -33,13 +34,33 @@ export async function GET(req: NextRequest) {
       where,
       include: {
         _count: { select: { users: true, contacts: true, leads: true } },
-        subscription: { include: { plan: { select: { displayName: true, priceMonthly: true } } } },
+        // The whole plan row, because planLimits() maps it onto the limit shape the
+        // rest of the app enforces. Only the display name and the message limit are
+        // put on the response below — no plan internals reach the client.
+        subscription: { include: { plan: true } },
       },
       orderBy: { createdAt: "desc" },
       skip: (page - 1) * limit,
       take: limit,
     }),
   ]);
+
+  // Messages each workspace has sent this calendar month — the usage column's numerator.
+  // Same definition the analytics export uses for "Messages This Month" (app/api/export),
+  // so the two never disagree. One grouped query for the page rather than one per row.
+  const startOfMonth = new Date();
+  startOfMonth.setDate(1);
+  startOfMonth.setHours(0, 0, 0, 0);
+
+  const tenantIds = tenants.map((t) => t.id);
+  const messageCounts = tenantIds.length
+    ? await prisma.message.groupBy({
+        by: ["tenantId"],
+        where: { tenantId: { in: tenantIds }, createdAt: { gte: startOfMonth } },
+        _count: { _all: true },
+      })
+    : [];
+  const messagesByTenant = new Map(messageCounts.map((row) => [row.tenantId, row._count._all]));
 
   const data = tenants.map((t) => ({
     id: t.id,
@@ -52,6 +73,12 @@ export async function GET(req: NextRequest) {
     users: t._count.users,
     contacts: t._count.contacts,
     leads: t._count.leads,
+    // A tenant with no subscription is on the implicit free tier, exactly as
+    // resolveTenantPlan() treats it. 0 or less means unlimited (isUnlimited).
+    messagesThisMonth: messagesByTenant.get(t.id) ?? 0,
+    messageLimit: t.subscription
+      ? planLimits(t.subscription.plan).messagesPerMonth
+      : FREE_TIER_LIMITS.messagesPerMonth,
   }));
 
   return NextResponse.json({ success: true, data, pagination: { page, limit, total } });
