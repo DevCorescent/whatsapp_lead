@@ -20,6 +20,7 @@ import { resolveWhatsAppCreds } from "@/lib/business";
 import {
   createMessageTemplate,
   getMessageTemplate,
+  listMessageTemplates,
   type WATemplateCreateComponent,
 } from "@/lib/whatsapp";
 
@@ -257,6 +258,104 @@ export async function refreshTemplate(id: string, businessId: string): Promise<M
       lastSyncedAt: new Date(),
     },
   });
+}
+
+/**
+ * Pull all templates from the Meta WABA and upsert them into the local DB.
+ *
+ * Templates that exist locally (matched by waTemplateId) have their status and
+ * rejection reason refreshed. Templates Meta knows about but we don't yet have
+ * are created as APPROVED/PENDING/etc. records so the operator can see everything.
+ * Drafts that were never submitted to Meta are left untouched.
+ *
+ * Returns counts of created and updated records.
+ */
+export async function importTemplatesFromMeta(
+  businessId: string,
+  tenantId: string,
+): Promise<{ created: number; updated: number }> {
+  const { wabaId, apiKey } = await getBusinessTemplateCreds(businessId);
+  const metaTemplates = await listMessageTemplates(wabaId, apiKey);
+
+  let created = 0;
+  let updated = 0;
+
+  for (const mt of metaTemplates) {
+    const status = mapMetaStatus(mt.status);
+
+    // Derive body from Meta's BODY component, fall back to empty string.
+    const bodyComp = mt.components?.find((c) => c.type === "BODY");
+    const body = bodyComp?.text ?? "";
+
+    // Header
+    const headerComp = mt.components?.find((c) => c.type === "HEADER");
+    const headerType = headerComp?.format?.toUpperCase() as
+      | "TEXT"
+      | "IMAGE"
+      | "VIDEO"
+      | "DOCUMENT"
+      | undefined;
+    const headerContent =
+      headerComp?.format === "TEXT" ? (headerComp.text ?? undefined) : undefined;
+
+    // Footer
+    const footerComp = mt.components?.find((c) => c.type === "FOOTER");
+    const footer = footerComp?.text ?? undefined;
+
+    // Buttons
+    const buttonComp = mt.components?.find((c) => c.type === "BUTTONS");
+    const buttons = buttonComp?.buttons?.map((b) => ({
+      type: b.type as "QUICK_REPLY" | "URL" | "PHONE_NUMBER",
+      text: b.text,
+      ...(b.url ? { url: b.url } : {}),
+      ...(b.phone_number ? { phone: b.phone_number } : {}),
+    }));
+
+    const existing = await prisma.messageTemplate.findFirst({
+      where: { businessId, waTemplateId: mt.id },
+    });
+
+    if (existing) {
+      await prisma.messageTemplate.update({
+        where: { id: existing.id },
+        data: {
+          status,
+          rejectionReason: status === "REJECTED" ? mt.rejection_reason ?? null : null,
+          lastSyncedAt: new Date(),
+        },
+      });
+      updated++;
+    } else {
+      // Only import if we don't already have a local record with the same name+language.
+      const duplicate = await prisma.messageTemplate.findFirst({
+        where: { businessId, name: mt.name, language: mt.language },
+      });
+      if (!duplicate) {
+        await prisma.messageTemplate.create({
+          data: {
+            tenantId,
+            businessId,
+            name: mt.name,
+            category: mt.category as "MARKETING" | "UTILITY" | "AUTHENTICATION",
+            language: mt.language,
+            body,
+            status,
+            waTemplateId: mt.id,
+            variables: [],
+            rejectionReason: status === "REJECTED" ? mt.rejection_reason ?? null : null,
+            lastSyncedAt: new Date(),
+            ...(headerType ? { headerType } : {}),
+            ...(headerContent ? { headerContent } : {}),
+            ...(footer ? { footer } : {}),
+            ...(buttons?.length ? { buttons } : {}),
+          },
+        });
+        created++;
+      }
+    }
+  }
+
+  return { created, updated };
 }
 
 /** Sync every in-review template for one business (used by the manual "Sync all"). */

@@ -522,6 +522,54 @@ export async function createMessageTemplate(
   return res.json() as Promise<WATemplateCreateResponse>;
 }
 
+/** One template record as Meta returns it from GET /{waba-id}/message_templates. */
+export interface WATemplateListItem {
+  id: string;
+  name: string;
+  status: string;
+  category: string;
+  language: string;
+  rejection_reason?: string;
+  components?: Array<{
+    type: string;
+    format?: string;
+    text?: string;
+    buttons?: Array<{ type: string; text: string; url?: string; phone_number?: string }>;
+  }>;
+}
+
+/**
+ * Fetch all message templates registered on a WABA from Meta.
+ *
+ * Paginates automatically up to `limit` items (Meta sends 20 per page by default).
+ * Used by the import flow to pull in templates that were created in Meta's console.
+ */
+export async function listMessageTemplates(
+  businessAccountId: string,
+  apiKey: string,
+  limit = 200,
+): Promise<WATemplateListItem[]> {
+  const GRAPH = `https://graph.facebook.com/${process.env.WHATSAPP_API_VERSION ?? "v19.0"}`;
+  const results: WATemplateListItem[] = [];
+  let url: string | null =
+    `${GRAPH}/${businessAccountId}/message_templates?fields=id,name,status,category,language,rejection_reason,components&limit=20`;
+
+  while (url && results.length < limit) {
+    const res = await fetch(url, { headers: { Authorization: `Bearer ${apiKey}` } });
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      throw new Error(
+        (body as { error?: { message?: string } }).error?.message ?? "Failed to list templates",
+      );
+    }
+    const page = (await res.json()) as { data?: WATemplateListItem[]; paging?: { next?: string } };
+    results.push(...(page.data ?? []));
+    url = page.paging?.next ?? null;
+  }
+
+  return results.slice(0, limit);
+}
+
 export async function getMessageTemplate(
   businessAccountId: string,
   apiKey: string,

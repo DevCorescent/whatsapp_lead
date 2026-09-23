@@ -154,3 +154,19 @@ export function useSyncTemplates() {
     onSuccess: () => invalidate(queryClient),
   });
 }
+
+/** Pull all templates from the connected Meta WABA and upsert into the local DB. */
+export function useImportTemplates() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async () => {
+      const res = await fetch("/api/templates/import", { method: "POST" });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error((err as { error?: string }).error ?? "Failed to import templates from Meta");
+      }
+      return res.json() as Promise<{ success: boolean; created: number; updated: number }>;
+    },
+    onSuccess: () => invalidate(queryClient),
+  });
+}

@@ -9,6 +9,7 @@ import {
   Trash2,
   Send,
   RefreshCw,
+  Download,
   AlertCircle,
   RotateCw,
 } from "lucide-react";
@@ -33,6 +34,7 @@ import {
   useSubmitTemplate,
   useRefreshTemplate,
   useSyncTemplates,
+  useImportTemplates,
   type TemplateDTO,
   type TemplateButton,
   type TemplateInput,
@@ -90,6 +92,7 @@ export default function TemplatesPage() {
   const submit = useSubmitTemplate();
   const refresh = useRefreshTemplate();
   const syncAll = useSyncTemplates();
+  const importFromMeta = useImportTemplates();
 
   const all: TemplateDTO[] = useMemo(() => data ?? [], [data]);
   const templates = useMemo(
@@ -101,6 +104,18 @@ export default function TemplatesPage() {
     setSyncError(null);
     try { await syncAll.mutateAsync(); }
     catch (e) { setSyncError((e as Error).message); }
+  };
+
+  const handleImport = async () => {
+    setSyncError(null);
+    try {
+      const result = await importFromMeta.mutateAsync();
+      if (result.created === 0 && result.updated === 0) {
+        setSyncError("No new templates found on Meta.");
+      }
+    } catch (e) {
+      setSyncError((e as Error).message);
+    }
   };
 
   const handleAction = async (p: Promise<unknown>) => {
@@ -127,9 +142,18 @@ export default function TemplatesPage() {
         description="Create WhatsApp templates, submit them to Meta for approval, and use approved ones in campaigns."
         action={
           <div className="flex flex-wrap items-center gap-2">
-            <Button variant="secondary" onClick={handleSyncAll} disabled={syncAll.isPending}>
+            <Button
+              variant="secondary"
+              onClick={handleImport}
+              disabled={importFromMeta.isPending || syncAll.isPending}
+              title="Pull all templates from Meta WABA into this app"
+            >
+              <Download className={cn("h-4 w-4", importFromMeta.isPending && "animate-bounce")} />
+              Import from Meta
+            </Button>
+            <Button variant="secondary" onClick={handleSyncAll} disabled={syncAll.isPending || importFromMeta.isPending}>
               <RefreshCw className={cn("h-4 w-4", syncAll.isPending && "animate-spin")} />
-              Sync all
+              Sync status
             </Button>
             <Button onClick={() => setModal({ open: true, editing: null })}>
               <Plus className="h-4 w-4" />

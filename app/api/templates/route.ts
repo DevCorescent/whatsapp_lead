@@ -67,7 +67,7 @@ export async function POST(req: NextRequest) {
         category: data.category,
         language: data.language,
         body: data.body,
-        status: "PENDING",
+        status: "DRAFT",
         variables: data.variables,
         ...(data.headerType && { headerType: data.headerType }),
         ...(data.headerContent && { headerContent: data.headerContent }),
