@@ -122,24 +122,27 @@ function graphError(res: Response, body: Record<string, unknown>): MetaApiError 
  * @throws {MetaApiError} When Meta rejects the exchange — an expired or replayed code is the
  *   usual cause, and Meta's message says so.
  */
-export async function exchangeCodeForBusinessToken(code: string): Promise<string> {
+export async function exchangeCodeForBusinessToken(code: string, redirectUri?: string): Promise<string> {
   const appId = process.env.WHATSAPP_APP_ID?.trim();
   const appSecret = process.env.WHATSAPP_APP_SECRET?.trim();
   if (!appId || !appSecret) {
     throw new Error("Embedded Signup is not configured on this deployment");
   }
 
-  // The Facebook JS SDK popup uses https://www.facebook.com/connect/login_success.html
-  // as its internal redirect_uri when response_type:"code" is requested. The code exchange
-  // must pass the identical value — empty string or omitting it produces error_subcode 36008.
+  // For the JS SDK popup flow (response_type:"code"), the redirect_uri is passed from
+  // the client — it must be the exact URL of the page that called FB.login(), which is
+  // what the FB popup registered internally. Omit the key entirely when not provided
+  // rather than passing an empty string (which Meta treats as a mismatch).
   const params = new URLSearchParams({
     client_id: appId,
     client_secret: appSecret,
     code,
-    redirect_uri: "https://www.facebook.com/connect/login_success.html",
   });
+  if (redirectUri) {
+    params.set("redirect_uri", redirectUri);
+  }
 
-  console.log("[WA ES] exchangeCodeForBusinessToken — appId:", appId, "codePrefix:", code.slice(0, 8), "url:", `${GRAPH_BASE}/oauth/access_token`);
+  console.log("[WA ES] exchangeCodeForBusinessToken — appId:", appId, "codePrefix:", code.slice(0, 8), "redirectUri:", redirectUri ?? "(omitted)");
 
   // Meta documents this as a GET with query parameters. The URL therefore carries the app
   // secret, which is exactly why neither it nor any part of it is ever logged from here.

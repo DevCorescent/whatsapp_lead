@@ -472,6 +472,10 @@ export function WhatsAppConnectCard({ businessId }: { businessId?: string }) {
     signupDataRef.current = null;
     abortReasonRef.current = null;
 
+    // Capture the page URL before FB.login opens the popup — this is the redirect_uri
+    // the SDK registers internally, and the server-side code exchange must match it.
+    const pageUrl = `${window.location.origin}${window.location.pathname}`;
+
     window.FB.login(
       (response) => {
         console.log("[WA Signup] FB.login callback response status:", response?.status);
@@ -493,6 +497,7 @@ export function WhatsAppConnectCard({ businessId }: { businessId?: string }) {
           wabaId: data?.waba_id,
           phoneNumberId: data?.phone_number_id,
           businessId: target?.id,
+          redirectUri: pageUrl,
         });
         connect.mutate(
           {
@@ -500,6 +505,7 @@ export function WhatsAppConnectCard({ businessId }: { businessId?: string }) {
             wabaId: data?.waba_id,
             phoneNumberId: data?.phone_number_id,
             businessId: target?.id,
+            redirectUri: pageUrl,
           },
           {
             onSuccess: (result) => {

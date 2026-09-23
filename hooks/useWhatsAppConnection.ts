@@ -78,6 +78,8 @@ export interface ConnectWhatsAppInput {
   wabaId?: string;
   phoneNumberId?: string;
   businessId?: string;
+  /** The page URL from which FB.login was called — matched as redirect_uri in the code exchange. */
+  redirectUri?: string;
 }
 
 /** Response of POST /api/integrations/whatsapp/connect. */
