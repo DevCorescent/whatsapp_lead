@@ -116,7 +116,7 @@ export async function POST(req: NextRequest) {
       { status: 400 },
     );
   }
-  const { token: code, wabaId: claimedWabaId, phoneNumberId: claimedPhoneId, businessId, redirectUri } = parsed.data;
+  const { token: code, wabaId: claimedWabaId, phoneNumberId: claimedPhoneId, businessId } = parsed.data;
 
   // Tenant isolation: an explicit businessId is only ever honoured when the caller's own
   // tenant owns it. Without the tenantId in this where clause, a valid session plus a
@@ -130,7 +130,7 @@ export async function POST(req: NextRequest) {
 
   try {
     // ── 1. Exchange the code (30-second TTL) for a customer-scoped business token ──
-    const businessToken = await exchangeCodeForBusinessToken(code, redirectUri);
+    const businessToken = await exchangeCodeForBusinessToken(code);
 
     if (!isMetaAccessToken(sanitizeWhatsAppToken(businessToken))) {
       console.error("[WA CONNECT] Exchanged token is not in the expected Meta format", {
