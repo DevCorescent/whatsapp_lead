@@ -14,12 +14,17 @@ import { z } from "zod";
 const metaId = z.string().trim().regex(/^\d{5,32}$/, "Not a valid Meta ID");
 
 export const connectWhatsAppSchema = z.object({
-  /** Single-use authorization code from the Facebook Login for Business callback. */
-  code: z
+  /**
+   * Access token from the Facebook Login for Business JS SDK callback.
+   * Using the token directly (not response_type:"code") avoids the redirect_uri
+   * mismatch error that occurs when the JS SDK popup uses an internal Facebook
+   * redirect_uri that cannot be replicated in the server-side code exchange.
+   */
+  token: z
     .string()
     .trim()
-    .min(10, "Missing the authorization code from Meta")
-    .max(2000, "Authorization code is not in the expected format"),
+    .min(10, "Missing the access token from Meta")
+    .max(2000, "Access token is not in the expected format"),
   /** WABA the customer selected. Verified against the token's granular scopes before use. */
   wabaId: metaId.optional(),
   /** Phone number the customer onboarded. Verified against the WABA's number list before use. */

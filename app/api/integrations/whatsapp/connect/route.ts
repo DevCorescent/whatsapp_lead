@@ -36,7 +36,6 @@ import { prisma } from "@/lib/prisma";
 import { MetaApiError } from "@/lib/whatsapp";
 import {
   debugBusinessToken,
-  exchangeCodeForBusinessToken,
   getWabaDetails,
   listWabaPhoneNumbers,
   missingEmbeddedSignupEnv,
@@ -116,7 +115,7 @@ export async function POST(req: NextRequest) {
       { status: 400 },
     );
   }
-  const { code, wabaId: claimedWabaId, phoneNumberId: claimedPhoneId, businessId } = parsed.data;
+  const { token: businessToken, wabaId: claimedWabaId, phoneNumberId: claimedPhoneId, businessId } = parsed.data;
 
   // Tenant isolation: an explicit businessId is only ever honoured when the caller's own
   // tenant owns it. Without the tenantId in this where clause, a valid session plus a
@@ -129,13 +128,9 @@ export async function POST(req: NextRequest) {
   }
 
   try {
-    // ── 1. Exchange the code (30-second TTL) for a customer-scoped business token ──
-    const businessToken = await exchangeCodeForBusinessToken(code);
-
-    // resolveWhatsAppCreds() refuses any stored token that does not look like a Meta
-    // token, and it refuses it silently — a send simply never happens. Storing something
-    // it will later discard would leave the UI reading "Connected" over a channel that
-    // cannot send, so the shape is checked here, where it can still be reported.
+    // ── 1. Validate the token shape before calling Meta ──
+    // Using the JS SDK access token directly (not response_type:"code") avoids the
+    // redirect_uri mismatch that occurs with the popup flow code exchange.
     if (!isMetaAccessToken(sanitizeWhatsAppToken(businessToken))) {
       console.error("[WA CONNECT] Exchanged token is not in the expected Meta format", {
         businessId: business.id,

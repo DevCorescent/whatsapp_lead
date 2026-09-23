@@ -74,7 +74,7 @@ export interface WhatsAppIntegrationsDTO {
 
 /** The payload the browser collects from Meta and hands to our server to verify. */
 export interface ConnectWhatsAppInput {
-  code: string;
+  token: string;
   wabaId?: string;
   phoneNumberId?: string;
   businessId?: string;

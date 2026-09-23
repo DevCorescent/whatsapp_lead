@@ -48,7 +48,9 @@ const FB_SDK_SRC = "https://connect.facebook.net/en_US/sdk.js";
 const FB_SDK_SCRIPT_ID = "facebook-jssdk";
 
 interface FbAuthResponse {
-  code?: string;
+  accessToken?: string;
+  userID?: string | null;
+  expiresIn?: number | null;
 }
 
 interface FbLoginResponse {
@@ -58,8 +60,6 @@ interface FbLoginResponse {
 
 interface FbLoginOptions {
   config_id: string;
-  response_type: "code";
-  override_default_response_type: boolean;
   extras: { setup: Record<string, unknown> };
 }
 
@@ -471,13 +471,13 @@ export function WhatsAppConnectCard({ businessId }: { businessId?: string }) {
 
     window.FB.login(
       (response) => {
-        console.log("[WA Signup] FB.login callback response:", JSON.stringify(response));
-        const code = response?.authResponse?.code;
-        console.log("[WA Signup] code received:", code ? `${code.slice(0, 8)}...` : "NONE");
+        console.log("[WA Signup] FB.login callback response status:", response?.status);
+        const token = response?.authResponse?.accessToken;
+        console.log("[WA Signup] token received:", token ? `${token.slice(0, 6)}...` : "NONE");
         console.log("[WA Signup] postMessage data captured:", JSON.stringify(signupDataRef.current));
 
-        if (!code) {
-          // No code means the customer closed the dialog, declined a permission, or Meta
+        if (!token) {
+          // No token means the customer closed the dialog, declined a permission, or Meta
           // ended the session. The message channel usually explains which; if it did not,
           // say what is true rather than guessing at a cause.
           setError(
@@ -489,14 +489,14 @@ export function WhatsAppConnectCard({ businessId }: { businessId?: string }) {
 
         const data = signupDataRef.current;
         console.log("[WA Signup] POSTing to /api/integrations/whatsapp/connect", {
-          hasCode: !!code,
+          hasToken: !!token,
           wabaId: data?.waba_id,
           phoneNumberId: data?.phone_number_id,
           businessId: target?.id,
         });
         connect.mutate(
           {
-            code,
+            token,
             wabaId: data?.waba_id,
             phoneNumberId: data?.phone_number_id,
             businessId: target?.id,
@@ -520,8 +520,6 @@ export function WhatsAppConnectCard({ businessId }: { businessId?: string }) {
       },
       {
         config_id: config.configId,
-        response_type: "code",
-        override_default_response_type: true,
         extras: { setup: {} },
       },
     );
