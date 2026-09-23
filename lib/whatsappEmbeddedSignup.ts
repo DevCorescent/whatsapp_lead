@@ -135,6 +135,8 @@ export async function exchangeCodeForBusinessToken(code: string): Promise<string
     code,
   });
 
+  console.log("[WA ES] exchangeCodeForBusinessToken — appId:", appId, "codePrefix:", code.slice(0, 8), "url:", `${GRAPH_BASE}/oauth/access_token`);
+
   // Meta documents this as a GET with query parameters. The URL therefore carries the app
   // secret, which is exactly why neither it nor any part of it is ever logged from here.
   const res = await fetch(`${GRAPH_BASE}/oauth/access_token?${params.toString()}`, {
@@ -142,7 +144,11 @@ export async function exchangeCodeForBusinessToken(code: string): Promise<string
   });
   const body = await readGraphJson(res);
 
-  if (!res.ok) throw graphError(res, body);
+  console.log("[WA ES] exchange response status:", res.status, "body keys:", Object.keys(body));
+  if (!res.ok) {
+    console.error("[WA ES] exchange failed — full body:", JSON.stringify(body));
+    throw graphError(res, body);
+  }
 
   const token = typeof body.access_token === "string" ? body.access_token.trim() : "";
   if (!token) {
