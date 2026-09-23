@@ -129,10 +129,13 @@ export async function exchangeCodeForBusinessToken(code: string): Promise<string
     throw new Error("Embedded Signup is not configured on this deployment");
   }
 
+  // Meta's own sample code passes redirect_uri as empty string for the JS SDK popup
+  // flow — omitting it entirely is treated differently and causes a 36008 mismatch error.
   const params = new URLSearchParams({
     client_id: appId,
     client_secret: appSecret,
     code,
+    redirect_uri: "",
   });
 
   console.log("[WA ES] exchangeCodeForBusinessToken — appId:", appId, "codePrefix:", code.slice(0, 8), "url:", `${GRAPH_BASE}/oauth/access_token`);
