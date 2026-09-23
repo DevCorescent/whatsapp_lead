@@ -326,7 +326,7 @@ export function WhatsAppConnectCard({ businessId }: { businessId?: string }) {
 
     window.fbAsyncInit = () => {
       window.FB.init({
-        appId: config.appId,
+        appId: config.appId!,
         autoLogAppEvents: true,
         xfbml: true,
         version: "v21.0",
