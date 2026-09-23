@@ -306,13 +306,28 @@ export function StatTile({
 
 // ─── Usage bar ────────────────────────────────────────────────────────────────
 
-export function UsageBar({ used, limit }: { used: number; limit: number }) {
-  const pct = limit > 0 ? Math.min(100, Math.round((used / limit) * 100)) : 0;
+/**
+ * Usage against a plan limit: the count, the percentage and the fill all come from
+ * the same two numbers, so they can never disagree.
+ *
+ * Both inputs are normalised before use. They arrive from an API response, where a
+ * field can be missing, null or (after a refund or an adjustment) negative, and a
+ * negative percentage would render as a fill sticking out of its track.
+ *
+ * A limit of 0 or less means unlimited here, as everywhere else in the app
+ * (isUnlimited), and shows an empty bar rather than a full one. Usage above the
+ * limit reports the real count but stops the fill at 100%.
+ */
+export function UsageBar({ used, limit }: { used?: number | null; limit?: number | null }) {
+  const safeUsed = Math.max(0, Number(used) || 0);
+  const safeLimit = Math.max(0, Number(limit) || 0);
+  const pct =
+    safeLimit > 0 ? Math.min(100, Math.max(0, Math.round((safeUsed / safeLimit) * 100))) : 0;
   const bar = pct >= 90 ? "bg-rose-500" : pct >= 70 ? "bg-amber-500" : "bg-[#0B6E4F]";
   return (
     <div className="w-28 min-w-24">
       <div className="mb-1 flex items-baseline justify-between gap-2 text-xs">
-        <span className="text-slate-700">{used.toLocaleString("en-IN")}</span>
+        <span className="text-slate-700">{safeUsed.toLocaleString("en-IN")}</span>
         <span className="text-slate-500">{pct}%</span>
       </div>
       <div className="h-1.5 w-full overflow-hidden rounded-full bg-slate-100">

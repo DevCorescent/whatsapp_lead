@@ -44,8 +44,10 @@ interface AdminTenant {
   logo?: string | null;
   plan?: string | null;
   users?: number;
-  messagesThisMonth?: number;
-  messageLimit?: number;
+  /** Messages sent this calendar month. Always present: GET /api/admin/tenants sends it. */
+  messagesThisMonth: number;
+  /** The plan's monthly message cap. 0 or less means unlimited. */
+  messageLimit: number;
   isActive: boolean;
   createdAt: string;
 }
@@ -65,14 +67,9 @@ interface PlanOption {
 
 const PAGE_SIZE = 20;
 
-const PLAN_MSG_LIMIT: Record<string, number> = {
-  STARTER: 5_000,
-  GROWTH: 50_000,
-  ENTERPRISE: 500_000,
-};
-
 // ─── Hooks ────────────────────────────────────────────────────────────────────
 
+/** Tenant rows for the table, including this month's message usage and each plan's cap. */
 function useAdminTenants(filters: TenantFilters) {
   return useQuery<{ tenants: AdminTenant[]; total: number }>({
     queryKey: ["admin", "tenants", filters],
@@ -272,8 +269,9 @@ export default function AdminTenantsPage() {
               </thead>
               <tbody className="divide-y divide-slate-100">
                 {tenants.map((t) => {
-                  const limit =
-                    t.messageLimit ?? PLAN_MSG_LIMIT[(t.plan ?? "STARTER").toUpperCase()] ?? 5_000;
+                  // Straight from the tenant's plan — 0 or less means unlimited, the
+                  // same convention isUnlimited() uses.
+                  const unlimited = t.messageLimit <= 0;
                   return (
                     <tr
                       key={t.id}
@@ -294,9 +292,9 @@ export default function AdminTenantsPage() {
                       </td>
                       <td className={tdClass}>{t.users ?? 0}</td>
                       <td className={tdClass}>
-                        <UsageBar used={t.messagesThisMonth ?? 0} limit={limit} />
+                        <UsageBar used={t.messagesThisMonth} limit={t.messageLimit} />
                         <p className="mt-0.5 text-[11px] text-slate-400">
-                          of {formatCompact(limit)}
+                          of {unlimited ? "Unlimited" : formatCompact(t.messageLimit)}
                         </p>
                       </td>
                       <td className={tdClass}>

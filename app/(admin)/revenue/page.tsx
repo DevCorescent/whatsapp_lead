@@ -14,6 +14,9 @@ import {
   CircleDollarSign,
   CreditCard,
   IndianRupee,
+  Download,
+  FileSpreadsheet,
+  Loader2,
   RefreshCcw,
   TrendingUp,
   Users,
@@ -135,6 +138,103 @@ const RANGES: { value: Range; label: string }[] = [
 
 const sliceFor = (range: Range) => (range === "3m" ? -3 : range === "6m" ? -6 : -12);
 
+// ─── Export ───────────────────────────────────────────────────────────────────
+
+type ExportFormat = "xlsx" | "csv";
+
+/**
+ * Download the report for the period currently on screen.
+ *
+ * The file is fetched rather than linked to, so a failure surfaces as a message on
+ * this page instead of navigating the operator to a JSON error body. The filename
+ * the server chose is preserved, and a second click is ignored while one is in
+ * flight — generating the report costs a Stripe round trip.
+ */
+function useRevenueExport(range: Range) {
+  const [busy, setBusy] = useState<ExportFormat | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  const run = async (format: ExportFormat) => {
+    if (busy) return;
+    setBusy(format);
+    setError(null);
+    try {
+      const res = await fetch(`/api/admin/revenue/export?format=${format}&range=${range}`);
+      if (!res.ok) {
+        const message = await res
+          .json()
+          .then((j) => j?.error as string | undefined)
+          .catch(() => undefined);
+        throw new Error(message ?? `Export failed (${res.status})`);
+      }
+
+      const disposition = res.headers.get("Content-Disposition") ?? "";
+      const filename =
+        /filename="?([^";]+)"?/.exec(disposition)?.[1] ?? `revenue-report.${format}`;
+
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = filename;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      // Revoked on the next tick: revoking synchronously can cancel the download
+      // in some browsers before it has read the blob.
+      setTimeout(() => URL.revokeObjectURL(url), 0);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not export the revenue report");
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  return { run, busy, error };
+}
+
+function ExportButtons({ range }: { range: Range }) {
+  const { run, busy, error } = useRevenueExport(range);
+
+  return (
+    <div className="flex flex-col items-end gap-1.5">
+      <div className="flex flex-wrap items-center gap-2">
+        <AdminButton
+          variant="secondary"
+          size="sm"
+          onClick={() => void run("xlsx")}
+          disabled={busy !== null}
+          aria-busy={busy === "xlsx"}
+        >
+          {busy === "xlsx" ? (
+            <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />
+          ) : (
+            <FileSpreadsheet className="h-3.5 w-3.5" aria-hidden />
+          )}
+          {busy === "xlsx" ? "Preparing…" : "Export Excel"}
+        </AdminButton>
+        <AdminButton
+          variant="secondary"
+          size="sm"
+          onClick={() => void run("csv")}
+          disabled={busy !== null}
+          aria-busy={busy === "csv"}
+        >
+          {busy === "csv" ? (
+            <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />
+          ) : (
+            <Download className="h-3.5 w-3.5" aria-hidden />
+          )}
+          {busy === "csv" ? "Preparing…" : "Export CSV"}
+        </AdminButton>
+      </div>
+      <p role="alert" className="empty:hidden text-xs text-rose-600">
+        {error}
+      </p>
+    </div>
+  );
+}
+
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
 export default function AdminRevenuePage() {
@@ -154,7 +254,13 @@ export default function AdminRevenuePage() {
       <AdminPageHeader
         title="Revenue"
         description="Subscription and billing analytics across the platform."
-        action={<Segmented options={RANGES} value={range} onChange={setRange} />}
+        action={
+          <div className="flex flex-wrap items-center gap-3">
+            {/* Exports follow the period selected here — 3, 6 or 12 months. */}
+            <Segmented options={RANGES} value={range} onChange={setRange} />
+            <ExportButtons range={range} />
+          </div>
+        }
       />
 
       {preview && !isLoading && <PreviewBanner endpoint="GET /api/admin/revenue" />}

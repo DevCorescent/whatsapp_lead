@@ -1,6 +1,49 @@
+// ============================================================================
+// ROUTE  : /api/admin/revenue
+// GET    - Revenue analytics for the SUPER_ADMIN dashboard.
+//
+// ACCESS - SUPER_ADMIN only.
+//
+// The figures come from lib/admin/revenueReport.ts, which the export endpoint
+// also reads, so the page and the downloaded report can never disagree.
+//
+// Two distinct things are returned and must stay distinct:
+//   · mrr / arr / arpu / ltv — contracted run-rate from plan prices on active
+//     subscriptions in our database. Not money received.
+//   · transactions / failed — real Stripe invoices. Until this route was wired
+//     to Stripe it returned two empty arrays, which is why the page could show a
+//     healthy MRR above the words "No transactions".
+// ============================================================================
+
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
-import { prisma } from "@/lib/prisma";
+import {
+  isFailedInvoice,
+  isPaidInvoice,
+  loadRevenueReport,
+  parseRevenueRange,
+  type TransactionRow,
+} from "@/lib/admin/revenueReport";
+
+/** Most recent transactions the dashboard's table shows. */
+const RECENT_LIMIT = 10;
+
+/** Map a report row onto the shape the dashboard table renders. */
+function toDashboardTransaction(t: TransactionRow) {
+  return {
+    id: t.id,
+    tenant: t.tenant,
+    plan: t.plan,
+    amount: t.amount,
+    gateway: t.provider,
+    status: isPaidInvoice({ status: t.status })
+      ? "PAID"
+      : isFailedInvoice({ status: t.status, attempted: true })
+        ? "FAILED"
+        : "PENDING",
+    date: t.date.toISOString(),
+  };
+}
 
 export async function GET(req: NextRequest) {
   try {
@@ -9,81 +52,34 @@ export async function GET(req: NextRequest) {
     if (session.user.role !== "SUPER_ADMIN") return NextResponse.json({ success: false, error: "Forbidden" }, { status: 403 });
 
     const { searchParams } = new URL(req.url);
-    const range = searchParams.get("range") ?? "12m";
-    const months = range === "3m" ? 3 : range === "6m" ? 6 : 12;
+    // An unrecognised range falls back to 12 months, as this endpoint has always done.
+    const range = parseRevenueRange(searchParams.get("range")) ?? "12m";
 
-    // Active subscriptions with plan prices
-    const activeSubs = await prisma.subscription.findMany({
-      where: { status: { in: ["ACTIVE", "TRIALING"] } },
-      include: {
-        plan: { select: { priceMonthly: true, displayName: true, name: true } },
-        tenant: { select: { name: true } },
-      },
-    });
-
-    const mrr = activeSubs.reduce((s, sub) => s + (sub.plan?.priceMonthly ?? 0), 0);
-    const arr = mrr * 12;
-    const arpu = activeSubs.length > 0 ? Math.round(mrr / activeSubs.length) : 0;
-    const ltv = arpu * 24;
-
-    // Build monthly MRR trend using subscription createdAt dates
-    const allSubs = await prisma.subscription.findMany({
-      include: { plan: { select: { priceMonthly: true, name: true } } },
-      orderBy: { createdAt: "asc" },
-    });
-
-    const now = new Date();
-    const monthLabels = Array.from({ length: months }, (_, i) => {
-      const d = new Date(now.getFullYear(), now.getMonth() - (months - 1 - i), 1);
-      return d.toLocaleString("en-IN", { month: "short", year: "2-digit" });
-    });
-
-    const monthDates = Array.from({ length: months }, (_, i) => {
-      return new Date(now.getFullYear(), now.getMonth() - (months - 1 - i), 1);
-    });
-
-    // For each month, sum plan prices for subscriptions active at that point
-    const trend = monthDates.map((monthStart, i) => {
-      const monthEnd = new Date(monthStart.getFullYear(), monthStart.getMonth() + 1, 0);
-      const activeThen = allSubs.filter(
-        (s) => s.createdAt <= monthEnd && (s.cancelledAt === null || s.cancelledAt > monthStart)
-      );
-      return {
-        month: monthLabels[i],
-        mrr: activeThen.reduce((sum, s) => sum + (s.plan?.priceMonthly ?? 0), 0),
-      };
-    });
-
-    const PLAN_KEYS: Record<string, "starter" | "growth" | "enterprise"> = {
-      STARTER: "starter",
-      GROWTH: "growth",
-      ENTERPRISE: "enterprise",
-    };
-
-    const byPlan = monthDates.map((monthStart, i) => {
-      const monthEnd = new Date(monthStart.getFullYear(), monthStart.getMonth() + 1, 0);
-      const activeThen = allSubs.filter(
-        (s) => s.createdAt <= monthEnd && (s.cancelledAt === null || s.cancelledAt > monthStart)
-      );
-      const breakdown = { starter: 0, growth: 0, enterprise: 0 };
-      for (const s of activeThen) {
-        const key = PLAN_KEYS[s.plan?.name ?? ""] ?? null;
-        if (key) breakdown[key] += s.plan?.priceMonthly ?? 0;
-      }
-      return { month: monthLabels[i], ...breakdown };
-    });
+    const report = await loadRevenueReport(range);
 
     return NextResponse.json({
       success: true,
       data: {
-        mrr,
-        arr,
-        arpu,
-        ltv,
-        trend,
-        byPlan,
-        transactions: [],
-        failed: [],
+        mrr: report.contracted.mrr,
+        arr: report.contracted.arr,
+        arpu: report.contracted.arpu,
+        ltv: report.contracted.ltv,
+        trend: report.monthly.map((m) => ({ month: m.label, mrr: m.contractedMrr })),
+        byPlan: report.monthly.map((m) => ({
+          month: m.label,
+          starter: m.mrrByPlanName.STARTER ?? 0,
+          growth: m.mrrByPlanName.GROWTH ?? 0,
+          enterprise: m.mrrByPlanName.ENTERPRISE ?? 0,
+        })),
+        transactions: report.transactions.slice(0, RECENT_LIMIT).map(toDashboardTransaction),
+        failed: report.failedTransactions.slice(0, RECENT_LIMIT).map(toDashboardTransaction),
+        // So the page can say why the transaction tables are empty, rather than
+        // leaving "No transactions" to mean both "none happened" and "not wired up".
+        collected: {
+          available: report.collected.available,
+          unavailableReason: report.collected.unavailableReason,
+          totalTransactions: report.collected.totalTransactions,
+        },
       },
     });
   } catch (err) {
