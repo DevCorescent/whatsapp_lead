@@ -78,6 +78,7 @@ export interface ConnectWhatsAppInput {
   wabaId?: string;
   phoneNumberId?: string;
   businessId?: string;
+  redirectUri?: string;
 }
 
 /** Response of POST /api/integrations/whatsapp/connect. */

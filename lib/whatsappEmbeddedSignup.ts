@@ -122,24 +122,25 @@ function graphError(res: Response, body: Record<string, unknown>): MetaApiError 
  * @throws {MetaApiError} When Meta rejects the exchange — an expired or replayed code is the
  *   usual cause, and Meta's message says so.
  */
-export async function exchangeCodeForBusinessToken(code: string): Promise<string> {
+export async function exchangeCodeForBusinessToken(code: string, redirectUri?: string): Promise<string> {
   const appId = process.env.WHATSAPP_APP_ID?.trim();
   const appSecret = process.env.WHATSAPP_APP_SECRET?.trim();
   if (!appId || !appSecret) {
     throw new Error("Embedded Signup is not configured on this deployment");
   }
 
-  // Meta's official Embedded Signup sample omits redirect_uri entirely for the JS SDK
-  // popup flow — the popup delivers the code through Facebook's cross-domain messaging,
-  // not through a URL redirect, so there is no redirect_uri to match. Passing any URL
-  // (page URL, login_success.html, empty string) all produce error 36008 or 191.
+  // The redirect_uri must match what the FB.login popup registered internally.
+  // For the JS SDK popup with Business Login (config_id), this is the current page URL
+  // (origin + pathname) at the time FB.login was called. The client captures and sends it.
+  // Omitting redirect_uri → 36008. Passing a wrong URL → 36008 or 191.
   const params = new URLSearchParams({
     client_id: appId,
     client_secret: appSecret,
     code,
   });
+  if (redirectUri) params.set("redirect_uri", redirectUri);
 
-  console.log("[WA ES] exchangeCodeForBusinessToken — appId:", appId, "codePrefix:", code.slice(0, 8));
+  console.log("[WA ES] exchangeCodeForBusinessToken — appId:", appId, "codePrefix:", code.slice(0, 8), "redirectUri:", redirectUri ?? "(omitted)");
 
   // Meta documents this as a GET with query parameters. The URL therefore carries the app
   // secret, which is exactly why neither it nor any part of it is ever logged from here.

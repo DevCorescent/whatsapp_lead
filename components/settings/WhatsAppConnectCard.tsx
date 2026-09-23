@@ -472,6 +472,11 @@ export function WhatsAppConnectCard({ businessId }: { businessId?: string }) {
     signupDataRef.current = null;
     abortReasonRef.current = null;
 
+    // Try root origin first (config may point there), then full path as fallback logged
+    const pageOrigin = window.location.origin;
+    const pagePath = `${window.location.origin}${window.location.pathname}`;
+    console.log("[WA Signup] redirect candidates — origin:", pageOrigin, "path:", pagePath);
+
     window.FB.login(
       (response) => {
         console.log("[WA Signup] FB.login callback response status:", response?.status);
@@ -493,6 +498,7 @@ export function WhatsAppConnectCard({ businessId }: { businessId?: string }) {
           wabaId: data?.waba_id,
           phoneNumberId: data?.phone_number_id,
           businessId: target?.id,
+          redirectUri: pageOrigin,
         });
         connect.mutate(
           {
@@ -500,6 +506,7 @@ export function WhatsAppConnectCard({ businessId }: { businessId?: string }) {
             wabaId: data?.waba_id,
             phoneNumberId: data?.phone_number_id,
             businessId: target?.id,
+            redirectUri: pageOrigin,
           },
           {
             onSuccess: (result) => {

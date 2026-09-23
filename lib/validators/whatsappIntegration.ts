@@ -29,6 +29,8 @@ export const connectWhatsAppSchema = z.object({
   phoneNumberId: metaId.optional(),
   /** Business to connect. Defaults to the caller's current business; always ownership-checked. */
   businessId: z.string().trim().min(1).max(64).optional(),
+  /** The page URL (origin+pathname) from which FB.login was called; matched as redirect_uri. */
+  redirectUri: z.string().url().max(512).optional(),
 });
 
 /** Our own row id (cuid). Always re-checked against the caller's tenant before use. */
