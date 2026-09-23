@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useCallback } from "react";
 import Link from "next/link";
 import { Check, Sparkles, ArrowLeft } from "lucide-react";
 import { Badge, Button, Card, PageHeader, Skeleton } from "@/components/ui";
@@ -10,31 +10,96 @@ import {
   useBillingPlans,
   useCheckout,
   useChangePlan,
+  useVerifyPayment,
   type PlanChangeQuote,
   type PlanDTO,
+  type RazorpayOrderData,
 } from "@/hooks/useBilling";
+
+declare global {
+  interface Window {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    Razorpay: new (options: Record<string, unknown>) => { open(): void };
+  }
+}
+
+function loadRazorpayScript(): Promise<void> {
+  return new Promise((resolve, reject) => {
+    if (typeof window !== "undefined" && window.Razorpay) {
+      resolve();
+      return;
+    }
+    const script = document.createElement("script");
+    script.src = "https://checkout.razorpay.com/v1/checkout.js";
+    script.onload = () => resolve();
+    script.onerror = () => reject(new Error("Failed to load Razorpay checkout"));
+    document.head.appendChild(script);
+  });
+}
 
 export default function PlansPage() {
   const { data, isLoading } = useBillingPlans();
   const checkout = useCheckout();
   const change = useChangePlan();
+  const verifyPayment = useVerifyPayment();
   const [busyId, setBusyId] = useState<string | null>(null);
   const [planError, setPlanError] = useState<string | null>(null);
   const [planSuccess, setPlanSuccess] = useState<string | null>(null);
-  // The server's quote, held until the customer confirms it. Nothing changes and
-  // nothing is charged while this is on screen.
   const [quote, setQuote] = useState<PlanChangeQuote | null>(null);
   const [confirming, setConfirming] = useState(false);
 
   const plans = data?.plans ?? [];
   const currentPlanId = data?.currentPlanId ?? null;
   const currentPlan = plans.find((p) => p.id === currentPlanId) ?? null;
-  // A paid, active subscription is what makes a change prorateable — there is a
-  // period with unused value in it. stripePriceId is deliberately NOT part of this
-  // any more: /api/billing/change prices the move itself and charges it as a
-  // one-off, so a plan that was never mirrored into Stripe is no longer a dead end.
   const hasActivePaid = Boolean(
     currentPlan && currentPlan.priceMonthly > 0 && data?.status === "ACTIVE",
+  );
+
+  /** Open the Razorpay checkout modal and verify the payment on success. */
+  const openRazorpayModal = useCallback(
+    (orderData: RazorpayOrderData, planId: string): Promise<void> => {
+      return new Promise(async (resolve, reject) => {
+        try {
+          await loadRazorpayScript();
+        } catch (e) {
+          reject(e);
+          return;
+        }
+
+        const rzp = new window.Razorpay({
+          key: orderData.keyId,
+          order_id: orderData.orderId,
+          amount: orderData.amount,
+          currency: orderData.currency,
+          name: "WhatsCRM",
+          description: orderData.planName,
+          theme: { color: "#10b981" },
+          handler: async (response: {
+            razorpay_payment_id: string;
+            razorpay_order_id: string;
+            razorpay_signature: string;
+          }) => {
+            try {
+              await verifyPayment.mutateAsync({
+                razorpay_order_id: response.razorpay_order_id,
+                razorpay_payment_id: response.razorpay_payment_id,
+                razorpay_signature: response.razorpay_signature,
+                planId,
+                planChangeId: orderData.planChangeId,
+              });
+              resolve();
+            } catch (e) {
+              reject(e);
+            }
+          },
+          modal: {
+            ondismiss: () => resolve(),
+          },
+        });
+        rzp.open();
+      });
+    },
+    [verifyPayment],
   );
 
   const choose = async (plan: PlanDTO) => {
@@ -42,17 +107,17 @@ export default function PlansPage() {
     setPlanError(null);
     setPlanSuccess(null);
     try {
-      // An existing paid subscriber is quoted first and shown what it costs before
-      // anything happens. Everyone else starts a fresh checkout.
       if (hasActivePaid && plan.priceMonthly > 0) {
         setQuote(await fetchPlanChangeQuote(plan.id));
         return;
       }
       const res = await checkout.mutateAsync(plan.id);
-      if (res?.url) {
-        window.location.assign(res.url);
+      if (res?.orderId) {
+        await openRazorpayModal(res as RazorpayOrderData, plan.id);
+        setPlanSuccess("Your plan is now active.");
         return;
       }
+      // Free plan assigned directly.
       setPlanSuccess("Your plan is now active.");
     } catch (e) {
       setPlanError((e as Error).message);
@@ -61,17 +126,19 @@ export default function PlansPage() {
     }
   };
 
-  /** Act on the quote the customer just accepted. */
   const confirmChange = async () => {
     if (!quote) return;
     setConfirming(true);
     setPlanError(null);
     try {
       const res = await change.mutateAsync(quote.targetPlan.id);
-      // A payable upgrade hands back a Stripe URL and changes nothing yet — the
-      // plan moves only once Stripe confirms the payment.
-      if (res?.url) {
-        window.location.assign(res.url);
+      if (res?.orderId) {
+        await openRazorpayModal(
+          { ...(res as RazorpayOrderData), planChangeId: res.planChangeId },
+          quote.targetPlan.id,
+        );
+        setQuote(null);
+        setPlanSuccess(`You're now on ${quote.targetPlan.displayName}.`);
         return;
       }
       setQuote(null);
@@ -104,7 +171,7 @@ export default function PlansPage() {
 
       {data && !data.billingEnabled && (
         <div className="mb-4 rounded-lg bg-amber-50 px-4 py-3 text-sm text-amber-800">
-          Payments are not configured on this deployment. Free plans can still be selected; paid checkout is disabled until Stripe is connected.
+          Payments are not configured on this deployment. Free plans can still be selected; paid checkout is disabled until Razorpay is connected.
         </div>
       )}
 
@@ -115,7 +182,6 @@ export default function PlansPage() {
         <div className="mb-4 rounded-lg bg-emerald-50 px-4 py-3 text-sm text-emerald-700">{planSuccess}</div>
       )}
 
-      {/* The quote. Every figure below came from the server; none is computed here. */}
       {quote && (
         <Card className="mb-5 p-5">
           <div className="flex flex-wrap items-start justify-between gap-3">
@@ -226,8 +292,6 @@ export default function PlansPage() {
                 <div className="flex items-center justify-between">
                   <h3 className="text-lg font-semibold text-slate-900">{plan.displayName || plan.name}</h3>
                   <span className="flex items-center gap-1.5">
-                    {/* A tier built for this workspace alone. It appears here
-                        only because they are on it — see listPlansFor. */}
                     {plan.visibility === "PRIVATE" && (
                       <Badge className="bg-violet-50 text-violet-700 ring-violet-600/20">Custom</Badge>
                     )}

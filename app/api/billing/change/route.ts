@@ -22,8 +22,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
-import { getStripe, isStripeConfigured, appBaseUrl } from "@/lib/stripe";
-import { getOrCreateStripeCustomer } from "@/lib/billing/subscription";
+import { getRazorpay, isRazorpayConfigured } from "@/lib/razorpay";
 import { findPurchasablePlan } from "@/lib/billing/plans";
 import { getUsage } from "@/lib/billing/usage";
 import { isUnlimited, planLimits } from "@/lib/billing/tiers";
@@ -208,39 +207,13 @@ export async function POST(req: NextRequest) {
     const resultPeriodStart =
       quote.kind === "DOWNGRADE" ? quote.periodStart : sub.currentPeriodStart;
 
-    // Supersede any earlier pending quote for this tenant. Leaving them open would
-    // let a customer pay a stale, cheaper quote after prices or plans moved on.
-    //
-    // The Stripe session is expired too, not just the row. Cancelling our record
-    // alone would leave a payable checkout page in the customer's other tab: paying
-    // it takes their money and then finds a CANCELLED row that applyPlanChange
-    // rightly refuses, so they are charged and not upgraded. Expiring it at Stripe
-    // is what makes the supersede complete on both sides.
+    // Supersede any earlier pending quote — cancel stale rows so a customer
+    // cannot pay an old, cheaper price after plans have changed.
     const superseded = await prisma.planChange.findMany({
       where: { tenantId, status: "PENDING" },
-      select: { id: true, stripeSessionId: true },
+      select: { id: true },
     });
     if (superseded.length > 0) {
-      if (isStripeConfigured()) {
-        const stripeForExpiry = getStripe();
-        await Promise.all(
-          superseded
-            .filter((row) => row.stripeSessionId)
-            .map(async (row) => {
-              try {
-                await stripeForExpiry.checkout.sessions.expire(row.stripeSessionId!);
-              } catch (error) {
-                // Already expired, already paid, or unreachable. Not fatal: the row
-                // is cancelled either way, and a session that was already paid is
-                // handled by the webhook against its own row.
-                console.warn("[BILLING CHANGE] Could not expire superseded session", {
-                  planChangeId: row.id,
-                  reason: error instanceof Error ? error.message : "unknown error",
-                });
-              }
-            }),
-        );
-      }
       await prisma.planChange.updateMany({
         where: { id: { in: superseded.map((row) => row.id) } },
         data: { status: "CANCELLED" },
@@ -288,8 +261,9 @@ export async function POST(req: NextRequest) {
       });
     }
 
-    // Paid upgrade. From here the plan does not move until Stripe confirms.
-    if (!isStripeConfigured()) {
+    // Paid upgrade — create a Razorpay order for the prorated amount.
+    // The plan does not move until /api/billing/verify-payment confirms the payment.
+    if (!isRazorpayConfigured()) {
       await prisma.planChange.update({ where: { id: change.id }, data: { status: "FAILED" } });
       return NextResponse.json(
         { success: false, error: "Payments are not configured on this deployment." },
@@ -297,50 +271,26 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const stripe = getStripe();
-    const customerId = await getOrCreateStripeCustomer(tenantId);
-
-    // A one-off charge built from `price_data` rather than a stored Stripe price:
-    // the amount is a proration computed for this customer at this moment, so no
-    // catalogue price could express it. The figure comes from the PlanChange row,
-    // which is the same row the webhook re-reads before applying anything.
-    const checkout = await stripe.checkout.sessions.create({
-      mode: "payment",
-      customer: customerId,
-      line_items: [
-        {
-          quantity: 1,
-          price_data: {
-            currency: PLAN_CURRENCY,
-            unit_amount: change.amountDueMinor,
-            product_data: {
-              name: `Upgrade to ${targetPlan.displayName}`,
-              description: `Prorated for the remainder of your billing period, ending ${quote.periodEnd.toDateString()}.`,
-            },
-          },
-        },
-      ],
-      success_url: `${appBaseUrl()}/billing?change=success`,
-      cancel_url: `${appBaseUrl()}/billing/plans?change=cancelled`,
-      // Read back by the webhook to find this row. Not trusted for the amount —
-      // that is re-read from the database.
-      metadata: { tenantId, planChangeId: change.id },
-      payment_intent_data: { metadata: { tenantId, planChangeId: change.id } },
-    });
-
-    await prisma.planChange.update({
-      where: { id: change.id },
-      data: { stripeSessionId: checkout.id },
+    const razorpay = getRazorpay();
+    const order = await razorpay.orders.create({
+      amount: change.amountDueMinor,
+      currency: PLAN_CURRENCY.toUpperCase(),
+      receipt: `chg_${change.id.slice(-8)}_${Date.now()}`,
+      notes: { tenantId, planChangeId: change.id },
     });
 
     return NextResponse.json({
       success: true,
       data: {
-        url: checkout.url,
+        orderId: order.id,
+        amount: order.amount,
+        currency: order.currency,
+        keyId: process.env.RAZORPAY_KEY_ID,
         applied: false,
         kind: result.kind,
         amountDue: toMajor(change.amountDueMinor),
         planChangeId: change.id,
+        planName: targetPlan.displayName,
       },
     });
   } catch (error) {

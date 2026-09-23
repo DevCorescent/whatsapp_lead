@@ -9,7 +9,7 @@
 import { NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { listPlansFor } from "@/lib/billing/plans";
-import { isStripeConfigured } from "@/lib/stripe";
+import { isRazorpayConfigured } from "@/lib/razorpay";
 
 export async function GET() {
   const session = await auth();
@@ -25,7 +25,7 @@ export async function GET() {
         plans,
         currentPlanId,
         status,
-        billingEnabled: isStripeConfigured(),
+        billingEnabled: isRazorpayConfigured(),
       },
     });
   } catch (error) {

@@ -1,12 +1,10 @@
 // ROUTE : POST /api/billing/cancel — schedule the subscription to end at the
-// current period end (Stripe cancel_at_period_end). Admins only. Refuses if the
-// subscription is already cancelled or already scheduled to cancel.
+// current period end. Admins only. Refuses if already cancelled or already
+// scheduled to cancel.
 
 import { NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
-import { getStripe, isStripeConfigured } from "@/lib/stripe";
-import { syncStripeSubscription } from "@/lib/billing/subscription";
 
 const EDIT_ROLES = ["SUPER_ADMIN", "TENANT_OWNER", "ADMIN"];
 
@@ -26,13 +24,7 @@ export async function POST() {
       return NextResponse.json({ success: false, error: "Subscription is already set to cancel at period end." }, { status: 400 });
     }
 
-    if (sub.stripeSubId && isStripeConfigured()) {
-      const updated = await getStripe().subscriptions.update(sub.stripeSubId, { cancel_at_period_end: true });
-      await syncStripeSubscription(updated);
-    } else {
-      // Free/unmanaged subscription — mark locally.
-      await prisma.subscription.update({ where: { tenantId }, data: { cancelAtPeriodEnd: true } });
-    }
+    await prisma.subscription.update({ where: { tenantId }, data: { cancelAtPeriodEnd: true } });
 
     const fresh = await prisma.subscription.findUnique({ where: { tenantId } });
     return NextResponse.json({ success: true, data: fresh });

@@ -15,6 +15,7 @@ export interface BillingSummary {
   cancelAtPeriodEnd: boolean;
   trialEndsAt: string | null;
   hasStripe: boolean;
+  hasRazorpay: boolean;
   usage: {
     contacts: UsageMetric;
     messages: UsageMetric;
@@ -32,6 +33,15 @@ export interface BillingSummary {
     url: string | null;
     pdf: string | null;
   }[];
+}
+
+export interface RazorpayOrderData {
+  orderId: string;
+  amount: number;
+  currency: string;
+  keyId: string;
+  planName: string;
+  planChangeId?: string;
 }
 
 export interface PlanDTO {
@@ -170,5 +180,24 @@ export function useResumeSubscription() {
   return useMutation({
     mutationFn: () => post("/api/billing/resume"),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["billing"] }),
+  });
+}
+
+export interface VerifyPaymentInput {
+  razorpay_order_id: string;
+  razorpay_payment_id: string;
+  razorpay_signature: string;
+  planId: string;
+  planChangeId?: string;
+}
+
+export function useVerifyPayment() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (data: VerifyPaymentInput) => post("/api/billing/verify-payment", data),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["billing"] });
+      queryClient.invalidateQueries({ queryKey: ["billing-plans"] });
+    },
   });
 }

@@ -1,14 +1,14 @@
 // ROUTE : POST /api/billing/checkout — start a subscription for a plan.
-//  - Free plan (price 0 / no Stripe price): assigned directly, no payment.
-//  - Paid plan: creates a Stripe Checkout Session and returns its URL.
+//  - Free plan (price 0): assigned directly, no payment.
+//  - Paid plan: creates a Razorpay order and returns {orderId, amount, currency, keyId}.
+//    Client opens the Razorpay checkout modal; on success calls /api/billing/verify-payment.
 // Admins only. Prevents purchasing the plan the tenant is already on.
 
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
-import { getStripe, isStripeConfigured, appBaseUrl } from "@/lib/stripe";
-import { getOrCreateStripeCustomer } from "@/lib/billing/subscription";
+import { getRazorpay, isRazorpayConfigured } from "@/lib/razorpay";
 import { findPurchasablePlan } from "@/lib/billing/plans";
 import { PLAN_CURRENCY } from "@/lib/billing/planChange";
 import { toMinor } from "@/lib/billing/proration";
@@ -28,29 +28,16 @@ export async function POST(req: NextRequest) {
   if (!parsed.success) return NextResponse.json({ success: false, error: parsed.error.issues[0].message }, { status: 400 });
 
   try {
-    // Not `findFirst({ id, isActive })`: a planId is not a secret, and a bare id
-    // lookup would let any tenant buy another customer's private custom tier at
-    // whatever was negotiated for them. findPurchasablePlan applies the
-    // visibility rule and returns null for "not yours" as well as "no such plan".
     const plan = await findPurchasablePlan(tenantId, parsed.data.planId);
     if (!plan) return NextResponse.json({ success: false, error: "Plan not found" }, { status: 404 });
 
     const current = await prisma.subscription.findUnique({ where: { tenantId } });
 
-    // Prevent purchasing the same active plan again (duplicate subscription).
     if (current && current.planId === plan.id && current.status === "ACTIVE") {
       return NextResponse.json({ success: false, error: "You are already on this plan." }, { status: 400 });
     }
 
-    // Free plan — assign directly, no Stripe involved.
-    //
-    // Decided by PRICE ALONE. This condition used to read
-    //   plan.priceMonthly <= 0 || !plan.stripePriceId
-    // which handed out any paid plan that had no Stripe price configured — and on
-    // this deployment that was every plan, so a single POST to this route granted
-    // the ₹9,999 tier free for thirty days. A missing stripePriceId is a setup gap
-    // on our side, never a reason to give a customer a paid plan for nothing; the
-    // paid branch below prices such a plan inline instead.
+    // Free plan — assign directly without payment.
     if (plan.priceMonthly <= 0) {
       const now = new Date();
       const end = new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000);
@@ -67,47 +54,33 @@ export async function POST(req: NextRequest) {
         create: { tenantId, ...data },
         update: data,
       });
-      return NextResponse.json({ success: true, data: { url: null, assigned: true } });
+      return NextResponse.json({ success: true, data: { orderId: null, assigned: true } });
     }
 
-    if (!isStripeConfigured()) {
+    if (!isRazorpayConfigured()) {
       return NextResponse.json({ success: false, error: "Billing is not configured." }, { status: 400 });
     }
 
-    const stripe = getStripe();
-    const customerId = await getOrCreateStripeCustomer(tenantId);
+    const razorpay = getRazorpay();
+    const amountPaise = toMinor(plan.priceMonthly);
 
-    const checkout = await stripe.checkout.sessions.create({
-      mode: "subscription",
-      customer: customerId,
-      // A catalogue price when the plan has one, otherwise the same figure priced
-      // inline from the database. Inline `price_data` is what lets a plan that was
-      // never mirrored into Stripe still be *sold* rather than given away — the
-      // amount charged is always Plan.priceMonthly, read here on the server.
-      line_items: [
-        plan.stripePriceId
-          ? { price: plan.stripePriceId, quantity: 1 }
-          : {
-              quantity: 1,
-              price_data: {
-                currency: PLAN_CURRENCY,
-                unit_amount: toMinor(plan.priceMonthly),
-                recurring: { interval: "month" as const },
-                product_data: {
-                  name: plan.displayName,
-                  ...(plan.description ? { description: plan.description } : {}),
-                },
-              },
-            },
-      ],
-      success_url: `${appBaseUrl()}/billing?checkout=success`,
-      cancel_url: `${appBaseUrl()}/billing/plans?checkout=cancelled`,
-      metadata: { tenantId, planId: plan.id },
-      subscription_data: { metadata: { tenantId, planId: plan.id } },
-      allow_promotion_codes: true,
+    const order = await razorpay.orders.create({
+      amount: amountPaise,
+      currency: PLAN_CURRENCY.toUpperCase(),
+      receipt: `sub_${tenantId.slice(-8)}_${Date.now()}`,
+      notes: { tenantId, planId: plan.id },
     });
 
-    return NextResponse.json({ success: true, data: { url: checkout.url } });
+    return NextResponse.json({
+      success: true,
+      data: {
+        orderId: order.id,
+        amount: order.amount,
+        currency: order.currency,
+        keyId: process.env.RAZORPAY_KEY_ID,
+        planName: plan.displayName,
+      },
+    });
   } catch (error) {
     console.error("[BILLING CHECKOUT]", error);
     return NextResponse.json({ success: false, error: "Failed to start checkout" }, { status: 500 });
