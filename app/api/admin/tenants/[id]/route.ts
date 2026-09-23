@@ -18,16 +18,16 @@ export async function GET(req: NextRequest, { params }: Params) {
       subscription: { include: { plan: { include: { ownerTenant: { select: { id: true, name: true } } } } } },
       settings: true,
       _count: { select: { users: true, contacts: true, leads: true, conversations: true } },
+      users: {
+        select: { id: true, name: true, email: true, phone: true, role: true, isActive: true, lastLoginAt: true, createdAt: true },
+        orderBy: { createdAt: "asc" },
+        take: 20,
+      },
     },
   });
 
   if (!tenant) return NextResponse.json({ success: false, error: "Tenant not found" }, { status: 404 });
 
-  // `settings: true` includes the tenant's WhatsApp access token, WhatsApp App Secret,
-  // webhook verify token and SMTP password. The admin screen only reads them to render
-  // "Yes / Not set", so it is served the same allowlisted projection as /api/settings.
-  // Being SUPER_ADMIN is a reason to see that a credential exists, not to be handed a
-  // token that can send as that customer.
   const { settings, ...rest } = tenant;
 
   return NextResponse.json({

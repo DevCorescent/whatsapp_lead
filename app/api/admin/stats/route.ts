@@ -30,7 +30,7 @@ export async function GET(req: NextRequest) {
       prisma.tenant.count(),
       prisma.tenant.count({ where: { isActive: true } }),
       prisma.user.count({ where: { role: { not: "SUPER_ADMIN" } } }),
-      prisma.message.count(),
+      prisma.message.count({ where: { createdAt: { gte: thirtyDaysAgo } } }),
       prisma.tenant.count({ where: { createdAt: { gte: thisMonthStart } } }),
       prisma.tenant.count({ where: { createdAt: { gte: lastMonthStart, lt: thisMonthStart } } }),
       prisma.subscription.findMany({

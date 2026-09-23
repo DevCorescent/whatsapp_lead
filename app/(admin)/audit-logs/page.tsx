@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { ScrollText, Search } from "lucide-react";
 import {
@@ -50,8 +50,10 @@ const ACTION_COLOR: Record<string, string> = {
 };
 
 export default function AuditLogsPage() {
+  const [inputValue, setInputValue] = useState("");
   const [search, setSearch] = useState("");
   const [page, setPage] = useState(1);
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const { data, isLoading } = useAuditLogs(search, page);
 
   const logs = data?.data ?? [];
@@ -70,8 +72,13 @@ export default function AuditLogsPage() {
           <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
           <input
             type="search"
-            value={search}
-            onChange={(e) => { setSearch(e.target.value); setPage(1); }}
+            value={inputValue}
+            onChange={(e) => {
+              const val = e.target.value;
+              setInputValue(val);
+              if (debounceRef.current) clearTimeout(debounceRef.current);
+              debounceRef.current = setTimeout(() => { setSearch(val); setPage(1); }, 400);
+            }}
             placeholder="Search by action or user…"
             className={cn(inputClass, "border-slate-200 bg-white pl-9 text-slate-900 placeholder:text-slate-400 focus:ring-[#0B6E4F]")}
           />

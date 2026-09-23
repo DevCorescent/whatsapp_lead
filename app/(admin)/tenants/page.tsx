@@ -1,20 +1,17 @@
 "use client";
 
-/**
- * Tenant management (SUPER_ADMIN).
- * Data: GET /api/admin/tenants · POST /api/admin/tenants · PATCH /api/admin/tenants/[id]
- * TODO [SHALMON]: all three return 501 today — the table renders an empty state and the
- * provision / suspend mutations surface the API error inline instead of crashing.
- */
-
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
+  AlertTriangle,
   Building2,
+  ChevronLeft,
+  ChevronRight,
   Eye,
   MoreHorizontal,
   Pause,
+  Pencil,
   Play,
   Plus,
   RefreshCcw,
@@ -38,7 +35,7 @@ import {
 } from "@/components/admin/ui";
 import { cn, formatCompact, formatDate } from "@/lib/utils";
 
-// ─── Types + data ─────────────────────────────────────────────────────────────
+// ─── Types ────────────────────────────────────────────────────────────────────
 
 interface AdminTenant {
   id: string;
@@ -57,30 +54,59 @@ interface TenantFilters {
   search: string;
   plan: string;
   status: string;
+  page: number;
 }
 
-/** Fallback caps so the usage bar still means something before the API sends limits. */
+interface PlanOption {
+  id: string;
+  name: string;
+  displayName: string;
+}
+
+const PAGE_SIZE = 20;
+
 const PLAN_MSG_LIMIT: Record<string, number> = {
   STARTER: 5_000,
   GROWTH: 50_000,
   ENTERPRISE: 500_000,
 };
 
+// ─── Hooks ────────────────────────────────────────────────────────────────────
+
 function useAdminTenants(filters: TenantFilters) {
-  return useQuery<AdminTenant[]>({
+  return useQuery<{ tenants: AdminTenant[]; total: number }>({
     queryKey: ["admin", "tenants", filters],
     queryFn: async () => {
       const params = new URLSearchParams();
       if (filters.search) params.set("search", filters.search);
       if (filters.plan) params.set("planId", filters.plan);
       if (filters.status) params.set("isActive", filters.status === "active" ? "true" : "false");
+      params.set("page", String(filters.page));
+      params.set("limit", String(PAGE_SIZE));
       const res = await fetch(`/api/admin/tenants?${params.toString()}`);
       if (!res.ok) throw new Error(`Failed to load tenants (${res.status})`);
       const json = await res.json();
       const rows = json.data ?? json;
-      return (Array.isArray(rows) ? rows : []) as AdminTenant[];
+      const total = json.pagination?.total ?? (Array.isArray(rows) ? rows.length : 0);
+      return {
+        tenants: (Array.isArray(rows) ? rows : []) as AdminTenant[],
+        total,
+      };
     },
     retry: false,
+  });
+}
+
+function useAdminPlans() {
+  return useQuery<PlanOption[]>({
+    queryKey: ["admin", "plans", "filter-options"],
+    queryFn: async () => {
+      const res = await fetch("/api/admin/plans?visibility=PUBLIC");
+      if (!res.ok) return [];
+      const json = await res.json();
+      return (json.data ?? []) as PlanOption[];
+    },
+    staleTime: 5 * 60 * 1000,
   });
 }
 
@@ -125,16 +151,26 @@ export default function AdminTenantsPage() {
   const [search, setSearch] = useState("");
   const [plan, setPlan] = useState("");
   const [status, setStatus] = useState("");
+  const [page, setPage] = useState(1);
   const [provisionOpen, setProvisionOpen] = useState(false);
   const [menuFor, setMenuFor] = useState<string | null>(null);
+  const [editTenant, setEditTenant] = useState<AdminTenant | null>(null);
+  const [suspendConfirm, setSuspendConfirm] = useState<AdminTenant | null>(null);
 
   const { data, isLoading, isError, error, refetch, isFetching } = useAdminTenants({
     search,
     plan,
     status,
+    page,
   });
+  const { data: planOptions = [] } = useAdminPlans();
   const updateTenant = useUpdateTenant();
-  const tenants = data ?? [];
+
+  const tenants = data?.tenants ?? [];
+  const total = data?.total ?? 0;
+  const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
+
+  const resetPage = () => setPage(1);
 
   return (
     <>
@@ -161,7 +197,7 @@ export default function AdminTenantsPage() {
           <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
           <input
             value={search}
-            onChange={(e) => setSearch(e.target.value)}
+            onChange={(e) => { setSearch(e.target.value); resetPage(); }}
             placeholder="Search by workspace name or slug…"
             aria-label="Search tenants"
             className={cn(adminInputClass, "pl-9")}
@@ -169,18 +205,20 @@ export default function AdminTenantsPage() {
         </div>
         <select
           value={plan}
-          onChange={(e) => setPlan(e.target.value)}
+          onChange={(e) => { setPlan(e.target.value); resetPage(); }}
           aria-label="Filter by plan"
           className={cn(adminSelectClass, "sm:w-44")}
         >
           <option value="">All plans</option>
-          <option value="starter">Starter</option>
-          <option value="growth">Growth</option>
-          <option value="enterprise">Enterprise</option>
+          {planOptions.map((p) => (
+            <option key={p.id} value={p.name.toLowerCase()}>
+              {p.displayName}
+            </option>
+          ))}
         </select>
         <select
           value={status}
-          onChange={(e) => setStatus(e.target.value)}
+          onChange={(e) => { setStatus(e.target.value); resetPage(); }}
           aria-label="Filter by status"
           className={cn(adminSelectClass, "sm:w-44")}
         >
@@ -208,7 +246,7 @@ export default function AdminTenantsPage() {
             title={isError ? "Tenants unavailable" : "No tenants found"}
             description={
               isError
-                ? `${(error as Error).message}. GET /api/admin/tenants is not implemented yet.`
+                ? `${(error as Error).message}`
                 : "No workspace matches these filters. Provision one to get started."
             }
             action={
@@ -219,131 +257,211 @@ export default function AdminTenantsPage() {
             }
           />
         ) : (
-          <AdminTable>
-            <thead className="border-b border-slate-200 bg-slate-50">
-              <tr>
-                <th className={thClass}>Workspace</th>
-                <th className={thClass}>Plan</th>
-                <th className={thClass}>Users</th>
-                <th className={thClass}>Msgs / mo</th>
-                <th className={thClass}>Status</th>
-                <th className={thClass}>Joined</th>
-                <th className={cn(thClass, "text-right")}>Actions</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-100">
-              {tenants.map((t) => {
-                const limit =
-                  t.messageLimit ?? PLAN_MSG_LIMIT[(t.plan ?? "STARTER").toUpperCase()] ?? 5_000;
-                return (
-                  <tr
-                    key={t.id}
-                    onClick={() => router.push(`/tenants/${t.id}`)}
-                    className="cursor-pointer transition hover:bg-slate-50"
-                  >
-                    <td className={tdClass}>
-                      <div className="flex items-center gap-3">
-                        <Avatar name={t.name} src={t.logo} size="sm" />
-                        <div className="min-w-0">
-                          <p className="truncate font-medium text-slate-900">{t.name}</p>
-                          <p className="truncate text-xs text-slate-500">/{t.slug}</p>
-                        </div>
-                      </div>
-                    </td>
-                    <td className={tdClass}>
-                      <AdminBadge tone={planTone(t.plan)}>{t.plan ?? "—"}</AdminBadge>
-                    </td>
-                    <td className={tdClass}>{t.users ?? 0}</td>
-                    <td className={tdClass}>
-                      <UsageBar used={t.messagesThisMonth ?? 0} limit={limit} />
-                      <p className="mt-0.5 text-[11px] text-slate-400">
-                        of {formatCompact(limit)}
-                      </p>
-                    </td>
-                    <td className={tdClass}>
-                      <AdminBadge tone={t.isActive ? "emerald" : "rose"}>
-                        <span className="h-1.5 w-1.5 rounded-full bg-current" />
-                        {t.isActive ? "Active" : "Suspended"}
-                      </AdminBadge>
-                    </td>
-                    <td className={cn(tdClass, "text-slate-500")}>{formatDate(t.createdAt)}</td>
-                    <td className={cn(tdClass, "relative text-right")}>
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          setMenuFor(menuFor === t.id ? null : t.id);
-                        }}
-                        aria-label={`Actions for ${t.name}`}
-                        aria-expanded={menuFor === t.id}
-                        className="rounded-lg p-1.5 text-slate-400 transition hover:bg-slate-100 hover:text-slate-700"
-                      >
-                        <MoreHorizontal className="h-4 w-4" />
-                      </button>
-
-                      {menuFor === t.id && (
-                        <>
-                          <div
-                            className="fixed inset-0 z-10"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              setMenuFor(null);
-                            }}
-                            aria-hidden
-                          />
-                          <div
-                            onClick={(e) => e.stopPropagation()}
-                            className="absolute right-4 top-11 z-20 w-48 overflow-hidden rounded-lg border border-slate-200 bg-white py-1 text-left shadow-lg"
-                          >
-                            <MenuItem
-                              icon={Eye}
-                              label="View details"
-                              onClick={() => {
-                                setMenuFor(null);
-                                router.push(`/tenants/${t.id}`);
-                              }}
-                            />
-                            <MenuItem
-                              icon={RefreshCcw}
-                              label="Change plan"
-                              onClick={() => {
-                                setMenuFor(null);
-                                router.push(`/tenants/${t.id}?tab=plan`);
-                              }}
-                            />
-                            <div className="my-1 border-t border-slate-100" />
-                            {t.isActive ? (
-                              <MenuItem
-                                icon={Pause}
-                                label="Suspend"
-                                danger
-                                onClick={() => {
-                                  setMenuFor(null);
-                                  updateTenant.mutate({ id: t.id, isActive: false });
-                                }}
-                              />
-                            ) : (
-                              <MenuItem
-                                icon={Play}
-                                label="Activate"
-                                onClick={() => {
-                                  setMenuFor(null);
-                                  updateTenant.mutate({ id: t.id, isActive: true });
-                                }}
-                              />
-                            )}
+          <>
+            <AdminTable>
+              <thead className="border-b border-slate-200 bg-slate-50">
+                <tr>
+                  <th className={thClass}>Workspace</th>
+                  <th className={thClass}>Plan</th>
+                  <th className={thClass}>Users</th>
+                  <th className={thClass}>Msgs / mo</th>
+                  <th className={thClass}>Status</th>
+                  <th className={thClass}>Joined</th>
+                  <th className={cn(thClass, "text-right")}>Actions</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100">
+                {tenants.map((t) => {
+                  const limit =
+                    t.messageLimit ?? PLAN_MSG_LIMIT[(t.plan ?? "STARTER").toUpperCase()] ?? 5_000;
+                  return (
+                    <tr
+                      key={t.id}
+                      onClick={() => router.push(`/tenants/${t.id}`)}
+                      className="cursor-pointer transition hover:bg-slate-50"
+                    >
+                      <td className={tdClass}>
+                        <div className="flex items-center gap-3">
+                          <Avatar name={t.name} src={t.logo} size="sm" />
+                          <div className="min-w-0">
+                            <p className="truncate font-medium text-slate-900">{t.name}</p>
+                            <p className="truncate text-xs text-slate-500">/{t.slug}</p>
                           </div>
-                        </>
-                      )}
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </AdminTable>
+                        </div>
+                      </td>
+                      <td className={tdClass}>
+                        <AdminBadge tone={planTone(t.plan)}>{t.plan ?? "—"}</AdminBadge>
+                      </td>
+                      <td className={tdClass}>{t.users ?? 0}</td>
+                      <td className={tdClass}>
+                        <UsageBar used={t.messagesThisMonth ?? 0} limit={limit} />
+                        <p className="mt-0.5 text-[11px] text-slate-400">
+                          of {formatCompact(limit)}
+                        </p>
+                      </td>
+                      <td className={tdClass}>
+                        <AdminBadge tone={t.isActive ? "emerald" : "rose"}>
+                          <span className="h-1.5 w-1.5 rounded-full bg-current" />
+                          {t.isActive ? "Active" : "Suspended"}
+                        </AdminBadge>
+                      </td>
+                      <td className={cn(tdClass, "text-slate-500")}>{formatDate(t.createdAt)}</td>
+                      <td className={cn(tdClass, "relative text-right")}>
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setMenuFor(menuFor === t.id ? null : t.id);
+                          }}
+                          aria-label={`Actions for ${t.name}`}
+                          aria-expanded={menuFor === t.id}
+                          className="rounded-lg p-1.5 text-slate-400 transition hover:bg-slate-100 hover:text-slate-700"
+                        >
+                          <MoreHorizontal className="h-4 w-4" />
+                        </button>
+
+                        {menuFor === t.id && (
+                          <>
+                            <div
+                              className="fixed inset-0 z-10"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setMenuFor(null);
+                              }}
+                              aria-hidden
+                            />
+                            <div
+                              onClick={(e) => e.stopPropagation()}
+                              className="absolute right-4 top-11 z-20 w-48 overflow-hidden rounded-lg border border-slate-200 bg-white py-1 text-left shadow-lg"
+                            >
+                              <MenuItem
+                                icon={Eye}
+                                label="View details"
+                                onClick={() => {
+                                  setMenuFor(null);
+                                  router.push(`/tenants/${t.id}`);
+                                }}
+                              />
+                              <MenuItem
+                                icon={Pencil}
+                                label="Edit name"
+                                onClick={() => {
+                                  setMenuFor(null);
+                                  setEditTenant(t);
+                                }}
+                              />
+                              <MenuItem
+                                icon={RefreshCcw}
+                                label="Change plan"
+                                onClick={() => {
+                                  setMenuFor(null);
+                                  router.push(`/tenants/${t.id}?tab=plan`);
+                                }}
+                              />
+                              <div className="my-1 border-t border-slate-100" />
+                              {t.isActive ? (
+                                <MenuItem
+                                  icon={Pause}
+                                  label="Suspend"
+                                  danger
+                                  onClick={() => {
+                                    setMenuFor(null);
+                                    setSuspendConfirm(t);
+                                  }}
+                                />
+                              ) : (
+                                <MenuItem
+                                  icon={Play}
+                                  label="Activate"
+                                  onClick={() => {
+                                    setMenuFor(null);
+                                    updateTenant.mutate({ id: t.id, isActive: true });
+                                  }}
+                                />
+                              )}
+                            </div>
+                          </>
+                        )}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </AdminTable>
+
+            {/* Pagination */}
+            <div className="flex items-center justify-between border-t border-slate-100 px-4 py-3">
+              <p className="text-xs text-slate-500">
+                {total === 0
+                  ? "No results"
+                  : `${(page - 1) * PAGE_SIZE + 1}–${Math.min(page * PAGE_SIZE, total)} of ${total}`}
+              </p>
+              <div className="flex items-center gap-1">
+                <button
+                  onClick={() => setPage((p) => Math.max(1, p - 1))}
+                  disabled={page <= 1}
+                  className="rounded-lg p-1.5 text-slate-500 transition hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-40"
+                  aria-label="Previous page"
+                >
+                  <ChevronLeft className="h-4 w-4" />
+                </button>
+                <span className="min-w-[4rem] text-center text-xs text-slate-600">
+                  Page {page} / {totalPages}
+                </span>
+                <button
+                  onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+                  disabled={page >= totalPages}
+                  className="rounded-lg p-1.5 text-slate-500 transition hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-40"
+                  aria-label="Next page"
+                >
+                  <ChevronRight className="h-4 w-4" />
+                </button>
+              </div>
+            </div>
+          </>
         )}
       </AdminCard>
 
       <ProvisionModal open={provisionOpen} onClose={() => setProvisionOpen(false)} />
+
+      {editTenant && (
+        <EditTenantModal
+          tenant={editTenant}
+          onClose={() => setEditTenant(null)}
+        />
+      )}
+
+      {suspendConfirm && (
+        <Modal
+          open
+          onClose={() => setSuspendConfirm(null)}
+          title="Suspend workspace?"
+          description={`This will immediately block all users in "${suspendConfirm.name}" from logging in.`}
+        >
+          <div className="flex items-start gap-3 rounded-lg border border-amber-200 bg-amber-50 p-4">
+            <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-600" />
+            <p className="text-sm text-amber-800">
+              Suspending <strong>{suspendConfirm.name}</strong> will lock out all users immediately. Active conversations will stop. You can reactivate at any time.
+            </p>
+          </div>
+          <div className="mt-4 flex justify-end gap-2">
+            <button
+              onClick={() => setSuspendConfirm(null)}
+              className="rounded-lg px-4 py-2 text-sm font-medium text-slate-600 hover:bg-slate-100"
+            >
+              Cancel
+            </button>
+            <button
+              onClick={() => {
+                updateTenant.mutate({ id: suspendConfirm.id, isActive: false });
+                setSuspendConfirm(null);
+              }}
+              className="rounded-lg bg-rose-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-rose-700"
+            >
+              Suspend
+            </button>
+          </div>
+        </Modal>
+      )}
     </>
   );
 }
@@ -377,6 +495,68 @@ function MenuItem({
   );
 }
 
+// ─── Edit tenant modal ────────────────────────────────────────────────────────
+
+function EditTenantModal({ tenant, onClose }: { tenant: AdminTenant; onClose: () => void }) {
+  const [name, setName] = useState(tenant.name);
+  const update = useUpdateTenant();
+
+  const submit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!name.trim()) return;
+    update.mutate(
+      { id: tenant.id, name: name.trim() },
+      { onSuccess: onClose },
+    );
+  };
+
+  return (
+    <Modal
+      open
+      onClose={onClose}
+      title="Edit Workspace"
+      description={`Editing /${tenant.slug}`}
+    >
+      <form onSubmit={submit} className="space-y-4">
+        <Field label="Workspace name" htmlFor="edit-name" required>
+          <input
+            id="edit-name"
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            required
+            placeholder="Workspace name"
+            className={inputClass}
+            autoFocus
+          />
+        </Field>
+
+        {update.isError && (
+          <p className="rounded-lg bg-rose-50 px-3 py-2 text-xs text-rose-700">
+            {(update.error as Error).message}
+          </p>
+        )}
+
+        <div className="flex justify-end gap-2 pt-1">
+          <button
+            type="button"
+            onClick={onClose}
+            className="rounded-lg px-4 py-2 text-sm font-medium text-slate-600 hover:bg-slate-100"
+          >
+            Cancel
+          </button>
+          <button
+            type="submit"
+            disabled={update.isPending || !name.trim()}
+            className="rounded-lg bg-[#0B6E4F] px-4 py-2 text-sm font-medium text-white transition hover:bg-[#095c42] disabled:opacity-50"
+          >
+            {update.isPending ? "Saving…" : "Save changes"}
+          </button>
+        </div>
+      </form>
+    </Modal>
+  );
+}
+
 // ─── Provision modal ──────────────────────────────────────────────────────────
 
 interface ProvisionResult {
@@ -388,11 +568,12 @@ interface ProvisionResult {
 
 function ProvisionModal({ open, onClose }: { open: boolean; onClose: () => void }) {
   const provision = useProvisionTenant();
+  const { data: planOptions = [] } = useAdminPlans();
   const [form, setForm] = useState({
     name: "",
     slug: "",
     ownerEmail: "",
-    plan: "starter",
+    plan: "",
     trialDays: 14,
   });
   const [result, setResult] = useState<ProvisionResult | null>(null);
@@ -407,7 +588,11 @@ function ProvisionModal({ open, onClose }: { open: boolean; onClose: () => void 
   const submit = (e: React.FormEvent) => {
     e.preventDefault();
     provision.mutate(
-      { ...form, slug: form.slug || slugify(form.name) },
+      {
+        ...form,
+        slug: form.slug || slugify(form.name),
+        plan: form.plan || (planOptions[0]?.name.toLowerCase() ?? "starter"),
+      },
       {
         onSuccess: (res: unknown) => {
           const data = (res as { data: ProvisionResult }).data;
@@ -421,7 +606,7 @@ function ProvisionModal({ open, onClose }: { open: boolean; onClose: () => void 
     setResult(null);
     setCopied(false);
     provision.reset();
-    setForm({ name: "", slug: "", ownerEmail: "", plan: "starter", trialDays: 14 });
+    setForm({ name: "", slug: "", ownerEmail: "", plan: "", trialDays: 14 });
     onClose();
   };
 
@@ -523,9 +708,14 @@ function ProvisionModal({ open, onClose }: { open: boolean; onClose: () => void 
                 onChange={(e) => set("plan", e.target.value)}
                 className={inputClass}
               >
-                <option value="starter">Starter — ₹999/mo</option>
-                <option value="growth">Growth — ₹2,999/mo</option>
-                <option value="enterprise">Enterprise — ₹9,999/mo</option>
+                {planOptions.map((p) => (
+                  <option key={p.id} value={p.name.toLowerCase()}>
+                    {p.displayName}
+                  </option>
+                ))}
+                {planOptions.length === 0 && (
+                  <option value="starter">Starter</option>
+                )}
               </select>
             </Field>
 

@@ -1,11 +1,5 @@
 "use client";
 
-/**
- * Super-admin platform overview.
- * Data: GET /api/admin/stats  (TODO [SHALMON] — currently returns 501, so the
- * page falls back to clearly-labelled preview data and never crashes.)
- */
-
 import Link from "next/link";
 import { useQuery } from "@tanstack/react-query";
 import {

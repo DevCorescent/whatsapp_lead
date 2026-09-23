@@ -8,8 +8,12 @@ import {
   ArrowLeft,
   Building2,
   CheckCircle2,
+  Copy,
+  KeyRound,
+  Mail,
   MessageSquare,
   Pause,
+  Phone,
   Play,
   Sparkles,
   Users,
@@ -25,12 +29,24 @@ import {
   AdminSkeleton,
   adminInputClass,
   planTone,
+  type AdminTone,
 } from "@/components/admin/ui";
 import { PlanFormModal, type AdminPlan, type PlanFormMode } from "@/components/admin/PlanFormModal";
 import { planOverages, type UsedCounts } from "@/lib/billing/overage";
 import { cn, formatDate } from "@/lib/utils";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
+
+interface TenantUser {
+  id: string;
+  name: string;
+  email: string;
+  phone: string | null;
+  role: string;
+  isActive: boolean;
+  lastLoginAt: string | null;
+  createdAt: string;
+}
 
 interface TenantDetail {
   id: string;
@@ -40,6 +56,7 @@ interface TenantDetail {
   isActive: boolean;
   createdAt: string;
   updatedAt: string;
+  users: TenantUser[];
   subscription: {
     id: string;
     status: string;
@@ -153,6 +170,21 @@ function useUpdateTenant(id: string) {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["admin", "tenant", id] });
       qc.invalidateQueries({ queryKey: ["admin", "tenants"] });
+    },
+  });
+}
+
+function useResetPassword(tenantId: string) {
+  return useMutation({
+    mutationFn: async (userId: string) => {
+      const res = await fetch(`/api/admin/tenants/${tenantId}/reset-password`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ userId }),
+      });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(json.error ?? `Reset failed (${res.status})`);
+      return json.data as { tempPassword: string; email: string };
     },
   });
 }
@@ -283,7 +315,11 @@ export default function TenantDetailPage({ params }: { params: Promise<{ id: str
                 </AdminBadge>
               </Row>
               <Row label="Billing cycle">{sub.billingCycle}</Row>
-              <Row label="Price">₹{plan?.priceMonthly?.toLocaleString("en-IN") ?? "—"}/mo</Row>
+              <Row label="Price">
+                {sub.billingCycle === "ANNUAL"
+                  ? `₹${plan?.priceAnnual?.toLocaleString("en-IN") ?? "—"}/yr`
+                  : `₹${plan?.priceMonthly?.toLocaleString("en-IN") ?? "—"}/mo`}
+              </Row>
               <Row label="Billed through">
                 {/* A custom tier has no Stripe price, which is the visible sign
                     that nothing about it is charged automatically. */}
@@ -326,6 +362,11 @@ export default function TenantDetailPage({ params }: { params: Promise<{ id: str
           )}
         </AdminPanel>
       </div>
+
+      {/* Users */}
+      <div className="mt-6">
+        <UsersPanel tenant={tenant} />
+      </div>
     </>
   );
 }
@@ -339,7 +380,7 @@ function AssignPlanPanel({ tenant }: { tenant: TenantDetail }) {
 
   const sub = tenant.subscription;
   const [form, setForm] = useState<AssignForm>(() => ({
-    planId: "",
+    planId: sub?.plan?.id ?? "",
     status: (sub?.status as AssignForm["status"]) ?? "ACTIVE",
     billingCycle: (sub?.billingCycle as AssignForm["billingCycle"]) ?? "MONTHLY",
     currentPeriodStart: toDateInput(sub?.currentPeriodStart),
@@ -688,5 +729,106 @@ function Row({ label, children }: { label: string; children: React.ReactNode }) 
       <dt className="shrink-0 text-slate-500">{label}</dt>
       <dd className="text-right text-slate-800">{children}</dd>
     </div>
+  );
+}
+
+// ─── Users panel ──────────────────────────────────────────────────────────────
+
+function UsersPanel({ tenant }: { tenant: TenantDetail }) {
+  const reset = useResetPassword(tenant.id);
+  const [resetResult, setResetResult] = useState<{ email: string; tempPassword: string } | null>(null);
+  const [copied, setCopied] = useState(false);
+
+  const ROLE_TONE: Record<string, AdminTone> = {
+    TENANT_OWNER: "emerald",
+    ADMIN: "sky",
+    MANAGER: "violet",
+    MARKETING_USER: "amber",
+    AGENT: "slate",
+  };
+
+  const handleReset = (userId: string) => {
+    reset.mutate(userId, {
+      onSuccess: (data) => setResetResult(data),
+    });
+  };
+
+  const copyCredentials = async () => {
+    if (!resetResult) return;
+    try {
+      await navigator.clipboard.writeText(`Email: ${resetResult.email}\nPassword: ${resetResult.tempPassword}`);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch { /* ignore */ }
+  };
+
+  if (!tenant.users || tenant.users.length === 0) {
+    return (
+      <AdminPanel title="Users" subtitle="Accounts in this workspace">
+        <p className="text-sm text-slate-500">No users found.</p>
+      </AdminPanel>
+    );
+  }
+
+  return (
+    <AdminPanel title={`Users (${tenant.users.length})`} subtitle="Accounts in this workspace">
+      {reset.isError && (
+        <p className="mb-3 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-700">
+          {(reset.error as Error).message}
+        </p>
+      )}
+
+      {resetResult && (
+        <div className="mb-4 rounded-lg border border-emerald-200 bg-emerald-50 p-4">
+          <p className="text-sm font-semibold text-emerald-800">Password reset for {resetResult.email}</p>
+          <div className="mt-2 flex items-center justify-between gap-3">
+            <code className="font-mono text-sm text-emerald-900">{resetResult.tempPassword}</code>
+            <button
+              onClick={copyCredentials}
+              className="flex items-center gap-1.5 rounded-lg border border-emerald-300 bg-white px-3 py-1.5 text-xs font-medium text-emerald-700 transition hover:bg-emerald-50"
+            >
+              <Copy className="h-3.5 w-3.5" />
+              {copied ? "Copied!" : "Copy"}
+            </button>
+          </div>
+          <p className="mt-1.5 text-xs text-emerald-700">Share with the user. They should change it after first login.</p>
+          <button onClick={() => setResetResult(null)} className="mt-2 text-xs text-emerald-600 underline">Dismiss</button>
+        </div>
+      )}
+
+      <div className="space-y-3">
+        {tenant.users.map((u) => (
+          <div key={u.id} className="flex items-center justify-between gap-3 rounded-lg border border-slate-100 bg-slate-50/50 px-4 py-3">
+            <div className="min-w-0 flex-1">
+              <div className="flex items-center gap-2">
+                <p className="truncate text-sm font-medium text-slate-900">{u.name}</p>
+                <AdminBadge tone={ROLE_TONE[u.role] ?? "slate"}>
+                  {u.role.replace(/_/g, " ")}
+                </AdminBadge>
+                {!u.isActive && <AdminBadge tone="rose">Inactive</AdminBadge>}
+              </div>
+              <div className="mt-1 flex flex-wrap items-center gap-x-4 gap-y-0.5 text-xs text-slate-500">
+                <span className="flex items-center gap-1"><Mail className="h-3 w-3" />{u.email}</span>
+                {u.phone && <span className="flex items-center gap-1"><Phone className="h-3 w-3" />{u.phone}</span>}
+              </div>
+              {u.lastLoginAt && (
+                <p className="mt-0.5 text-[11px] text-slate-400">
+                  Last login: {formatDate(u.lastLoginAt)}
+                </p>
+              )}
+            </div>
+            <button
+              onClick={() => handleReset(u.id)}
+              disabled={reset.isPending}
+              title="Reset password"
+              className="flex shrink-0 items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-medium text-slate-600 transition hover:border-amber-300 hover:bg-amber-50 hover:text-amber-700 disabled:opacity-50"
+            >
+              <KeyRound className="h-3.5 w-3.5" />
+              Reset password
+            </button>
+          </div>
+        ))}
+      </div>
+    </AdminPanel>
   );
 }

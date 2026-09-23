@@ -118,7 +118,11 @@ export async function DELETE(_req: NextRequest, { params }: Params) {
 
   const plan = await prisma.plan.findUnique({
     where: { id },
-    include: { _count: { select: { subscriptions: true } } },
+    include: {
+      _count: {
+        select: { subscriptions: { where: { status: { in: ["ACTIVE", "TRIALING", "PAST_DUE"] } } } },
+      },
+    },
   });
   if (!plan) return NextResponse.json({ success: false, error: "Plan not found" }, { status: 404 });
   if (plan._count.subscriptions > 0) {
