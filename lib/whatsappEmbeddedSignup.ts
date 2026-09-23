@@ -129,16 +129,10 @@ export async function exchangeCodeForBusinessToken(code: string): Promise<string
     throw new Error("Embedded Signup is not configured on this deployment");
   }
 
-  // For the FB.login popup flow with response_type:"code", Meta requires the redirect_uri
-  // in the exchange to match what the SDK used implicitly. The JS SDK popup flow uses the
-  // app's origin as the redirect_uri, so we pass it here. An empty string is refused.
-  const redirectUri = process.env.NEXT_PUBLIC_APP_URL?.trim() ?? "";
-
   const params = new URLSearchParams({
     client_id: appId,
     client_secret: appSecret,
     code,
-    ...(redirectUri && { redirect_uri: redirectUri }),
   });
 
   // Meta documents this as a GET with query parameters. The URL therefore carries the app
