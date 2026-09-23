@@ -30,11 +30,7 @@ export async function GET() {
         },
       }),
       prisma.message.findMany({
-        where: {
-          tenantId,
-          direction: "INBOUND",
-          conversation: { contact: { isNot: null } },
-        },
+        where: { tenantId, direction: "INBOUND" },
         orderBy: { createdAt: "desc" },
         take: 5,
         select: {
