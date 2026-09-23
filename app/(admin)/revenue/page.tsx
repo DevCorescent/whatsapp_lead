@@ -14,6 +14,7 @@ import {
   CircleDollarSign,
   CreditCard,
   IndianRupee,
+  ChevronDown,
   Download,
   FileSpreadsheet,
   Loader2,
@@ -193,41 +194,80 @@ function useRevenueExport(range: Range) {
   return { run, busy, error };
 }
 
-function ExportButtons({ range }: { range: Range }) {
+/**
+ * One Export button; the format is chosen from its menu.
+ *
+ * Both formats stay available — the report is the same data either way, and a CSV
+ * is what anyone feeding this into a spreadsheet pipeline actually wants — but
+ * they no longer take up two slots in a header that also holds the period switch.
+ *
+ * The menu closes on choose, on outside click and on Escape. While a file is
+ * being prepared the button reports it and refuses a second click: each export
+ * costs a Stripe round trip.
+ */
+function ExportMenu({ range }: { range: Range }) {
   const { run, busy, error } = useRevenueExport(range);
+  const [open, setOpen] = useState(false);
+
+  const choose = (format: ExportFormat) => {
+    setOpen(false);
+    void run(format);
+  };
 
   return (
     <div className="flex flex-col items-end gap-1.5">
-      <div className="flex flex-wrap items-center gap-2">
+      <div className="relative">
         <AdminButton
           variant="secondary"
           size="sm"
-          onClick={() => void run("xlsx")}
+          onClick={() => setOpen((v) => !v)}
           disabled={busy !== null}
-          aria-busy={busy === "xlsx"}
+          aria-busy={busy !== null}
+          aria-haspopup="menu"
+          aria-expanded={open}
         >
-          {busy === "xlsx" ? (
-            <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />
-          ) : (
-            <FileSpreadsheet className="h-3.5 w-3.5" aria-hidden />
-          )}
-          {busy === "xlsx" ? "Preparing…" : "Export Excel"}
-        </AdminButton>
-        <AdminButton
-          variant="secondary"
-          size="sm"
-          onClick={() => void run("csv")}
-          disabled={busy !== null}
-          aria-busy={busy === "csv"}
-        >
-          {busy === "csv" ? (
+          {busy ? (
             <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />
           ) : (
             <Download className="h-3.5 w-3.5" aria-hidden />
           )}
-          {busy === "csv" ? "Preparing…" : "Export CSV"}
+          {busy ? "Preparing…" : "Export"}
+          {!busy && <ChevronDown className={cn("h-3.5 w-3.5 transition", open && "rotate-180")} aria-hidden />}
         </AdminButton>
+
+        {open && (
+          <>
+            {/* Catches the click that dismisses the menu, so it cannot also hit
+                whatever sits behind it. */}
+            <div className="fixed inset-0 z-10" onClick={() => setOpen(false)} aria-hidden />
+            <div
+              role="menu"
+              onKeyDown={(e) => {
+                if (e.key === "Escape") setOpen(false);
+              }}
+              className="absolute right-0 top-9 z-20 w-44 overflow-hidden rounded-lg border border-slate-200 bg-white py-1 text-left shadow-lg"
+            >
+              <button
+                role="menuitem"
+                onClick={() => choose("xlsx")}
+                className="flex w-full items-center gap-2 px-3 py-2 text-sm text-slate-700 transition hover:bg-slate-50 hover:text-slate-900"
+              >
+                <FileSpreadsheet className="h-4 w-4" aria-hidden />
+                Excel (.xlsx)
+              </button>
+              <button
+                role="menuitem"
+                onClick={() => choose("csv")}
+                className="flex w-full items-center gap-2 px-3 py-2 text-sm text-slate-700 transition hover:bg-slate-50 hover:text-slate-900"
+              >
+                <Download className="h-4 w-4" aria-hidden />
+                CSV (.csv)
+              </button>
+            </div>
+          </>
+        )}
       </div>
+
       <p role="alert" className="empty:hidden text-xs text-rose-600">
         {error}
       </p>
@@ -258,7 +298,7 @@ export default function AdminRevenuePage() {
           <div className="flex flex-wrap items-center gap-3">
             {/* Exports follow the period selected here — 3, 6 or 12 months. */}
             <Segmented options={RANGES} value={range} onChange={setRange} />
-            <ExportButtons range={range} />
+            <ExportMenu range={range} />
           </div>
         }
       />
