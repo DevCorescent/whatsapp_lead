@@ -33,7 +33,7 @@ export async function GET() {
         where: {
           tenantId,
           direction: "INBOUND",
-          conversation: { contactId: { not: null } },
+          conversation: { contact: { isNot: null } },
         },
         orderBy: { createdAt: "desc" },
         take: 5,
