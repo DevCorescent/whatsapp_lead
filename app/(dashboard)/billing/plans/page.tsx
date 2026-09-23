@@ -79,16 +79,23 @@ export default function PlansPage() {
             razorpay_order_id: string;
             razorpay_signature: string;
           }) => {
+            console.log("[CHECKOUT] payment success from Razorpay", {
+              payment_id: response.razorpay_payment_id,
+              order_id: response.razorpay_order_id,
+              signature_length: response.razorpay_signature?.length,
+            });
             try {
-              await verifyPayment.mutateAsync({
+              const verifyRes = await verifyPayment.mutateAsync({
                 razorpay_order_id: response.razorpay_order_id,
                 razorpay_payment_id: response.razorpay_payment_id,
                 razorpay_signature: response.razorpay_signature,
                 planId,
                 planChangeId: orderData.planChangeId,
               });
+              console.log("[CHECKOUT] verify-payment response:", verifyRes);
               resolve();
             } catch (e) {
+              console.error("[CHECKOUT] verify-payment failed:", e);
               reject(e);
             }
           },
@@ -112,7 +119,14 @@ export default function PlansPage() {
         return;
       }
       const res = await checkout.mutateAsync(plan.id);
+      console.log("[CHECKOUT] server response:", res);
       if (res?.orderId) {
+        console.log("[CHECKOUT] opening Razorpay modal", {
+          orderId: res.orderId,
+          amount: res.amount,
+          currency: res.currency,
+          keyId: res.keyId,
+        });
         await openRazorpayModal(res as RazorpayOrderData, plan.id);
         setPlanSuccess("Your plan is now active.");
         return;

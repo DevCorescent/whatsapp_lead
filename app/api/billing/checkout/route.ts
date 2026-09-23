@@ -57,19 +57,37 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ success: true, data: { orderId: null, assigned: true } });
     }
 
+    const keyId = process.env.RAZORPAY_KEY_ID ?? "";
+    const keySecret = process.env.RAZORPAY_KEY_SECRET ?? "";
+
+    console.log("[BILLING CHECKOUT] creds check", {
+      KEY_ID_set: Boolean(keyId),
+      KEY_ID_prefix: keyId.slice(0, 12) || "(empty)",
+      KEY_SECRET_set: Boolean(keySecret),
+      KEY_SECRET_prefix: keySecret ? keySecret.slice(0, 4) + "..." : "(empty)",
+      KEY_SECRET_length: keySecret.length,
+      isConfigured: isRazorpayConfigured(),
+    });
+
     if (!isRazorpayConfigured()) {
       return NextResponse.json({ success: false, error: "Billing is not configured." }, { status: 400 });
     }
 
     const razorpay = getRazorpay();
     const amountPaise = toMinor(plan.priceMonthly);
+    const currency = PLAN_CURRENCY.toUpperCase();
+    const receipt = `sub_${tenantId.slice(-8)}_${Date.now()}`;
+
+    console.log("[BILLING CHECKOUT] creating order", { amountPaise, currency, receipt, planId: plan.id });
 
     const order = await razorpay.orders.create({
       amount: amountPaise,
-      currency: PLAN_CURRENCY.toUpperCase(),
-      receipt: `sub_${tenantId.slice(-8)}_${Date.now()}`,
+      currency,
+      receipt,
       notes: { tenantId, planId: plan.id },
     });
+
+    console.log("[BILLING CHECKOUT] order created", { orderId: order.id, status: order.status });
 
     return NextResponse.json({
       success: true,
@@ -77,12 +95,16 @@ export async function POST(req: NextRequest) {
         orderId: order.id,
         amount: order.amount,
         currency: order.currency,
-        keyId: process.env.RAZORPAY_KEY_ID,
+        keyId,
         planName: plan.displayName,
       },
     });
   } catch (error) {
-    console.error("[BILLING CHECKOUT]", error);
+    console.error("[BILLING CHECKOUT] order creation failed", {
+      message: error instanceof Error ? error.message : String(error),
+      // Razorpay SDK wraps API errors — log the full shape
+      detail: JSON.stringify(error),
+    });
     return NextResponse.json({ success: false, error: "Failed to start checkout" }, { status: 500 });
   }
 }
