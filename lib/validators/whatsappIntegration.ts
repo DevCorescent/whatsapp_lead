@@ -15,10 +15,8 @@ const metaId = z.string().trim().regex(/^\d{5,32}$/, "Not a valid Meta ID");
 
 export const connectWhatsAppSchema = z.object({
   /**
-   * Access token from the Facebook Login for Business JS SDK callback.
-   * Using the token directly (not response_type:"code") avoids the redirect_uri
-   * mismatch error that occurs when the JS SDK popup uses an internal Facebook
-   * redirect_uri that cannot be replicated in the server-side code exchange.
+   * Authorization code from the Facebook Login for Business JS SDK callback
+   * (response_type:"code"). Exchanged server-side for a business access token.
    */
   token: z
     .string()
