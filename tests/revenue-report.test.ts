@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import * as XLSX from "xlsx";
+import ExcelJS from "exceljs";
 import {
   buildMonthWindow,
   computeContractedMetrics,
@@ -13,7 +13,7 @@ import {
   type SubscriptionRow,
   type TransactionRow,
 } from "../lib/admin/revenueMetrics";
-import { buildRevenueCsv, buildRevenueWorkbook, revenueReportFilename } from "../lib/admin/revenueExportFiles";
+import { buildRevenueCsv, buildRevenueWorkbook, CSV_COLUMNS, revenueReportFilename } from "../lib/admin/revenueExportFiles";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // A revenue report is read as fact by whoever opens it. These cases are written
@@ -245,68 +245,9 @@ function report(over: Partial<RevenueReport> = {}): RevenueReport {
   };
 }
 
-test("the filename carries the period and the generation date", () => {
-  assert.equal(revenueReportFilename(report()), "revenue-report-3-months-2026-09-23");
-});
-
-test("the workbook has the five documented sheets", () => {
-  const wb = XLSX.read(buildRevenueWorkbook(report()), { type: "buffer" });
-  assert.deepEqual(wb.SheetNames, [
-    "Revenue Summary",
-    "Monthly Revenue",
-    "Revenue by Plan",
-    "Transactions",
-    "Failed Payments",
-  ]);
-});
-
-test("the workbook separates contracted run-rate from money actually collected", () => {
-  const wb = XLSX.read(buildRevenueWorkbook(report()), { type: "buffer" });
-  const summary = XLSX.utils.sheet_to_json<string[]>(wb.Sheets["Revenue Summary"], { header: 1 });
-  const find = (label: string) => summary.find((r) => String(r[0] ?? "").startsWith(label));
-
-  assert.equal(find("MRR (contracted")?.[1], 49_970);
-  assert.equal(find("ARR (projected")?.[1], 599_640);
-  assert.equal(find("Total collected revenue")?.[1], 2999);
-  // The two must never appear under one heading called "revenue".
-  assert.ok(summary.some((r) => String(r[0]).includes("Not money received")));
-});
-
-test("monthly rows are written as numbers a spreadsheet can sum", () => {
-  const wb = XLSX.read(buildRevenueWorkbook(report()), { type: "buffer" });
-  const rows = XLSX.utils.sheet_to_json<Record<string, unknown>>(wb.Sheets["Monthly Revenue"]);
-  assert.equal(rows.length, 3);
-  assert.equal(rows[0]["Month"], "Jul 26");
-  assert.equal(rows[2]["Contracted MRR (INR)"], 49_970);
-  assert.equal(typeof rows[1]["Collected revenue"], "number");
-});
-
-test("an empty period says so instead of leaving a blank sheet", () => {
-  const empty = report({
-    transactions: [],
-    failedTransactions: [],
-    collected: {
-      available: true,
-      unavailableReason: null,
-      totalsByCurrency: {},
-      totalTransactions: 0,
-      successfulTransactions: 0,
-      failedTransactions: 0,
-    },
-  });
-  const wb = XLSX.read(buildRevenueWorkbook(empty), { type: "buffer" });
-  const transactions = XLSX.utils.sheet_to_json<string[]>(wb.Sheets["Transactions"], { header: 1 });
-  const failed = XLSX.utils.sheet_to_json<string[]>(wb.Sheets["Failed Payments"], { header: 1 });
-  assert.equal(transactions[1][0], "No transactions recorded for this period.");
-  assert.equal(failed[1][0], "No failed payments recorded for this period.");
-
-  const csv = buildRevenueCsv(empty);
-  assert.ok(csv.includes("No transactions recorded for this period."));
-  assert.ok(csv.includes("Total collected revenue,0"));
-});
-
-test("an unreachable Stripe is reported as unavailable, never as zero revenue", () => {
-  const offline = report({
+/** A report whose Stripe side could not be read at all. */
+const offlineReport = () =>
+  report({
     transactions: [],
     failedTransactions: [],
     monthly: report().monthly.map((m) => ({
@@ -318,7 +259,7 @@ test("an unreachable Stripe is reported as unavailable, never as zero revenue", 
     plans: report().plans.map((p) => ({ ...p, collectedRevenue: null, shareOfCollected: null })),
     collected: {
       available: false,
-      unavailableReason: "STRIPE_SECRET_KEY is not configured on this deployment, so collected revenue cannot be read.",
+      unavailableReason: "Invalid API Key provided: <redacted key>",
       totalsByCurrency: {},
       totalTransactions: 0,
       successfulTransactions: 0,
@@ -326,35 +267,265 @@ test("an unreachable Stripe is reported as unavailable, never as zero revenue", 
     },
   });
 
-  const csv = buildRevenueCsv(offline);
-  assert.ok(csv.includes("Total collected revenue,N/A"));
-  assert.ok(csv.includes("STRIPE_SECRET_KEY is not configured"));
-  assert.ok(!csv.includes("Total collected revenue,0"));
+/** Parse the CSV the way a spreadsheet would: quoted fields may hold commas. */
+function parseCsv(csv: string): string[][] {
+  const rows: string[][] = [];
+  let row: string[] = [];
+  let field = "";
+  let quoted = false;
+  for (let i = 0; i < csv.length; i++) {
+    const c = csv[i];
+    if (quoted) {
+      if (c === '"' && csv[i + 1] === '"') { field += '"'; i++; }
+      else if (c === '"') quoted = false;
+      else field += c;
+    } else if (c === '"') quoted = true;
+    else if (c === ",") { row.push(field); field = ""; }
+    else if (c === "\r" && csv[i + 1] === "\n") { row.push(field); rows.push(row); row = []; field = ""; i++; }
+    else field += c;
+  }
+  if (field || row.length) { row.push(field); rows.push(row); }
+  return rows.filter((r) => r.length > 1 || r[0] !== "");
+}
 
-  const wb = XLSX.read(buildRevenueWorkbook(offline), { type: "buffer" });
-  const summary = XLSX.utils.sheet_to_json<string[]>(wb.Sheets["Revenue Summary"], { header: 1 });
-  assert.equal(summary.find((r) => String(r[0]).startsWith("Total collected revenue"))?.[1], "N/A");
-  // The contracted side is still real and must still be reported.
-  assert.equal(summary.find((r) => String(r[0]).startsWith("MRR (contracted"))?.[1], 49_970);
+const cell = (rows: string[][], header: string, r: string[]) => r[rows[0].indexOf(header)];
+
+test("the filename carries the period and the generation date", () => {
+  assert.equal(revenueReportFilename(report()), "revenue-report-3-months-2026-09-23");
+  assert.equal(revenueReportFilename(report({ range: "12m", months: 12 })), "revenue-report-12-months-2026-09-23");
 });
 
-test("a workspace name containing a comma and quotes cannot shift CSV columns", () => {
-  const csv = buildRevenueCsv(
-    report({ transactions: [tx({ tenant: 'Sharma, Verma & Co "Pvt"' })] }),
+// ─── CSV: one flat table ─────────────────────────────────────────────────────
+
+test("the CSV is a single table: one header row, and every row has the same width", () => {
+  const rows = parseCsv(buildRevenueCsv(report()));
+  assert.deepEqual(rows[0], [...CSV_COLUMNS]);
+  const widths = new Set(rows.map((r) => r.length));
+  assert.deepEqual([...widths], [CSV_COLUMNS.length], "ragged rows would break every parser");
+  // The old export stacked pseudo-tables, each with its own header line.
+  assert.equal(rows.filter((r) => r[0] === "Section").length, 1);
+  assert.ok(!buildRevenueCsv(report()).includes("Field,Value"));
+  assert.ok(!buildRevenueCsv(report()).includes("# "));
+});
+
+test("every CSV row is classified by Section, and the sections are the expected ones", () => {
+  const rows = parseCsv(buildRevenueCsv(report()));
+  const sections = new Set(rows.slice(1).map((r) => r[0]));
+  assert.deepEqual(
+    [...sections].sort(),
+    ["Collected Revenue", "Contracted Metrics", "Data Status", "Monthly Revenue", "Report", "Revenue by Plan", "Transaction"],
   );
-  assert.ok(csv.includes('"Sharma, Verma & Co ""Pvt"""'));
-
-  // Parsed back, the row still has its columns in the right places.
-  const section = csv.split("# Transactions\r\n")[1].split("\r\n\r\n")[0];
-  const sheet = XLSX.read(section, { type: "string", raw: true }).Sheets.Sheet1;
-  const rows = XLSX.utils.sheet_to_json<Record<string, unknown>>(sheet);
-  assert.equal(rows[0]["Workspace"], 'Sharma, Verma & Co "Pvt"');
-  assert.equal(rows[0]["Currency"], "INR");
 });
 
-test("CSV amounts are plain numbers, not formatted rupee strings", () => {
+test("a transaction row carries its own identifiers and a numeric amount", () => {
+  const rows = parseCsv(buildRevenueCsv(report()));
+  const t = rows.find((r) => r[0] === "Transaction")!;
+  assert.equal(cell(rows, "Transaction ID", t), "in_1");
+  assert.equal(cell(rows, "Invoice Number", t), "A-1");
+  assert.equal(cell(rows, "Workspace", t), "Vertex Motors");
+  assert.equal(cell(rows, "Value", t), "2999");
+  assert.equal(cell(rows, "Currency", t), "INR");
+  assert.equal(cell(rows, "Status", t), "PAID");
+  assert.equal(cell(rows, "Date", t), "2026-09-10T10:00:00.000Z");
+});
+
+test("an unavailable Stripe contributes no transaction rows and no fake failure rows", () => {
+  const rows = parseCsv(buildRevenueCsv(offlineReport()));
+  assert.equal(rows.filter((r) => r[0] === "Transaction").length, 0);
+  assert.equal(rows.filter((r) => r[0] === "Failed Payment").length, 0);
+  // The reason belongs in Data Status, never in a transaction row.
+  const status = rows.find((r) => r[0] === "Data Status" && r[1] === "Stripe invoices")!;
+  assert.equal(cell(rows, "Status", status), "Unavailable");
+  assert.match(cell(rows, "Value", status), /Invalid API Key/);
+});
+
+test("unavailable is N/A and a real zero is 0 — never the other way round", () => {
+  const offline = parseCsv(buildRevenueCsv(offlineReport()));
+  const offlineTotal = offline.find((r) => r[1] === "Total Collected Revenue")!;
+  assert.equal(cell(offline, "Value", offlineTotal), "N/A");
+
+  const queried = parseCsv(
+    buildRevenueCsv(
+      report({
+        transactions: [],
+        collected: { available: true, unavailableReason: null, totalsByCurrency: {}, totalTransactions: 0, successfulTransactions: 0, failedTransactions: 0 },
+      }),
+    ),
+  );
+  const queriedTotal = queried.find((r) => r[1] === "Total Collected Revenue")!;
+  assert.equal(cell(queried, "Value", queriedTotal), "0");
+});
+
+test("contracted metrics are never labelled as collected revenue", () => {
+  const rows = parseCsv(buildRevenueCsv(report()));
+  const mrr = rows.find((r) => r[1] === "MRR (Contracted)")!;
+  assert.equal(mrr[0], "Contracted Metrics");
+  assert.equal(cell(rows, "Value", mrr), "49970");
+  assert.equal(cell(rows, "Currency", mrr), "INR");
+  assert.ok(rows.some((r) => r[0] === "Collected Revenue" && r[1] === "Total Collected Revenue"));
+});
+
+test("the monthly section covers every month of the selected period", () => {
+  for (const [months, keys] of [
+    [3, ["2026-07", "2026-08", "2026-09"]],
+    [6, ["2026-04", "2026-09"]],
+    [12, ["2025-10", "2026-09"]],
+  ] as [number, string[]][]) {
+    const window = buildMonthWindow(months, new Date(2026, 8, 23));
+    const rows = parseCsv(
+      buildRevenueCsv(
+        report({
+          months,
+          range: `${months}m` as RevenueReport["range"],
+          monthly: window.map((m) => ({
+            key: m.key, label: m.label, contractedMrr: 1, mrrByPlanName: {},
+            activeSubscriptions: 1, collectedRevenue: 0, successfulTransactions: 0, failedTransactions: 0,
+          })),
+        }),
+      ),
+    );
+    const monthKeys = [...new Set(rows.filter((r) => r[0] === "Monthly Revenue").map((r) => r[2]))];
+    assert.equal(monthKeys.length, months);
+    for (const key of keys) assert.ok(monthKeys.includes(key), `${months}m missing ${key}`);
+  }
+});
+
+test("dates are one consistent machine-readable format", () => {
+  const rows = parseCsv(buildRevenueCsv(report()));
+  const start = rows.find((r) => r[1] === "Period start")!;
+  assert.equal(cell(rows, "Value", start), "2026-07-01");
+  const generated = rows.find((r) => r[1] === "Generated at")!;
+  assert.equal(cell(rows, "Value", generated), "2026-09-23T09:30:00.000Z");
+});
+
+test("a workspace name with a comma and quotes cannot shift columns", () => {
+  const csv = buildRevenueCsv(report({ transactions: [tx({ tenant: 'Sharma, Verma & Co "Pvt"' })] }));
+  assert.ok(csv.includes('"Sharma, Verma & Co ""Pvt"""'));
+  const rows = parseCsv(csv);
+  const t = rows.find((r) => r[0] === "Transaction")!;
+  assert.equal(cell(rows, "Workspace", t), 'Sharma, Verma & Co "Pvt"');
+  assert.equal(cell(rows, "Currency", t), "INR");
+  assert.equal(t.length, CSV_COLUMNS.length);
+});
+
+test("CSV money is a plain number, not a formatted rupee string", () => {
   const csv = buildRevenueCsv(report());
-  assert.ok(csv.includes("2999"));
-  assert.ok(!csv.includes("₹2,999"));
-  assert.ok(csv.includes("Subscription currency,INR"));
+  assert.ok(csv.includes("49970"));
+  assert.ok(!csv.includes("₹49,970"));
+});
+
+// ─── XLSX: a formatted workbook ──────────────────────────────────────────────
+
+async function readWorkbook(report: RevenueReport) {
+  const wb = new ExcelJS.Workbook();
+  const buffer = await buildRevenueWorkbook(report);
+  // ExcelJS types its loader against its own Buffer shape; the bytes are identical.
+  await wb.xlsx.load(new Uint8Array(buffer).buffer as ArrayBuffer);
+  return wb;
+}
+
+/** The header row of a sheet: the first row whose first cell matches `first`. */
+function headerRowOf(sheet: ExcelJS.Worksheet, first: string) {
+  for (let r = 1; r <= sheet.rowCount; r++) {
+    if (String(sheet.getRow(r).getCell(1).value ?? "") === first) return sheet.getRow(r);
+  }
+  throw new Error(`header starting with ${first} not found`);
+}
+
+test("the workbook has the six documented sheets", async () => {
+  const wb = await readWorkbook(report());
+  assert.deepEqual(wb.worksheets.map((s) => s.name), [
+    "Revenue Summary",
+    "Monthly Revenue",
+    "Revenue by Plan",
+    "Transactions",
+    "Failed Payments",
+    "Data Status",
+  ]);
+});
+
+test("table headers are bold and frozen, with an autofilter", async () => {
+  const wb = await readWorkbook(report());
+  const sheet = wb.getWorksheet("Monthly Revenue")!;
+  const header = headerRowOf(sheet, "Month");
+  assert.equal(header.font?.bold, true);
+  assert.equal(sheet.views[0]?.state, "frozen");
+  assert.equal(sheet.views[0]?.ySplit, header.number);
+  assert.ok(sheet.autoFilter, "an unfiltered table of 12 months is harder to read");
+});
+
+test("money and counts carry number formats, so the sheet can be summed", async () => {
+  const wb = await readWorkbook(report());
+  const sheet = wb.getWorksheet("Monthly Revenue")!;
+  const header = headerRowOf(sheet, "Month");
+  const first = sheet.getRow(header.number + 1);
+  assert.equal(first.getCell(3).value, 40_000);
+  assert.match(String(first.getCell(3).numFmt), /#,##0/);
+  assert.equal(typeof first.getCell(7).value, "number");
+});
+
+test("the summary separates contracted run-rate from collected revenue", async () => {
+  const wb = await readWorkbook(report());
+  const sheet = wb.getWorksheet("Revenue Summary")!;
+  const labels: string[] = [];
+  sheet.eachRow((row) => labels.push(String(row.getCell(1).value ?? "")));
+  assert.ok(labels.includes("Contracted subscription metrics"));
+  assert.ok(labels.includes("Collected revenue"));
+  assert.ok(labels.some((l) => l.startsWith("MRR (Contracted)")));
+  assert.ok(labels.some((l) => l.startsWith("Total collected revenue")));
+});
+
+test("Transactions holds only real invoices, never a status message", async () => {
+  const wb = await readWorkbook(report());
+  const sheet = wb.getWorksheet("Transactions")!;
+  const header = headerRowOf(sheet, "Transaction ID");
+  const body: unknown[][] = [];
+  sheet.eachRow((row, n) => {
+    if (n > header.number) body.push([row.getCell(1).value, row.getCell(4).value, row.getCell(6).value]);
+  });
+  assert.equal(body.length, 1);
+  assert.deepEqual(body[0], ["in_1", "Vertex Motors", 2999]);
+});
+
+test("an unavailable Stripe leaves the transaction tables empty and explains itself elsewhere", async () => {
+  const wb = await readWorkbook(offlineReport());
+
+  for (const name of ["Transactions", "Failed Payments"]) {
+    const sheet = wb.getWorksheet(name)!;
+    const header = headerRowOf(sheet, "Transaction ID");
+    let dataRows = 0;
+    sheet.eachRow((_row, n) => {
+      if (n > header.number) dataRows++;
+    });
+    assert.equal(dataRows, 0, `${name} must not contain a fabricated row`);
+  }
+
+  const status = wb.getWorksheet("Data Status")!;
+  const rows: string[][] = [];
+  status.eachRow((row) => rows.push([String(row.getCell(1).value ?? ""), String(row.getCell(2).value ?? ""), String(row.getCell(3).value ?? "")]));
+  const stripe = rows.find((r) => r[0] === "Stripe invoices")!;
+  assert.equal(stripe[1], "Unavailable");
+  assert.match(stripe[2], /Invalid API Key/);
+  assert.equal(rows.find((r) => r[0] === "Subscriptions")?.[1], "Available");
+});
+
+test("an unavailable source reports N/A in the summary, never 0", async () => {
+  const wb = await readWorkbook(offlineReport());
+  const sheet = wb.getWorksheet("Revenue Summary")!;
+  const values = new Map<string, unknown>();
+  sheet.eachRow((row) => values.set(String(row.getCell(1).value ?? ""), row.getCell(2).value));
+  assert.equal(values.get("Total collected revenue"), "N/A");
+  assert.equal(values.get("Transaction count"), "N/A");
+  // The contracted side is still real and still reported.
+  assert.equal(values.get("MRR (Contracted)"), 49_970);
+});
+
+test("revenue share is blank-safe: N/A when collected revenue is unknown", async () => {
+  const wb = await readWorkbook(offlineReport());
+  const sheet = wb.getWorksheet("Revenue by Plan")!;
+  const header = headerRowOf(sheet, "Plan");
+  const first = sheet.getRow(header.number + 1);
+  assert.equal(first.getCell(4).value, "N/A");
+  assert.equal(first.getCell(5).value, "N/A");
+  assert.equal(typeof first.getCell(3).value, "number"); // contracted MRR is known
 });

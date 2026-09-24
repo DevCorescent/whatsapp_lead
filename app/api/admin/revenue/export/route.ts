@@ -67,7 +67,7 @@ export async function GET(req: NextRequest) {
     const body =
       format === "csv"
         ? Buffer.from("﻿" + buildRevenueCsv(report), "utf8")
-        : buildRevenueWorkbook(report);
+        : await buildRevenueWorkbook(report);
 
     console.log("[admin/revenue/export] Report generated", {
       userId: session.user.id,

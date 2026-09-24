@@ -2,8 +2,11 @@
 
 /**
  * Revenue analytics (SUPER_ADMIN).
- * Data: GET /api/admin/revenue — TODO [SHALMON]: endpoint does not exist yet, so the page
- * renders clearly-labelled preview figures and switches to live data the moment it ships.
+ *
+ * Data: GET /api/admin/revenue. Everything on this page is real — contracted MRR from
+ * plan prices on live subscriptions, and transactions from Stripe. When the endpoint
+ * fails the page says so and shows nothing: a placeholder dataset here once meant an
+ * outage looked like ₹3.8L of revenue and six invented customers.
  */
 
 import { useState } from "react";
@@ -37,6 +40,7 @@ import {
 import {
   AdminBadge,
   AdminButton,
+  AdminCard,
   AdminEmptyState,
   AdminPageHeader,
   AdminPanel,
@@ -44,7 +48,6 @@ import {
   AdminSkeletonRows,
   AdminTable,
   CHART,
-  PreviewBanner,
   Segmented,
   StatTile,
   axisProps,
@@ -81,6 +84,12 @@ interface RevenueData {
   byPlan: { month: string; starter: number; growth: number; enterprise: number }[];
   transactions: Transaction[];
   failed: Transaction[];
+  /** Whether Stripe could be read. Absent on responses from before this was reported. */
+  collected?: {
+    available: boolean;
+    unavailableReason: string | null;
+    totalTransactions: number;
+  };
 }
 
 function useRevenue(range: Range) {
@@ -95,35 +104,6 @@ function useRevenue(range: Range) {
     retry: false,
   });
 }
-
-const MONTHS = ["Aug", "Sep", "Oct", "Nov", "Dec", "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul"];
-
-/** TODO [SHALMON]: delete once /api/admin/revenue is live. */
-const PREVIEW: RevenueData = {
-  mrr: 384_600,
-  arr: 4_615_200,
-  arpu: 3_232,
-  ltv: 41_800,
-  trend: MONTHS.map((month, i) => ({ month, mrr: 176_000 + i * 19_000 + (i % 3) * 6_500 })),
-  byPlan: MONTHS.map((month, i) => ({
-    month,
-    starter: 42_000 + i * 2_400,
-    growth: 88_000 + i * 9_100,
-    enterprise: 46_000 + i * 7_500,
-  })),
-  transactions: [
-    { id: "tx1", tenant: "Vertex Motors", plan: "Enterprise", amount: 9999, gateway: "RAZORPAY", status: "PAID", date: new Date(Date.now() - 2 * 864e5).toISOString() },
-    { id: "tx2", tenant: "Nova Realty", plan: "Growth", amount: 2999, gateway: "STRIPE", status: "PAID", date: new Date(Date.now() - 3 * 864e5).toISOString() },
-    { id: "tx3", tenant: "Bloom Clinics", plan: "Growth", amount: 2999, gateway: "RAZORPAY", status: "PENDING", date: new Date(Date.now() - 4 * 864e5).toISOString() },
-    { id: "tx4", tenant: "EduSpark Academy", plan: "Starter", amount: 999, gateway: "RAZORPAY", status: "PAID", date: new Date(Date.now() - 6 * 864e5).toISOString() },
-    { id: "tx5", tenant: "Kirana Direct", plan: "Starter", amount: 999, gateway: "STRIPE", status: "FAILED", date: new Date(Date.now() - 7 * 864e5).toISOString() },
-    { id: "tx6", tenant: "Zen Interiors", plan: "Growth", amount: 2999, gateway: "RAZORPAY", status: "PAID", date: new Date(Date.now() - 9 * 864e5).toISOString() },
-  ],
-  failed: [
-    { id: "f1", tenant: "Kirana Direct", plan: "Starter", amount: 999, gateway: "STRIPE", status: "FAILED", date: new Date(Date.now() - 7 * 864e5).toISOString() },
-    { id: "f2", tenant: "Peak Fitness", plan: "Growth", amount: 2999, gateway: "RAZORPAY", status: "FAILED", date: new Date(Date.now() - 12 * 864e5).toISOString() },
-  ],
-};
 
 const STATUS_TONE: Record<TxStatus, AdminTone> = {
   PAID: "emerald",
@@ -279,15 +259,18 @@ function ExportMenu({ range }: { range: Range }) {
 
 export default function AdminRevenuePage() {
   const [range, setRange] = useState<Range>("12m");
-  const { data, isLoading, isError } = useRevenue(range);
+  const { data, isLoading, isError, error, refetch, isFetching } = useRevenue(range);
 
-  const rev = data ?? PREVIEW;
-  const preview = isError || !data;
+  // No placeholder dataset: an empty page is honest, invented revenue is not.
+  const rev = data;
   const n = sliceFor(range);
-  const trend = (rev.trend ?? []).slice(n);
-  const byPlan = (rev.byPlan ?? []).slice(n);
-  const transactions = rev.transactions ?? [];
-  const failed = rev.failed ?? [];
+  const trend = (rev?.trend ?? []).slice(n);
+  const byPlan = (rev?.byPlan ?? []).slice(n);
+  const transactions = rev?.transactions ?? [];
+  const failed = rev?.failed ?? [];
+  const collected = rev?.collected;
+  // Stripe is the source for transactions; distinguish "none happened" from "could not ask".
+  const stripeUnavailable = collected?.available === false;
 
   return (
     <>
@@ -303,48 +286,59 @@ export default function AdminRevenuePage() {
         }
       />
 
-      {preview && !isLoading && <PreviewBanner endpoint="GET /api/admin/revenue" />}
+      {isError && (
+        <AdminCard className="mb-6 border-rose-200 bg-rose-50">
+          <div className="flex items-start gap-3 p-5 text-sm text-rose-800">
+            <AlertCircle className="mt-0.5 h-5 w-5 shrink-0 text-rose-600" aria-hidden />
+            <div className="min-w-0">
+              <p className="font-semibold">Revenue data could not be loaded</p>
+              <p className="mt-0.5 text-rose-700">
+                {error instanceof Error ? error.message : "GET /api/admin/revenue failed."}{" "}
+                No figures are shown rather than estimates.
+              </p>
+              <AdminButton
+                variant="secondary"
+                size="sm"
+                className="mt-3"
+                onClick={() => void refetch()}
+                disabled={isFetching}
+              >
+                <RefreshCcw className={cn("h-3.5 w-3.5", isFetching && "animate-spin")} aria-hidden />
+                {isFetching ? "Retrying…" : "Retry"}
+              </AdminButton>
+            </div>
+          </div>
+        </AdminCard>
+      )}
 
       {/* KPI tiles */}
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <StatTile
           label="MRR"
-          value={formatCurrency(rev.mrr)}
+          value={formatCurrency(rev?.mrr)}
           icon={IndianRupee}
           tone="violet"
-          delta="+12.5%"
-          deltaDirection="up"
-          deltaNote="vs last month"
           loading={isLoading}
         />
         <StatTile
           label="ARR"
-          value={formatCurrency(rev.arr)}
+          value={formatCurrency(rev?.arr)}
           icon={CircleDollarSign}
           tone="emerald"
-          delta="+11.1%"
-          deltaDirection="up"
-          deltaNote="annualised"
           loading={isLoading}
         />
         <StatTile
           label="ARPU"
-          value={formatCurrency(rev.arpu)}
+          value={formatCurrency(rev?.arpu)}
           icon={Users}
           tone="sky"
-          delta="+2.1%"
-          deltaDirection="up"
-          deltaNote="per tenant / month"
           loading={isLoading}
         />
         <StatTile
           label="LTV"
-          value={formatCurrency(rev.ltv)}
+          value={formatCurrency(rev?.ltv)}
           icon={BadgeIndianRupee}
           tone="amber"
-          delta="+5.8%"
-          deltaDirection="up"
-          deltaNote="avg lifetime value"
           loading={isLoading}
         />
       </div>
@@ -426,8 +420,12 @@ export default function AdminRevenuePage() {
           ) : failed.length === 0 ? (
             <AdminEmptyState
               icon={AlertCircle}
-              title="All payments settled"
-              description="No failed charges in this period."
+              title={stripeUnavailable ? "Payment data unavailable" : "All payments settled"}
+              description={
+                stripeUnavailable
+                  ? (collected?.unavailableReason ?? "Stripe could not be queried.")
+                  : "No failed charges in this period."
+              }
             />
           ) : (
             <ul className="space-y-3">
@@ -476,9 +474,14 @@ export default function AdminRevenuePage() {
           </div>
         ) : transactions.length === 0 ? (
           <AdminEmptyState
-            icon={CreditCard}
-            title="No transactions"
-            description="Charges will appear here once billing is live."
+            icon={stripeUnavailable ? AlertCircle : CreditCard}
+            title={stripeUnavailable ? "Transactions unavailable" : "No transactions"}
+            description={
+              stripeUnavailable
+                ? (collected?.unavailableReason ??
+                  "Stripe could not be queried, so payments cannot be shown. This is not the same as no revenue.")
+                : "Stripe returned no charges for this period."
+            }
           />
         ) : (
           <AdminTable>
