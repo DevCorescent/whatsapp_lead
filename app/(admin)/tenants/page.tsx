@@ -1,8 +1,8 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   AlertTriangle,
   Building2,
@@ -69,6 +69,22 @@ const PAGE_SIZE = 20;
 
 // ─── Hooks ────────────────────────────────────────────────────────────────────
 
+/**
+ * Hold a value still until typing stops.
+ *
+ * Without this the table refetches on every keystroke, and each in-flight query
+ * empties it for a moment — so typing "Demo" flashes "No tenants" three times
+ * before the answer arrives.
+ */
+function useDebounced<T>(value: T, delayMs = 300): T {
+  const [settled, setSettled] = useState(value);
+  useEffect(() => {
+    const timer = setTimeout(() => setSettled(value), delayMs);
+    return () => clearTimeout(timer);
+  }, [value, delayMs]);
+  return settled;
+}
+
 /** Tenant rows for the table, including this month's message usage and each plan's cap. */
 function useAdminTenants(filters: TenantFilters) {
   return useQuery<{ tenants: AdminTenant[]; total: number }>({
@@ -90,6 +106,10 @@ function useAdminTenants(filters: TenantFilters) {
         total,
       };
     },
+    // Keep the rows already on screen while the next query runs. React Query
+    // still discards a response that arrives after a newer one, so a slow early
+    // keystroke cannot overwrite the result the user is actually waiting for.
+    placeholderData: keepPreviousData,
     retry: false,
   });
 }
@@ -154,8 +174,11 @@ export default function AdminTenantsPage() {
   const [editTenant, setEditTenant] = useState<AdminTenant | null>(null);
   const [suspendConfirm, setSuspendConfirm] = useState<AdminTenant | null>(null);
 
+  // The query follows the settled search text, so the table refetches once the
+  // user pauses rather than on every keystroke.
+  const debouncedSearch = useDebounced(search);
   const { data, isLoading, isError, error, refetch, isFetching } = useAdminTenants({
-    search,
+    search: debouncedSearch,
     plan,
     status,
     page,
@@ -165,6 +188,8 @@ export default function AdminTenantsPage() {
 
   const tenants = data?.tenants ?? [];
   const total = data?.total ?? 0;
+  // Typing has outrun the results on screen; the rows below are the previous answer.
+  const settling = isFetching || debouncedSearch !== search;
   const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
 
   const resetPage = () => setPage(1);
@@ -233,7 +258,18 @@ export default function AdminTenantsPage() {
 
       {/* Table */}
       <AdminCard className="overflow-visible">
-        {isLoading ? (
+        {/* While a newer query is in flight the previous rows stay put; this says so
+            rather than letting the table look stale. */}
+        {settling && tenants.length > 0 && (
+          <div
+            role="status"
+            aria-live="polite"
+            className="border-b border-slate-100 px-5 py-1.5 text-xs text-slate-500"
+          >
+            Updating…
+          </div>
+        )}
+        {isLoading || (settling && tenants.length === 0 && !isError) ? (
           <div className="p-5">
             <AdminSkeletonRows rows={6} />
           </div>

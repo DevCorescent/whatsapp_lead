@@ -4,30 +4,43 @@
 //
 // Turns the report built by lib/admin/revenueReport.ts into the two files the
 // Revenue page offers. Nothing here recalculates anything: every number arrives
-// already computed, so the workbook and the CSV cannot drift from the dashboard
-// or from each other.
+// already computed, so the workbook, the CSV and the dashboard cannot drift.
 //
-// Written with the `xlsx` package the importer already depends on. Its community
-// build writes values, number formats, column widths and autofilters, and
-// silently ignores cell styling — so this file uses number formats and widths for
-// readability and does not pretend to emit bold or frozen headers.
+// The two files answer different needs and are shaped differently on purpose:
 //
-// Money is written as a number with a currency-style format, never as a
-// pre-formatted "₹49,970" string: a spreadsheet can sum the first and cannot sum
-// the second.
+//   XLSX — the report a Super Admin forwards to finance. Six sheets, one subject
+//   each, with a title block, bold frozen headers, autofilters and real number
+//   formats. Written with ExcelJS because SheetJS's community build silently
+//   discards cell styling and cannot freeze panes.
+//
+//   CSV — one flat table with a single row schema, for Excel, pandas or Power BI.
+//   It is deliberately NOT the workbook flattened: stacking six pseudo-tables with
+//   their own headers into one file produces something no tool can parse and no
+//   person can read.
+//
+// Three rules hold throughout:
+//
+//   · A figure that could not be established is "N/A". A figure that was looked up
+//     and really is nothing is 0. Collapsing the two would turn "we could not reach
+//     Stripe" into "this business collected no money".
+//   · Money is a number with a currency format, never a pre-formatted "₹49,970"
+//     string. A spreadsheet can sum the first and cannot sum the second.
+//   · A status or error message is never a data row. An unavailable Stripe leaves
+//     the Transactions sheet with its headers and no rows, and says why in the Data
+//     Status sheet — it does not masquerade as a transaction.
 
-import * as XLSX from "xlsx";
+import ExcelJS from "exceljs";
 import { toCsv } from "@/lib/csv";
 import type { RevenueReport, TransactionRow } from "@/lib/admin/revenueMetrics";
 import { LTV_MONTHS } from "@/lib/admin/revenueMetrics";
 
-const INR_FORMAT = '"₹"#,##0.00';
-const MONEY_FORMAT = "#,##0.00";
-const PERCENT_FORMAT = "0.0%";
-const DATE_FORMAT = "yyyy-mm-dd hh:mm";
+/** Shown when a value genuinely could not be determined. Never used for a real zero. */
+export const NA = "N/A";
 
-/** Value shown when a figure cannot be established truthfully. */
-const NA = "N/A";
+const INR_FORMAT = '₹#,##0.00';
+const COUNT_FORMAT = "#,##0";
+const PERCENT_FORMAT = "0.00%";
+const DATE_FORMAT = "dd mmm yyyy";
 
 const RANGE_LABEL: Record<string, string> = {
   "3m": "Last 3 calendar months",
@@ -35,190 +48,285 @@ const RANGE_LABEL: Record<string, string> = {
   "12m": "Last 12 calendar months",
 };
 
-/** `revenue-report-12-months-2026-09-23` — extension added by the caller. */
-export function revenueReportFilename(report: RevenueReport): string {
-  const date = report.generatedAt.toISOString().slice(0, 10);
-  return `revenue-report-${report.months}-months-${date}`;
+/** "01 Oct 2025" — the human-facing date form used across both files. */
+function displayDate(d: Date): string {
+  return d.toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" });
 }
 
-const iso = (d: Date) => d.toISOString();
+/** "2026-09-23" — the machine-facing form, used for every CSV date. */
+function isoDate(d: Date): string {
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+}
 
-/** Collected total across currencies, or null when Stripe was unavailable. */
+/** `revenue-report-12-months-2026-09-23` — the caller adds the extension. */
+export function revenueReportFilename(report: RevenueReport): string {
+  return `revenue-report-${report.months}-months-${isoDate(report.generatedAt)}`;
+}
+
+/** Collected total across currencies, or null when Stripe could not be read. */
 function collectedTotal(report: RevenueReport): number | null {
   if (!report.collected.available) return null;
   return Object.values(report.collected.totalsByCurrency).reduce((a, b) => a + b, 0);
 }
 
+/** Where each part of the report came from, and whether it could be read. */
+interface SourceStatus {
+  source: string;
+  status: "Available" | "Unavailable";
+  details: string;
+}
+
+function dataStatuses(report: RevenueReport): SourceStatus[] {
+  const stripeOk = report.collected.available;
+  const stripeDetail = stripeOk
+    ? `${report.collected.totalTransactions} invoice(s) created in the reporting period`
+    : (report.collected.unavailableReason ?? "Stripe data could not be retrieved");
+
+  return [
+    { source: "Subscriptions", status: "Available", details: "Loaded from PostgreSQL" },
+    { source: "Plans", status: "Available", details: "Loaded from PostgreSQL" },
+    {
+      source: "Stripe invoices",
+      status: stripeOk ? "Available" : "Unavailable",
+      details: stripeDetail,
+    },
+    {
+      source: "Stripe failed payments",
+      status: stripeOk ? "Available" : "Unavailable",
+      details: stripeOk
+        ? `${report.collected.failedTransactions} failed payment(s) in the reporting period`
+        : stripeDetail,
+    },
+  ];
+}
+
 // ─── XLSX ────────────────────────────────────────────────────────────────────
 
-type Cell = string | number | Date | null;
+const TITLE_FILL = "FF0B6E4F"; // the admin panel's green
+const HEADER_FILL = "FFF1F5F9"; // slate-100
 
-/** Apply a number format to one column of a sheet, skipping its header row. */
-function formatColumn(sheet: XLSX.WorkSheet, columnIndex: number, format: string, fromRow: number) {
-  const range = XLSX.utils.decode_range(sheet["!ref"] ?? "A1");
-  for (let row = fromRow; row <= range.e.r; row++) {
-    const address = XLSX.utils.encode_cell({ r: row, c: columnIndex });
-    const cell = sheet[address] as XLSX.CellObject | undefined;
-    if (cell && cell.t === "n") cell.z = format;
-    if (cell && cell.t === "d") cell.z = format;
+/** Title block at the top of every sheet, so a printed page identifies itself. */
+function addTitleBlock(sheet: ExcelJS.Worksheet, report: RevenueReport, subtitle: string) {
+  const title = sheet.addRow(["Super Admin Revenue Report"]);
+  title.font = { bold: true, size: 14, color: { argb: "FFFFFFFF" } };
+  title.height = 22;
+  sheet.mergeCells(title.number, 1, title.number, 6);
+  sheet.getCell(title.number, 1).fill = {
+    type: "pattern",
+    pattern: "solid",
+    fgColor: { argb: TITLE_FILL },
+  };
+  sheet.getCell(title.number, 1).alignment = { vertical: "middle" };
+
+  const context = sheet.addRow([
+    `${subtitle} · ${RANGE_LABEL[report.range] ?? `${report.months} months`} · ${displayDate(report.periodStart)} – ${displayDate(report.periodEnd)} · Generated ${displayDate(report.generatedAt)}`,
+  ]);
+  context.font = { size: 10, color: { argb: "FF64748B" } };
+  sheet.mergeCells(context.number, 1, context.number, 6);
+  sheet.addRow([]);
+}
+
+/** A bold, filled, frozen header row with an autofilter over the table below it. */
+function addTableHeader(sheet: ExcelJS.Worksheet, headers: string[]) {
+  const row = sheet.addRow(headers);
+  row.font = { bold: true };
+  row.alignment = { vertical: "middle", wrapText: true };
+  row.eachCell((cell) => {
+    cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: HEADER_FILL } };
+    cell.border = { bottom: { style: "thin", color: { argb: "FFCBD5E1" } } };
+  });
+  sheet.views = [{ state: "frozen", ySplit: row.number }];
+  sheet.autoFilter = {
+    from: { row: row.number, column: 1 },
+    to: { row: row.number, column: headers.length },
+  };
+  return row.number;
+}
+
+/** A bold sub-heading inside the summary sheet. */
+function addSectionHeading(sheet: ExcelJS.Worksheet, text: string) {
+  const row = sheet.addRow([text]);
+  row.font = { bold: true, size: 11 };
+  return row;
+}
+
+/** Apply a number format to a column, leaving "N/A" strings untouched. */
+function formatColumn(sheet: ExcelJS.Worksheet, column: number, format: string, fromRow: number) {
+  for (let r = fromRow; r <= sheet.rowCount; r++) {
+    const cell = sheet.getRow(r).getCell(column);
+    if (typeof cell.value === "number" || cell.value instanceof Date) cell.numFmt = format;
   }
 }
 
-function sheetFromRows(
-  rows: Cell[][],
-  options: {
-    widths: number[];
-    /** Column index → number format, applied below the header row. */
-    formats?: Record<number, string>;
-    /** Row index (0-based) the table header sits on, for the autofilter. */
-    headerRow?: number;
-  },
-): XLSX.WorkSheet {
-  const sheet = XLSX.utils.aoa_to_sheet(rows, { cellDates: true });
-  sheet["!cols"] = options.widths.map((wch) => ({ wch }));
+function summarySheet(workbook: ExcelJS.Workbook, report: RevenueReport) {
+  const sheet = workbook.addWorksheet("Revenue Summary");
+  sheet.columns = [{ width: 42 }, { width: 22 }, { width: 46 }];
+  addTitleBlock(sheet, report, "Executive summary");
 
-  if (options.headerRow !== undefined) {
-    const range = XLSX.utils.decode_range(sheet["!ref"] ?? "A1");
-    const lastColumn = Math.max(0, (rows[options.headerRow]?.length ?? 1) - 1);
-    sheet["!autofilter"] = {
-      ref: XLSX.utils.encode_range(
-        { r: options.headerRow, c: 0 },
-        { r: range.e.r, c: lastColumn },
-      ),
-    };
-    for (const [column, format] of Object.entries(options.formats ?? {})) {
-      formatColumn(sheet, Number(column), format, options.headerRow + 1);
+  const meta: [string, string][] = [
+    ["Reporting period", RANGE_LABEL[report.range] ?? `${report.months} months`],
+    ["Period start", displayDate(report.periodStart)],
+    ["Period end", displayDate(report.periodEnd)],
+    ["Generated at", `${displayDate(report.generatedAt)}, ${report.generatedAt.toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" })}`],
+    ["Currency", report.contractedCurrency],
+  ];
+  for (const [label, value] of meta) {
+    const row = sheet.addRow([label, value]);
+    row.getCell(1).font = { color: { argb: "FF64748B" } };
+  }
+  sheet.addRow([]);
+
+  // ── Contracted: what subscriptions are priced at. Not money received. ──
+  addSectionHeading(sheet, "Contracted subscription metrics");
+  const contractedNote = sheet.addRow([
+    "Plan prices on active subscriptions in this database. A run-rate, not cash collected.",
+  ]);
+  contractedNote.font = { italic: true, size: 9, color: { argb: "FF64748B" } };
+  sheet.mergeCells(contractedNote.number, 1, contractedNote.number, 3);
+
+  const contractedHeader = addTableHeader(sheet, ["Metric", "Value"]);
+  const contractedRows: [string, number, string][] = [
+    ["MRR (Contracted)", report.contracted.mrr, INR_FORMAT],
+    ["ARR (Projected = MRR × 12)", report.contracted.arr, INR_FORMAT],
+    ["ARPU (MRR ÷ active subscriptions)", report.contracted.arpu, INR_FORMAT],
+    [`LTV (Projected = ARPU × ${LTV_MONTHS} months)`, report.contracted.ltv, INR_FORMAT],
+    ["Active subscriptions (ACTIVE or TRIALING)", report.contracted.activeSubscriptions, COUNT_FORMAT],
+  ];
+  for (const [metric, value, format] of contractedRows) {
+    const row = sheet.addRow([metric, value]);
+    row.getCell(2).numFmt = format;
+  }
+  sheet.addRow([]);
+
+  // ── Collected: money Stripe actually took. ──
+  addSectionHeading(sheet, "Collected revenue");
+  const collectedNote = sheet.addRow([
+    report.collected.available
+      ? "Stripe invoices created in the reporting period. This is money actually received."
+      : "Unavailable — see the Data Status sheet. Not reported as zero.",
+  ]);
+  collectedNote.font = { italic: true, size: 9, color: { argb: "FF64748B" } };
+  sheet.mergeCells(collectedNote.number, 1, collectedNote.number, 3);
+
+  addTableHeader(sheet, ["Metric", "Value"]);
+  const available = report.collected.available;
+  const total = collectedTotal(report);
+  const collectedRows: [string, number | string, string][] = [
+    ["Total collected revenue", available ? (total ?? 0) : NA, INR_FORMAT],
+    ["Transaction count", available ? report.collected.totalTransactions : NA, COUNT_FORMAT],
+    ["Successful transactions (invoice paid)", available ? report.collected.successfulTransactions : NA, COUNT_FORMAT],
+    ["Failed transactions (attempted, not paid)", available ? report.collected.failedTransactions : NA, COUNT_FORMAT],
+  ];
+  for (const [metric, value, format] of collectedRows) {
+    const row = sheet.addRow([metric, value]);
+    if (typeof value === "number") row.getCell(2).numFmt = format;
+  }
+
+  const currencies = Object.entries(report.collected.totalsByCurrency);
+  if (currencies.length > 1) {
+    sheet.addRow([]);
+    addSectionHeading(sheet, "Collected revenue by currency");
+    addTableHeader(sheet, ["Currency", "Value"]);
+    for (const [currency, amount] of currencies) {
+      const row = sheet.addRow([currency, amount]);
+      row.getCell(2).numFmt = "#,##0.00";
     }
   }
-  return sheet;
+
+  // The summary carries two stacked tables by design; freezing one of their
+  // header rows would be arbitrary, so the pane stays at the title block.
+  sheet.views = [{ state: "frozen", ySplit: contractedHeader - 3 }];
+  sheet.autoFilter = undefined as unknown as ExcelJS.AutoFilter;
 }
 
-function summarySheet(report: RevenueReport): XLSX.WorkSheet {
-  const total = collectedTotal(report);
-  const currencies = Object.entries(report.collected.totalsByCurrency);
+function monthlySheet(workbook: ExcelJS.Workbook, report: RevenueReport) {
+  const sheet = workbook.addWorksheet("Monthly Revenue");
+  sheet.columns = [{ width: 12 }, { width: 14 }, { width: 18 }, { width: 18 }, { width: 22 }, { width: 20 }, { width: 20 }];
+  addTitleBlock(sheet, report, "Monthly revenue");
 
-  const rows: Cell[][] = [
-    ["Super Admin Revenue Report", null],
-    ["Generated at", report.generatedAt],
-    ["Reporting period", RANGE_LABEL[report.range] ?? `${report.months} months`],
-    ["Period start", report.periodStart],
-    ["Period end", report.periodEnd],
-    ["Subscription currency", report.contractedCurrency],
-    [null, null],
-
-    ["Contracted subscription metrics", "Value"],
-    ["— Source: Plan prices on active subscriptions in this database. Not money received.", null],
-    ["MRR (contracted, monthly)", report.contracted.mrr],
-    ["ARR (projected = MRR × 12)", report.contracted.arr],
-    ["ARPU (contracted MRR ÷ active subscriptions)", report.contracted.arpu],
-    [`LTV (projected = ARPU × ${LTV_MONTHS} months)`, report.contracted.ltv],
-    ["Active subscriptions (ACTIVE or TRIALING)", report.contracted.activeSubscriptions],
-    [null, null],
-
-    ["Collected revenue (Stripe)", "Value"],
-    [
-      report.collected.available
-        ? "— Source: Stripe invoices created in this period. This is money actually taken."
-        : `— Unavailable. ${report.collected.unavailableReason ?? ""}`,
-      null,
-    ],
-    ["Total collected revenue", report.collected.available ? (total ?? 0) : NA],
-    ["Total transactions", report.collected.available ? report.collected.totalTransactions : NA],
-    [
-      "Successful transactions (invoice paid)",
-      report.collected.available ? report.collected.successfulTransactions : NA,
-    ],
-    [
-      "Failed transactions (payment attempted, not paid)",
-      report.collected.available ? report.collected.failedTransactions : NA,
-    ],
-  ];
-
-  if (currencies.length > 1) {
-    rows.push([null, null], ["Collected revenue by currency", "Value"]);
-    for (const [currency, amount] of currencies) rows.push([currency, amount]);
-  }
-
-  const sheet = sheetFromRows(rows, { widths: [52, 26] });
-  // Money rows carry a rupee format; the counts beside them must not.
-  for (const row of [9, 10, 11, 12]) {
-    const cell = sheet[XLSX.utils.encode_cell({ r: row, c: 1 })] as XLSX.CellObject | undefined;
-    if (cell && cell.t === "n") cell.z = INR_FORMAT;
-  }
-  for (const row of [1, 3, 4]) {
-    const cell = sheet[XLSX.utils.encode_cell({ r: row, c: 1 })] as XLSX.CellObject | undefined;
-    if (cell && cell.t === "d") cell.z = DATE_FORMAT;
-  }
-  const totalCell = sheet[XLSX.utils.encode_cell({ r: 17, c: 1 })] as XLSX.CellObject | undefined;
-  if (totalCell && totalCell.t === "n") totalCell.z = MONEY_FORMAT;
-  return sheet;
-}
-
-function monthlySheet(report: RevenueReport): XLSX.WorkSheet {
-  const header: Cell[] = [
+  const headerRow = addTableHeader(sheet, [
     "Month",
-    "Contracted MRR (INR)",
+    "Month label",
+    "Contracted MRR",
     "Collected revenue",
     "Successful transactions",
     "Failed transactions",
     "Active subscriptions",
-  ];
-  const rows: Cell[][] = [
-    header,
-    ...report.monthly.map((m): Cell[] => [
+  ]);
+
+  for (const m of report.monthly) {
+    sheet.addRow([
+      m.key,
       m.label,
       m.contractedMrr,
       m.collectedRevenue ?? NA,
       m.successfulTransactions ?? NA,
       m.failedTransactions ?? NA,
       m.activeSubscriptions,
-    ]),
-  ];
-  return sheetFromRows(rows, {
-    widths: [12, 22, 18, 24, 20, 22],
-    headerRow: 0,
-    formats: { 1: INR_FORMAT, 2: MONEY_FORMAT },
-  });
+    ]);
+  }
+
+  formatColumn(sheet, 3, INR_FORMAT, headerRow + 1);
+  formatColumn(sheet, 4, INR_FORMAT, headerRow + 1);
+  formatColumn(sheet, 5, COUNT_FORMAT, headerRow + 1);
+  formatColumn(sheet, 6, COUNT_FORMAT, headerRow + 1);
+  formatColumn(sheet, 7, COUNT_FORMAT, headerRow + 1);
 }
 
-function plansSheet(report: RevenueReport): XLSX.WorkSheet {
-  const rows: Cell[][] = [
-    ["Plan", "Active subscriptions", "Contracted MRR (INR)", "Collected revenue", "% of collected revenue"],
-    ...report.plans.map((p): Cell[] => [
+function plansSheet(workbook: ExcelJS.Workbook, report: RevenueReport) {
+  const sheet = workbook.addWorksheet("Revenue by Plan");
+  sheet.columns = [{ width: 26 }, { width: 22 }, { width: 18 }, { width: 18 }, { width: 18 }];
+  addTitleBlock(sheet, report, "Revenue by plan");
+
+  const headerRow = addTableHeader(sheet, [
+    "Plan",
+    "Active subscriptions",
+    "Contracted MRR",
+    "Collected revenue",
+    "Revenue share",
+  ]);
+
+  for (const p of report.plans) {
+    sheet.addRow([
       p.plan,
       p.activeSubscriptions,
       p.mrr,
       p.collectedRevenue ?? NA,
+      // Share of collected revenue only. Deriving it from contracted MRR would
+      // silently answer a different question than the column asks.
       p.shareOfCollected ?? NA,
-    ]),
-  ];
-  if (report.plans.length === 0) {
-    rows.push(["No plans with subscriptions or revenue in this period.", null, null, null, null]);
+    ]);
   }
-  return sheetFromRows(rows, {
-    widths: [24, 22, 22, 20, 22],
-    headerRow: 0,
-    formats: { 2: INR_FORMAT, 3: MONEY_FORMAT, 4: PERCENT_FORMAT },
-  });
+
+  formatColumn(sheet, 2, COUNT_FORMAT, headerRow + 1);
+  formatColumn(sheet, 3, INR_FORMAT, headerRow + 1);
+  formatColumn(sheet, 4, INR_FORMAT, headerRow + 1);
+  formatColumn(sheet, 5, PERCENT_FORMAT, headerRow + 1);
 }
 
-function transactionRows(rows: TransactionRow[]): Cell[][] {
-  return rows.map((t): Cell[] => [
-    t.id,
-    t.number ?? NA,
-    t.date,
-    t.tenant,
-    t.plan,
-    t.amount,
-    t.currency,
-    t.status,
-    t.provider,
-    t.subscriptionId ?? NA,
-  ]);
+/** A note above a table explaining why it is empty. Never a row inside the table. */
+function addEmptyNote(sheet: ExcelJS.Worksheet, text: string) {
+  const row = sheet.addRow([text]);
+  row.font = { italic: true, size: 9, color: { argb: "FF64748B" } };
+  sheet.mergeCells(row.number, 1, row.number, 4);
 }
 
-function transactionsSheet(report: RevenueReport): XLSX.WorkSheet {
-  const header: Cell[] = [
+function transactionsSheet(workbook: ExcelJS.Workbook, report: RevenueReport) {
+  const sheet = workbook.addWorksheet("Transactions");
+  sheet.columns = [
+    { width: 30 }, { width: 18 }, { width: 16 }, { width: 28 },
+    { width: 18 }, { width: 16 }, { width: 10 }, { width: 16 }, { width: 12 }, { width: 30 },
+  ];
+  addTitleBlock(sheet, report, "Transactions");
+
+  if (!report.collected.available) {
+    addEmptyNote(sheet, `No transaction data: ${report.collected.unavailableReason ?? "Stripe could not be queried"}. See the Data Status sheet.`);
+  } else if (report.transactions.length === 0) {
+    addEmptyNote(sheet, "Stripe returned no invoices for this period.");
+  }
+
+  const headerRow = addTableHeader(sheet, [
     "Transaction ID",
     "Invoice number",
     "Date",
@@ -229,30 +337,40 @@ function transactionsSheet(report: RevenueReport): XLSX.WorkSheet {
     "Status",
     "Provider",
     "Subscription ID",
-  ];
-  const body = transactionRows(report.transactions);
-  const rows: Cell[][] = [header];
+  ]);
 
-  if (!report.collected.available) {
-    rows.push([
-      `Collected revenue unavailable. ${report.collected.unavailableReason ?? ""}`,
-      ...Array(9).fill(null),
+  // Only real invoices below the header — an error message is not a transaction.
+  for (const t of report.transactions) {
+    sheet.addRow([
+      t.id,
+      t.number ?? "",
+      t.date,
+      t.tenant,
+      t.plan,
+      t.amount,
+      t.currency,
+      t.status,
+      t.provider,
+      t.subscriptionId ?? "",
     ]);
-  } else if (body.length === 0) {
-    rows.push(["No transactions recorded for this period.", ...Array(9).fill(null)]);
-  } else {
-    rows.push(...body);
   }
 
-  return sheetFromRows(rows, {
-    widths: [28, 18, 20, 26, 18, 14, 10, 16, 12, 28],
-    headerRow: 0,
-    formats: { 2: DATE_FORMAT, 5: MONEY_FORMAT },
-  });
+  formatColumn(sheet, 3, DATE_FORMAT, headerRow + 1);
+  formatColumn(sheet, 6, "#,##0.00", headerRow + 1);
 }
 
-function failedSheet(report: RevenueReport): XLSX.WorkSheet {
-  const header: Cell[] = [
+function failedSheet(workbook: ExcelJS.Workbook, report: RevenueReport) {
+  const sheet = workbook.addWorksheet("Failed Payments");
+  sheet.columns = [{ width: 30 }, { width: 16 }, { width: 28 }, { width: 16 }, { width: 10 }, { width: 18 }, { width: 46 }];
+  addTitleBlock(sheet, report, "Failed payments");
+
+  if (!report.collected.available) {
+    addEmptyNote(sheet, `No payment data: ${report.collected.unavailableReason ?? "Stripe could not be queried"}. See the Data Status sheet.`);
+  } else if (report.failedTransactions.length === 0) {
+    addEmptyNote(sheet, "No failed payments recorded for this period.");
+  }
+
+  const headerRow = addTableHeader(sheet, [
     "Transaction ID",
     "Date",
     "Workspace",
@@ -260,182 +378,220 @@ function failedSheet(report: RevenueReport): XLSX.WorkSheet {
     "Currency",
     "Status",
     "Failure reason",
-  ];
-  const rows: Cell[][] = [header];
+  ]);
 
-  if (!report.collected.available) {
-    rows.push([
-      `Collected revenue unavailable. ${report.collected.unavailableReason ?? ""}`,
-      ...Array(6).fill(null),
+  for (const t of report.failedTransactions) {
+    sheet.addRow([
+      t.id,
+      t.date,
+      t.tenant,
+      t.amount,
+      t.currency,
+      t.status,
+      // Stripe records a reason only for a finalization failure; a declined card
+      // leaves none on the invoice, and inventing one would be a lie.
+      t.failureReason ?? NA,
     ]);
-  } else if (report.failedTransactions.length === 0) {
-    rows.push(["No failed payments recorded for this period.", ...Array(6).fill(null)]);
-  } else {
-    rows.push(
-      ...report.failedTransactions.map((t): Cell[] => [
-        t.id,
-        t.date,
-        t.tenant,
-        t.amount,
-        t.currency,
-        t.status,
-        // Stripe records a reason only for a finalization failure; a declined card
-        // does not put one on the invoice, and inventing one would be a lie.
-        t.failureReason ?? NA,
-      ]),
-    );
   }
 
-  return sheetFromRows(rows, {
-    widths: [28, 20, 26, 14, 10, 18, 44],
-    headerRow: 0,
-    formats: { 1: DATE_FORMAT, 3: MONEY_FORMAT },
-  });
+  formatColumn(sheet, 2, DATE_FORMAT, headerRow + 1);
+  formatColumn(sheet, 4, "#,##0.00", headerRow + 1);
 }
 
-/** The whole report as an .xlsx buffer. */
-export function buildRevenueWorkbook(report: RevenueReport): Buffer {
-  const workbook = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(workbook, summarySheet(report), "Revenue Summary");
-  XLSX.utils.book_append_sheet(workbook, monthlySheet(report), "Monthly Revenue");
-  XLSX.utils.book_append_sheet(workbook, plansSheet(report), "Revenue by Plan");
-  XLSX.utils.book_append_sheet(workbook, transactionsSheet(report), "Transactions");
-  XLSX.utils.book_append_sheet(workbook, failedSheet(report), "Failed Payments");
+function dataStatusSheet(workbook: ExcelJS.Workbook, report: RevenueReport) {
+  const sheet = workbook.addWorksheet("Data Status");
+  sheet.columns = [{ width: 28 }, { width: 16 }, { width: 76 }];
+  addTitleBlock(sheet, report, "Data sources");
 
-  return XLSX.write(workbook, { type: "buffer", bookType: "xlsx", cellDates: true }) as Buffer;
+  const headerRow = addTableHeader(sheet, ["Data source", "Status", "Details"]);
+  for (const s of dataStatuses(report)) {
+    const row = sheet.addRow([s.source, s.status, s.details]);
+    row.getCell(2).font = {
+      bold: true,
+      color: { argb: s.status === "Available" ? "FF15803D" : "FFB91C1C" },
+    };
+    row.getCell(3).alignment = { wrapText: true, vertical: "top" };
+  }
+
+  sheet.addRow([]);
+  const note = sheet.addRow([
+    'Values marked "N/A" could not be determined from an unavailable source. A value of 0 means the source was queried successfully and the result was genuinely zero.',
+  ]);
+  note.font = { italic: true, size: 9, color: { argb: "FF64748B" } };
+  sheet.mergeCells(note.number, 1, note.number, 3);
+  void headerRow;
+}
+
+/** The whole report as a formatted .xlsx workbook. */
+export async function buildRevenueWorkbook(report: RevenueReport): Promise<Buffer> {
+  const workbook = new ExcelJS.Workbook();
+  workbook.creator = "WhatsCRM";
+  workbook.created = report.generatedAt;
+
+  summarySheet(workbook, report);
+  monthlySheet(workbook, report);
+  plansSheet(workbook, report);
+  transactionsSheet(workbook, report);
+  failedSheet(workbook, report);
+  dataStatusSheet(workbook, report);
+
+  const buffer = await workbook.xlsx.writeBuffer();
+  return Buffer.from(buffer);
 }
 
 // ─── CSV ─────────────────────────────────────────────────────────────────────
 
 /**
- * The same report as one CSV.
+ * One flat table, one row per observation — the long/tidy shape every analysis
+ * tool expects.
  *
- * A CSV has no sheets, so the file is written as labelled sections separated by
- * blank lines: metadata, the summary, then one table per sheet. Every section
- * keeps its own header row, which is what lets a spreadsheet or a script read the
- * part it cares about.
- *
- * Amounts are plain numbers with the currency in its own column, so the file is
- * usable for analysis rather than only for reading.
+ * `Section` says what kind of row it is, `Metric` what was measured, and the
+ * dimension columns (Month, Plan, Workspace, transaction ids) are filled only
+ * where they apply. `Value` carries the number, or "N/A" when the source could
+ * not be read. That means a reader can filter Section=Transaction and get a clean
+ * transaction table, or pivot Section=Monthly Revenue by Month, without ever
+ * meeting a second header row mid-file.
  */
+export const CSV_COLUMNS = [
+  "Section",
+  "Metric",
+  "Month",
+  "Plan",
+  "Workspace",
+  "Transaction ID",
+  "Invoice Number",
+  "Date",
+  "Status",
+  "Provider",
+  "Subscription ID",
+  "Currency",
+  "Value",
+] as const;
+
+interface CsvRow {
+  section: string;
+  metric?: string;
+  month?: string;
+  plan?: string;
+  workspace?: string;
+  transactionId?: string;
+  invoiceNumber?: string;
+  date?: string;
+  status?: string;
+  provider?: string;
+  subscriptionId?: string;
+  currency?: string;
+  value?: string | number;
+}
+
+function transactionCsvRows(section: string, rows: TransactionRow[]): CsvRow[] {
+  return rows.map((t) => ({
+    section,
+    metric: "Amount",
+    plan: t.plan,
+    workspace: t.tenant,
+    transactionId: t.id,
+    invoiceNumber: t.number ?? "",
+    date: t.date.toISOString(),
+    status: t.status,
+    provider: t.provider,
+    subscriptionId: t.subscriptionId ?? "",
+    currency: t.currency,
+    value: t.amount,
+  }));
+}
+
 export function buildRevenueCsv(report: RevenueReport): string {
-  const pairs = (rows: [string, string | number][]) =>
-    toCsv(rows, [
-      { header: "Field", value: (r) => r[0] },
-      { header: "Value", value: (r) => r[1] },
-    ]);
+  const available = report.collected.available;
+  const money = report.contractedCurrency;
+  const rows: CsvRow[] = [];
 
+  // ── Report metadata ──
+  rows.push(
+    { section: "Report", metric: "Report type", value: "Super Admin Revenue Report" },
+    { section: "Report", metric: "Reporting period", value: RANGE_LABEL[report.range] ?? `${report.months} months` },
+    { section: "Report", metric: "Period start", date: isoDate(report.periodStart), value: isoDate(report.periodStart) },
+    { section: "Report", metric: "Period end", date: isoDate(report.periodEnd), value: isoDate(report.periodEnd) },
+    { section: "Report", metric: "Generated at", date: report.generatedAt.toISOString(), value: report.generatedAt.toISOString() },
+    { section: "Report", metric: "Subscription currency", value: money },
+  );
+
+  // ── Where each figure came from, and whether it could be read ──
+  for (const s of dataStatuses(report)) {
+    rows.push({ section: "Data Status", metric: s.source, status: s.status, value: s.details });
+  }
+
+  // ── Contracted run-rate (database) ──
+  const contracted: [string, number][] = [
+    ["MRR (Contracted)", report.contracted.mrr],
+    ["ARR (Projected)", report.contracted.arr],
+    ["ARPU", report.contracted.arpu],
+    ["LTV (Projected)", report.contracted.ltv],
+  ];
+  for (const [metric, value] of contracted) {
+    rows.push({ section: "Contracted Metrics", metric, currency: money, value });
+  }
+  rows.push({
+    section: "Contracted Metrics",
+    metric: "Active Subscriptions",
+    value: report.contracted.activeSubscriptions,
+  });
+
+  // ── Collected revenue (Stripe) — N/A, never 0, when unreadable ──
   const total = collectedTotal(report);
-  const sections: string[] = [];
-
-  sections.push(
-    pairs([
-      ["Report type", "Super Admin Revenue Report"],
-      ["Generated at", iso(report.generatedAt)],
-      ["Reporting period", RANGE_LABEL[report.range] ?? `${report.months} months`],
-      ["Period start", iso(report.periodStart)],
-      ["Period end", iso(report.periodEnd)],
-      ["Subscription currency", report.contractedCurrency],
-      [
-        "Collected revenue source",
-        report.collected.available
-          ? "Stripe invoices"
-          : `Unavailable — ${report.collected.unavailableReason ?? "unknown reason"}`,
-      ],
-    ]),
+  rows.push(
+    { section: "Collected Revenue", metric: "Total Collected Revenue", currency: money, value: available ? (total ?? 0) : NA },
+    { section: "Collected Revenue", metric: "Transaction Count", value: available ? report.collected.totalTransactions : NA },
+    { section: "Collected Revenue", metric: "Successful Transactions", value: available ? report.collected.successfulTransactions : NA },
+    { section: "Collected Revenue", metric: "Failed Transactions", value: available ? report.collected.failedTransactions : NA },
   );
 
-  sections.push(
-    "# Contracted subscription metrics (plan prices on active subscriptions; not money received)\r\n" +
-      pairs([
-        ["MRR (contracted, INR)", report.contracted.mrr],
-        ["ARR (projected, INR)", report.contracted.arr],
-        ["ARPU (INR)", report.contracted.arpu],
-        [`LTV (projected over ${LTV_MONTHS} months, INR)`, report.contracted.ltv],
-        ["Active subscriptions", report.contracted.activeSubscriptions],
-      ]),
-  );
+  // ── Monthly, one row per month per measure ──
+  for (const m of report.monthly) {
+    rows.push(
+      { section: "Monthly Revenue", metric: "Contracted MRR", month: m.key, currency: money, value: m.contractedMrr },
+      { section: "Monthly Revenue", metric: "Collected Revenue", month: m.key, currency: money, value: m.collectedRevenue ?? NA },
+      { section: "Monthly Revenue", metric: "Successful Transactions", month: m.key, value: m.successfulTransactions ?? NA },
+      { section: "Monthly Revenue", metric: "Failed Transactions", month: m.key, value: m.failedTransactions ?? NA },
+      { section: "Monthly Revenue", metric: "Active Subscriptions", month: m.key, value: m.activeSubscriptions },
+    );
+  }
 
-  sections.push(
-    "# Collected revenue (Stripe invoices; money actually taken)\r\n" +
-      pairs([
-        ["Total collected revenue", report.collected.available ? (total ?? 0) : NA],
-        ["Total transactions", report.collected.available ? report.collected.totalTransactions : NA],
-        [
-          "Successful transactions",
-          report.collected.available ? report.collected.successfulTransactions : NA,
-        ],
-        ["Failed transactions", report.collected.available ? report.collected.failedTransactions : NA],
-      ]),
-  );
+  // ── By plan ──
+  for (const p of report.plans) {
+    rows.push(
+      { section: "Revenue by Plan", metric: "Active Subscriptions", plan: p.plan, value: p.activeSubscriptions },
+      { section: "Revenue by Plan", metric: "Contracted MRR", plan: p.plan, currency: money, value: p.mrr },
+      { section: "Revenue by Plan", metric: "Collected Revenue", plan: p.plan, currency: money, value: p.collectedRevenue ?? NA },
+      {
+        section: "Revenue by Plan",
+        metric: "Revenue Share %",
+        plan: p.plan,
+        value: p.shareOfCollected === null ? NA : Math.round(p.shareOfCollected * 10_000) / 100,
+      },
+    );
+  }
 
-  sections.push(
-    "# Monthly revenue\r\n" +
-      toCsv(report.monthly, [
-        { header: "Month", value: (m) => m.key },
-        { header: "Month label", value: (m) => m.label },
-        { header: "Contracted MRR (INR)", value: (m) => m.contractedMrr },
-        { header: "Collected revenue", value: (m) => m.collectedRevenue ?? NA },
-        { header: "Successful transactions", value: (m) => m.successfulTransactions ?? NA },
-        { header: "Failed transactions", value: (m) => m.failedTransactions ?? NA },
-        { header: "Active subscriptions", value: (m) => m.activeSubscriptions },
-      ]),
-  );
+  // ── Real invoices only. An unavailable Stripe contributes no rows here; it is
+  //    reported in the Data Status section above. ──
+  rows.push(...transactionCsvRows("Transaction", report.transactions));
+  rows.push(...transactionCsvRows("Failed Payment", report.failedTransactions));
 
-  sections.push(
-    "# Revenue by plan\r\n" +
-      toCsv(report.plans, [
-        { header: "Plan", value: (p) => p.plan },
-        { header: "Active subscriptions", value: (p) => p.activeSubscriptions },
-        { header: "Contracted MRR (INR)", value: (p) => p.mrr },
-        { header: "Collected revenue", value: (p) => p.collectedRevenue ?? NA },
-        {
-          header: "% of collected revenue",
-          value: (p) => (p.shareOfCollected === null ? NA : Math.round(p.shareOfCollected * 1000) / 10),
-        },
-      ]),
-  );
-
-  const transactionsCsv = toCsv(report.transactions, [
-    { header: "Transaction ID", value: (t) => t.id },
-    { header: "Invoice number", value: (t) => t.number ?? NA },
-    { header: "Date", value: (t) => iso(t.date) },
-    { header: "Workspace", value: (t) => t.tenant },
-    { header: "Plan", value: (t) => t.plan },
-    { header: "Amount", value: (t) => t.amount },
-    { header: "Currency", value: (t) => t.currency },
-    { header: "Status", value: (t) => t.status },
-    { header: "Provider", value: (t) => t.provider },
-    { header: "Subscription ID", value: (t) => t.subscriptionId ?? NA },
+  const csv = toCsv(rows, [
+    { header: "Section", value: (r) => r.section },
+    { header: "Metric", value: (r) => r.metric ?? "" },
+    { header: "Month", value: (r) => r.month ?? "" },
+    { header: "Plan", value: (r) => r.plan ?? "" },
+    { header: "Workspace", value: (r) => r.workspace ?? "" },
+    { header: "Transaction ID", value: (r) => r.transactionId ?? "" },
+    { header: "Invoice Number", value: (r) => r.invoiceNumber ?? "" },
+    { header: "Date", value: (r) => r.date ?? "" },
+    { header: "Status", value: (r) => r.status ?? "" },
+    { header: "Provider", value: (r) => r.provider ?? "" },
+    { header: "Subscription ID", value: (r) => r.subscriptionId ?? "" },
+    { header: "Currency", value: (r) => r.currency ?? "" },
+    { header: "Value", value: (r) => r.value ?? "" },
   ]);
-  sections.push(
-    "# Transactions\r\n" +
-      transactionsCsv +
-      (report.collected.available
-        ? report.transactions.length === 0
-          ? "\r\nNo transactions recorded for this period."
-          : ""
-        : `\r\nCollected revenue unavailable — ${report.collected.unavailableReason ?? "unknown reason"}`),
-  );
 
-  const failedCsv = toCsv(report.failedTransactions, [
-    { header: "Transaction ID", value: (t) => t.id },
-    { header: "Date", value: (t) => iso(t.date) },
-    { header: "Workspace", value: (t) => t.tenant },
-    { header: "Amount", value: (t) => t.amount },
-    { header: "Currency", value: (t) => t.currency },
-    { header: "Status", value: (t) => t.status },
-    { header: "Failure reason", value: (t) => t.failureReason ?? NA },
-  ]);
-  sections.push(
-    "# Failed payments\r\n" +
-      failedCsv +
-      (report.collected.available
-        ? report.failedTransactions.length === 0
-          ? "\r\nNo failed payments recorded for this period."
-          : ""
-        : `\r\nCollected revenue unavailable — ${report.collected.unavailableReason ?? "unknown reason"}`),
-  );
-
-  return sections.join("\r\n\r\n") + "\r\n";
+  return csv + "\r\n";
 }
