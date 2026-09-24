@@ -14,8 +14,9 @@ import {
   UserX,
 } from "lucide-react";
 import type { LeadScoreLabel } from "@prisma/client";
-import { useContact } from "@/hooks/useContacts";
-import { Avatar, Badge, Button, Card, EmptyState, Skeleton } from "@/components/ui";
+import { useContact, useDeleteContact } from "@/hooks/useContacts";
+import { Avatar, Badge, Button, Card, EmptyState, Modal, Skeleton } from "@/components/ui";
+import { EditContactModal } from "@/components/contacts/EditContactModal";
 import {
   StageBadge,
   TagPill,
@@ -84,6 +85,9 @@ export default function ContactDetailPage() {
   const { data, isLoading, isError } = useContact(id);
   const [tab, setTab] = useState<Tab>("Overview");
   const [notice, setNotice] = useState<string | null>(null);
+  const [editOpen, setEditOpen] = useState(false);
+  const [confirmDelete, setConfirmDelete] = useState(false);
+  const deleteContact = useDeleteContact();
 
   // The payload may be the contact itself or wrapped in { data }. Neither is
   // guaranteed while the route returns 501 — normalise, then verify.
@@ -172,23 +176,11 @@ export default function ContactDetailPage() {
               <MessageSquare className="h-4 w-4" />
               Message
             </Button>
-            <Button
-              variant="secondary"
-              onClick={() =>
-                // TODO [SHALMON]: implement PATCH /api/contacts/[id]
-                setNotice("Backend not wired yet — PATCH /api/contacts/[id] returns 501.")
-              }
-            >
+            <Button variant="secondary" onClick={() => setEditOpen(true)}>
               <Pencil className="h-4 w-4" />
               Edit
             </Button>
-            <Button
-              variant="danger"
-              onClick={() =>
-                // TODO [SHALMON]: implement DELETE /api/contacts/[id]
-                setNotice("Backend not wired yet — DELETE /api/contacts/[id] returns 501.")
-              }
-            >
+            <Button variant="danger" onClick={() => setConfirmDelete(true)}>
               <Trash2 className="h-4 w-4" />
               Delete
             </Button>
@@ -225,6 +217,45 @@ export default function ContactDetailPage() {
       {tab === "Conversations" && <ConversationsTab conversations={conversations} />}
       {tab === "Leads" && <LeadsTab leads={leads} />}
       {tab === "Activity" && <ActivityTab activities={activities} />}
+
+      <EditContactModal contact={editOpen ? contact : null} onClose={() => setEditOpen(false)} />
+
+      {/* Deleting takes the contact's conversations and messages with it. */}
+      <Modal
+        open={confirmDelete}
+        onClose={() => {
+          if (!deleteContact.isPending) setConfirmDelete(false);
+        }}
+        title="Delete contact?"
+        description={`${contact.name ?? contact.phone} will be removed from this workspace, along with their conversations and message history. This cannot be undone.`}
+      >
+        <div className="flex justify-end gap-2">
+          <Button
+            variant="secondary"
+            onClick={() => setConfirmDelete(false)}
+            disabled={deleteContact.isPending}
+          >
+            Cancel
+          </Button>
+          <Button
+            variant="danger"
+            disabled={deleteContact.isPending}
+            onClick={() =>
+              deleteContact.mutate(id, {
+                // The record this page shows no longer exists, so leave it.
+                onSuccess: () => router.push("/contacts"),
+                onError: (err) => {
+                  setConfirmDelete(false);
+                  setNotice(err instanceof Error ? err.message : "Could not delete the contact");
+                },
+              })
+            }
+          >
+            {deleteContact.isPending ? "Deleting…" : "Delete"}
+          </Button>
+        </div>
+      </Modal>
+
     </div>
   );
 }

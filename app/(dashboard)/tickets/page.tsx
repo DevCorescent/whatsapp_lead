@@ -312,7 +312,7 @@ function ContactPicker({
 }) {
   const [query, setQuery] = useState("");
   const [open, setOpen] = useState(false);
-  const [results, setResults] = useState<ContactOption[]>([]);
+  const [fetchedResults, setFetchedResults] = useState<ContactOption[]>([]);
   const [loading, setLoading] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -328,9 +328,15 @@ function ContactPicker({
     return () => document.removeEventListener("mousedown", handler);
   }, []);
 
-  // Debounced search
+  // An empty box shows no suggestions by derivation rather than by clearing state:
+  // the old effect wrote [] on the way to returning, which is a render's worth of
+  // work to express "there is nothing to search for".
+  const results = query.trim().length < 1 ? EMPTY_RESULTS : fetchedResults;
+
+  // Debounced search. Unchanged: 250 ms after the last keystroke, cancelled on
+  // the next one, and only ever for a non-empty query.
   useEffect(() => {
-    if (query.trim().length < 1) { setResults([]); return; }
+    if (query.trim().length < 1) return;
     const t = setTimeout(async () => {
       setLoading(true);
       try {
@@ -342,7 +348,7 @@ function ContactPicker({
           phone: c.phone,
           avatarUrl: c.avatarUrl,
         }));
-        setResults(items);
+        setFetchedResults(items);
         setOpen(true);
       } catch { /* ignore */ }
       setLoading(false);
@@ -359,7 +365,9 @@ function ContactPicker({
   const clear = () => {
     onChange(null);
     setQuery("");
-    setResults([]);
+    // Clearing the query already derives an empty list; dropping the fetched
+    // ones too keeps a stale suggestion from reappearing on the next keystroke.
+    setFetchedResults([]);
     setTimeout(() => inputRef.current?.focus(), 0);
   };
 
@@ -589,14 +597,28 @@ function NewTicketModal({ open, onClose }: { open: boolean; onClose: () => void 
   );
 }
 
+/** Stable empty list, so "no query" does not produce a new array each render. */
+const EMPTY_RESULTS: ContactOption[] = [];
+
 // ─── Ticket detail modal ──────────────────────────────────────────────────────
 
 function TicketDetailModal({ ticket, onClose }: { ticket: TicketRow | null; onClose: () => void }) {
   const queryClient = useQueryClient();
+  // The same minute-resolution clock the table uses, so the countdown here ticks
+  // with it instead of freezing at the value of the render that opened the modal.
+  const now = useNow();
   const [newStatus, setNewStatus] = useState<TicketStatus>(ticket?.status ?? "OPEN");
   const [error, setError] = useState<string | null>(null);
 
-  useEffect(() => { if (ticket) setNewStatus(ticket.status); }, [ticket]);
+  // Re-seeded during render when a different ticket is opened, rather than in an
+  // effect — an effect shows the previous ticket's status for one frame. Keyed on
+  // the id, so the operator's unsaved choice survives a background refetch of the
+  // same ticket.
+  const [seenTicketId, setSeenTicketId] = useState<string | null>(null);
+  if (ticket && ticket.id !== seenTicketId) {
+    setSeenTicketId(ticket.id);
+    setNewStatus(ticket.status);
+  }
 
   const update = useMutation({
     mutationFn: async (s: TicketStatus) => {
@@ -657,7 +679,7 @@ function TicketDetailModal({ ticket, onClose }: { ticket: TicketRow | null; onCl
           {ticket?.slaDeadline && (
             <div className="col-span-2">
               <p className="mb-1 text-xs font-medium text-slate-500">SLA deadline</p>
-              <SlaCell deadline={ticket.slaDeadline} status={ticket.status} now={Date.now()} />
+              <SlaCell deadline={ticket.slaDeadline} status={ticket.status} now={now} />
             </div>
           )}
         </div>

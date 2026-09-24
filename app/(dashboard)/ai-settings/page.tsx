@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, type ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Sparkles,
@@ -230,38 +230,44 @@ export default function AISettingsPage() {
     },
   });
 
-  useEffect(() => {
-    if (aiData) {
-      setForm((f) => ({
-        ...f,
-        aiEnabled: aiData.aiEnabled,
-        model: aiData.aiModel?.includes("/") ? aiData.aiModel : "",
-        autoReply: aiData.autoReply,
-        replyDelay: aiData.autoReplyDelay,
-        personality: aiData.aiPersonality ?? f.personality,
-        temperature: aiData.aiTemperature ?? f.temperature,
-        maxTokens: aiData.aiMaxTokens ?? f.maxTokens,
-        systemPrompt: aiData.aiSystemPrompt ?? f.systemPrompt,
-        // A business that has never saved the structured fields comes back null; it starts on the
-        // defaults, which are themselves a complete valid set, so the form is never in the
-        // "mandatory field is empty" state just because nobody has visited this page yet.
-        instructions: parseInstructions(aiData.aiInstructions) ?? f.instructions,
-        offHoursMessage: aiData.offHoursMessage ?? f.offHoursMessage,
-      }));
-    }
-  }, [aiData]);
+  // Seeded during render rather than in an effect, the same way the team modal
+  // re-seeds (app/(dashboard)/team/page.tsx). Two reasons it matters here:
+  // an effect paints the defaults for one frame and then corrects them, and it
+  // re-runs on every refetch — so a background refetch would throw away whatever
+  // the user had typed but not yet saved. The sentinels make each payload seed
+  // the form exactly once; everything after that is the user's to edit.
+  const [seededAi, setSeededAi] = useState(false);
+  if (aiData && !seededAi) {
+    setSeededAi(true);
+    setForm((f) => ({
+      ...f,
+      aiEnabled: aiData.aiEnabled,
+      model: aiData.aiModel?.includes("/") ? aiData.aiModel : "",
+      autoReply: aiData.autoReply,
+      replyDelay: aiData.autoReplyDelay,
+      personality: aiData.aiPersonality ?? f.personality,
+      temperature: aiData.aiTemperature ?? f.temperature,
+      maxTokens: aiData.aiMaxTokens ?? f.maxTokens,
+      systemPrompt: aiData.aiSystemPrompt ?? f.systemPrompt,
+      // A business that has never saved the structured fields comes back null; it starts on the
+      // defaults, which are themselves a complete valid set, so the form is never in the
+      // "mandatory field is empty" state just because nobody has visited this page yet.
+      instructions: parseInstructions(aiData.aiInstructions) ?? f.instructions,
+      offHoursMessage: aiData.offHoursMessage ?? f.offHoursMessage,
+    }));
+  }
 
-  useEffect(() => {
-    if (generalData) {
-      setForm((f) => ({
-        ...f,
-        timezone: generalData.timezone ?? f.timezone,
-        startTime: generalData.businessHoursStart ?? f.startTime,
-        endTime: generalData.businessHoursEnd ?? f.endTime,
-        businessDays: generalData.businessDays ?? f.businessDays,
-      }));
-    }
-  }, [generalData]);
+  const [seededHours, setSeededHours] = useState(false);
+  if (generalData && !seededHours) {
+    setSeededHours(true);
+    setForm((f) => ({
+      ...f,
+      timezone: generalData.timezone ?? f.timezone,
+      startTime: generalData.businessHoursStart ?? f.startTime,
+      endTime: generalData.businessHoursEnd ?? f.endTime,
+      businessDays: generalData.businessDays ?? f.businessDays,
+    }));
+  }
 
   // Include a saved-but-unlisted model so the dropdown still shows it.
   const modelOptions =

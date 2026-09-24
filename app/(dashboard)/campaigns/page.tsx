@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Megaphone,
@@ -451,15 +451,25 @@ function CreateCampaignModal({ open, onClose }: { open: boolean; onClose: () => 
   const approvedTemplates = allTemplates.filter((t) => t.status === "APPROVED");
   const selectedTemplate = approvedTemplates.find((t) => t.id === templateId) ?? null;
 
-  const varSlotCount = useMemo(
-    () => (selectedTemplate ? detectBodyVarSlots(selectedTemplate.body) : 0),
-    [selectedTemplate],
-  );
+  // Not wrapped in useMemo: the React Compiler memoizes this on its own, and a
+  // hand-rolled memo here is exactly what it reports it cannot preserve — it
+  // cannot prove a template row is never mutated, so the dependency is
+  // unverifiable however it is spelled. Counting `{{n}}` slots in one string is
+  // a regex scan, not work worth a memo.
+  const selectedTemplateBody = selectedTemplate?.body ?? "";
+  const varSlotCount = detectBodyVarSlots(selectedTemplateBody);
 
-  // Reset variable mapping whenever the selected template or slot count changes.
-  useEffect(() => {
+  // The mapping is the user's to edit, so it is state rather than a derived
+  // value — but it must start over when a different template is picked, since
+  // slot 1 of one template means nothing in another. Re-seeded during render on
+  // the template id, the way the team modal re-seeds: an effect would render one
+  // frame of the previous template's mapping before correcting it.
+  const [mappedTemplateId, setMappedTemplateId] = useState<string | null>(null);
+  const selectedTemplateId = selectedTemplate?.id ?? null;
+  if (selectedTemplateId !== mappedTemplateId) {
+    setMappedTemplateId(selectedTemplateId);
     setBodyVarMapping(Array.from({ length: varSlotCount }, () => "name"));
-  }, [varSlotCount]);
+  }
 
   const create = useMutation({
     mutationFn: async (data: {

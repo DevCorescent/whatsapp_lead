@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ImagePlus, Save, AlertTriangle } from "lucide-react";
 import { Button, Card, Field, inputClass } from "@/components/ui";
@@ -33,13 +33,17 @@ export function GeneralTab() {
   const [confirm, setConfirm] = useState("");
   const [saved, setSaved] = useState(false);
 
-  useEffect(() => {
-    if (data) {
-      setName(data.tenant?.name ?? "");
-      setDomain(data.tenant?.domain ?? "");
-      setTimezone(data.timezone ?? "Asia/Kolkata");
-    }
-  }, [data]);
+  // Seeded from the server during render rather than in an effect. An effect
+  // re-ran on every refetch, so a background refresh silently discarded whatever
+  // the user had typed and not yet saved; the sentinel seeds once, and the three
+  // fields are the user's from then on.
+  const [seeded, setSeeded] = useState(false);
+  if (data && !seeded) {
+    setSeeded(true);
+    setName(data.tenant?.name ?? "");
+    setDomain(data.tenant?.domain ?? "");
+    setTimezone(data.timezone ?? "Asia/Kolkata");
+  }
 
   const save = useMutation({
     mutationFn: async () => {

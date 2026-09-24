@@ -114,6 +114,8 @@ export function ContactTable({
   total,
   onPageChange,
   onAddContact,
+  onEditContact,
+  onDeleteContact,
 }: {
   contacts: ContactRow[];
   isLoading: boolean;
@@ -125,6 +127,10 @@ export function ContactTable({
   total: number;
   onPageChange: (page: number) => void;
   onAddContact: () => void;
+  /** Open the edit form for a row. The page owns the modal. */
+  onEditContact: (contact: ContactRow) => void;
+  /** Ask to delete a row; the page confirms before anything is sent. */
+  onDeleteContact: (contact: ContactRow) => void;
 }) {
   const router = useRouter();
   const [menu, setMenu] = useState<{ id: string; top: number; right: number } | null>(null);
@@ -187,8 +193,9 @@ export function ContactTable({
               variant="secondary"
               size="sm"
               onClick={() =>
-                // TODO [SHALMON]: implement POST /api/contacts/bulk-tag
-                setNotice("Backend not wired yet — bulk tagging needs POST /api/contacts/bulk-tag.")
+                setNotice(
+                  "Bulk tagging isn't available yet. Open a contact to change its tags.",
+                )
               }
             >
               <TagIcon className="h-3.5 w-3.5" />
@@ -198,8 +205,11 @@ export function ContactTable({
               variant="danger"
               size="sm"
               onClick={() =>
-                // TODO [SHALMON]: implement DELETE /api/contacts/[id]
-                setNotice("Backend not wired yet — DELETE /api/contacts/[id] returns 501.")
+                // Per-row delete works; there is no bulk endpoint, and deleting
+                // a selection one request at a time would half-finish on failure.
+                setNotice(
+                  "Bulk delete isn't available yet. Delete contacts one at a time from the row menu.",
+                )
               }
             >
               <Trash2 className="h-3.5 w-3.5" />
@@ -399,9 +409,9 @@ export function ContactTable({
               type="button"
               className="flex w-full items-center gap-2 px-3 py-2 text-sm text-slate-700 hover:bg-slate-50"
               onClick={() => {
+                const contact = contacts.find((c) => c.id === menu.id);
                 setMenu(null);
-                // TODO [SHALMON]: implement PATCH /api/contacts/[id]
-                setNotice("Backend not wired yet — PATCH /api/contacts/[id] returns 501.");
+                if (contact) onEditContact(contact);
               }}
             >
               <Pencil className="h-4 w-4 text-slate-400" />
@@ -411,9 +421,9 @@ export function ContactTable({
               type="button"
               className="flex w-full items-center gap-2 px-3 py-2 text-sm text-rose-600 hover:bg-rose-50"
               onClick={() => {
+                const contact = contacts.find((c) => c.id === menu.id);
                 setMenu(null);
-                // TODO [SHALMON]: implement DELETE /api/contacts/[id]
-                setNotice("Backend not wired yet — DELETE /api/contacts/[id] returns 501.");
+                if (contact) onDeleteContact(contact);
               }}
             >
               <Trash2 className="h-4 w-4" />

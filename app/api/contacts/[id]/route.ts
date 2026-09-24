@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
+import { getBusinessScope } from "@/lib/business";
 import { updateContactSchema } from "@/lib/validators/contact";
 
 type Params = { params: Promise<{ id: string }> };
@@ -41,8 +42,14 @@ export async function PATCH(req: NextRequest, { params }: Params) {
 
   const { id } = await params;
 
+  // Contacts are created and listed under one business (the `phone_businessId`
+  // unique key), so an edit is scoped the same way. Tenant-only scoping let a
+  // user of one business rewrite another business's contact by id.
+  const scope = await getBusinessScope();
+  if (!scope) return NextResponse.json({ success: false, error: "Unauthorized" }, { status: 401 });
+
   const contact = await prisma.contact.findFirst({
-    where: { id, tenantId: session.user.tenantId },
+    where: { id, tenantId: session.user.tenantId, businessId: scope.businessId },
   });
   if (!contact) return NextResponse.json({ success: false, error: "Contact not found" }, { status: 404 });
 
