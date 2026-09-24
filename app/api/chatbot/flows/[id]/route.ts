@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
+import { getBusinessScope } from "@/lib/business";
 
 const patchSchema = z.object({
   name: z.string().min(1).optional(),
@@ -48,7 +49,15 @@ export async function PATCH(
     const parsed = patchSchema.safeParse(body);
     if (!parsed.success) return NextResponse.json({ success: false, error: parsed.error.issues[0].message }, { status: 400 });
 
-    const existing = await prisma.chatbotFlow.findFirst({ where: { id, tenantId } });
+    // Scoped to the caller's current business, matching how flows are listed and
+    // created (app/api/chatbot/flows/route.ts). Scoping by tenant alone let a user
+    // of one business edit another business's flow by id.
+    const scope = await getBusinessScope();
+    if (!scope) return NextResponse.json({ success: false, error: "Unauthorized" }, { status: 401 });
+
+    const existing = await prisma.chatbotFlow.findFirst({
+      where: { id, tenantId, businessId: scope.businessId },
+    });
     if (!existing) return NextResponse.json({ success: false, error: "Flow not found" }, { status: 404 });
 
     const flow = await prisma.chatbotFlow.update({

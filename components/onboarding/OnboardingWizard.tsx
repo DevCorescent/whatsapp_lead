@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useCallback, useState, useSyncExternalStore } from "react";
 import { useMutation } from "@tanstack/react-query";
 import { Bot, CheckCircle2, MessageSquare, Rocket, X } from "lucide-react";
 import { Button } from "@/components/ui";
@@ -8,19 +8,49 @@ import { cn } from "@/lib/utils";
 
 const STORAGE_KEY = (tenantId: string) => `onboarded_v1_${tenantId}`;
 
+/**
+ * Whether the wizard should be on screen, read from localStorage.
+ *
+ * localStorage is state that lives outside React, so it is read through
+ * useSyncExternalStore rather than copied into state from an effect. That gets
+ * three things at once: no synchronous setState during an effect, no flash of
+ * the wizard before the "already dismissed" flag is read, and a server snapshot
+ * of "dismissed" so the server-rendered markup matches the first client render
+ * and hydration stays quiet.
+ *
+ * `version` is bumped on dismiss to re-read the store, since writing
+ * localStorage ourselves fires no storage event in this tab.
+ */
 function useOnboardingVisible(tenantId: string) {
-  const [visible, setVisible] = useState(false);
+  const [version, setVersion] = useState(0);
 
-  useEffect(() => {
-    // Only show if never completed and user is on a real browser
-    if (typeof window === "undefined") return;
-    const done = localStorage.getItem(STORAGE_KEY(tenantId));
-    if (!done) setVisible(true);
-  }, [tenantId]);
+  const subscribe = useCallback((onStoreChange: () => void) => {
+    // Another tab completing onboarding should close it here too.
+    window.addEventListener("storage", onStoreChange);
+    return () => window.removeEventListener("storage", onStoreChange);
+  }, []);
+
+  const getSnapshot = useCallback(() => {
+    void version;
+    try {
+      return localStorage.getItem(STORAGE_KEY(tenantId)) === null;
+    } catch {
+      // Private mode or blocked storage: show the wizard rather than crash.
+      return true;
+    }
+  }, [tenantId, version]);
+
+  // On the server there is no localStorage; rendering nothing is the safe half
+  // of the pair, and the client corrects it immediately after hydration.
+  const visible = useSyncExternalStore(subscribe, getSnapshot, () => false);
 
   const dismiss = () => {
-    localStorage.setItem(STORAGE_KEY(tenantId), "1");
-    setVisible(false);
+    try {
+      localStorage.setItem(STORAGE_KEY(tenantId), "1");
+    } catch {
+      /* storage blocked — the wizard still closes for this session */
+    }
+    setVersion((v) => v + 1);
   };
 
   return { visible, dismiss };
@@ -107,7 +137,7 @@ export function OnboardingWizard({ tenantId, tenantName }: { tenantId: string; t
             <div className="space-y-3">
               <div className="rounded-xl border border-slate-100 bg-slate-50 p-4 text-sm text-slate-600">
                 <p className="font-semibold text-slate-800">Hi there! 👋</p>
-                <p className="mt-1">You're setting up <strong>{tenantName ?? "your workspace"}</strong>. We'll help you:</p>
+                <p className="mt-1">You&apos;re setting up <strong>{tenantName ?? "your workspace"}</strong>. We&apos;ll help you:</p>
                 <ul className="mt-2 space-y-1 list-none">
                   <li className="flex items-center gap-2"><CheckCircle2 className="h-4 w-4 text-emerald-500 shrink-0" />Connect your WhatsApp Business number</li>
                   <li className="flex items-center gap-2"><CheckCircle2 className="h-4 w-4 text-emerald-500 shrink-0" />Enable AI auto-replies</li>

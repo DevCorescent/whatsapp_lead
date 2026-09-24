@@ -27,11 +27,12 @@ import {
   Loader2,
   MessagesSquare,
   Sparkles,
+  Pencil,
   Trash2,
   UploadCloud,
 } from "lucide-react";
 import type { KnowledgeDoc } from "@prisma/client";
-import { Badge, Button, Card, EmptyState, Modal, PageHeader, Skeleton } from "@/components/ui";
+import { Badge, Button, Card, EmptyState, Field, inputClass, Modal, PageHeader, Skeleton } from "@/components/ui";
 import { readFaqState } from "@/lib/knowledgeFaq";
 import { UploadModal } from "@/components/knowledge/UploadModal";
 import { RetrievalTester } from "@/components/knowledge/RetrievalTester";
@@ -97,11 +98,33 @@ export default function KnowledgeBasePage() {
   const { data, isLoading, isError } = useKnowledgeDocs();
   const [open, setOpen] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState<KnowledgeDoc | null>(null);
+  // Renaming changes the label this page and the FAQ picker show. The file's
+  // content, chunks and vectors are products of the ingest pipeline and are not
+  // editable — replacing a document means uploading it again.
+  const [renameDoc, setRenameDoc] = useState<KnowledgeDoc | null>(null);
+  const [draftName, setDraftName] = useState("");
   const docs = data ?? [];
 
   const indexed = docs.filter((d) => d.isIndexed).length;
   const chunks = docs.reduce((sum, d) => sum + (d.chunkCount ?? 0), 0);
   const faqs = docs.reduce((sum, d) => sum + readFaqState(d.metadata).faqs.length, 0);
+
+  const renameMutation = useMutation({
+    mutationFn: async ({ id, name }: { id: string; name: string }) => {
+      const res = await fetch(`/api/knowledge/${id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name }),
+      });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error((json as { error?: string }).error ?? "Rename failed");
+      return json;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["knowledge"] });
+      setRenameDoc(null);
+    },
+  });
 
   const deleteMutation = useMutation({
     mutationFn: async (id: string) => {
@@ -197,6 +220,10 @@ export default function KnowledgeBasePage() {
               doc={doc}
               deleting={deleteMutation.isPending && deleteMutation.variables === doc.id}
               onDelete={() => setConfirmDelete(doc)}
+              onRename={() => {
+                setDraftName(doc.name);
+                setRenameDoc(doc);
+              }}
             />
           ))}
         </div>
@@ -205,6 +232,51 @@ export default function KnowledgeBasePage() {
       {!isLoading && !isError && docs.length > 0 && <RetrievalTester />}
 
       <UploadModal open={open} onClose={() => setOpen(false)} />
+
+      <Modal
+        open={!!renameDoc}
+        onClose={() => {
+          if (!renameMutation.isPending) setRenameDoc(null);
+        }}
+        title="Rename document"
+        description="This changes the name shown here and in the FAQ picker. The document's content and its search index are unchanged."
+      >
+        <form
+          onSubmit={(e) => {
+            e.preventDefault();
+            const name = draftName.trim();
+            if (renameDoc && name) renameMutation.mutate({ id: renameDoc.id, name });
+          }}
+        >
+          <Field label="Document name">
+            <input
+              className={inputClass}
+              value={draftName}
+              onChange={(e) => setDraftName(e.target.value)}
+              maxLength={200}
+              autoFocus
+            />
+          </Field>
+          {renameMutation.isError && (
+            <p role="alert" className="mt-2 text-sm text-rose-600">
+              {(renameMutation.error as Error).message}
+            </p>
+          )}
+          <div className="mt-4 flex justify-end gap-2">
+            <Button
+              type="button"
+              variant="secondary"
+              onClick={() => setRenameDoc(null)}
+              disabled={renameMutation.isPending}
+            >
+              Cancel
+            </Button>
+            <Button type="submit" disabled={renameMutation.isPending || !draftName.trim()}>
+              {renameMutation.isPending ? "Saving…" : "Save"}
+            </Button>
+          </div>
+        </form>
+      </Modal>
 
       <Modal
         open={!!confirmDelete}
@@ -248,10 +320,12 @@ function DocumentCard({
   doc,
   deleting,
   onDelete,
+  onRename,
 }: {
   doc: KnowledgeDoc;
   deleting: boolean;
   onDelete: () => void;
+  onRename: () => void;
 }) {
   const { status, error } = readStatus(doc);
   const faqCount = readFaqState(doc.metadata).faqs.length;
@@ -262,6 +336,14 @@ function DocumentCard({
         <span className="flex h-10 w-10 items-center justify-center rounded-lg bg-emerald-50 text-emerald-600">
           <FileText className="h-5 w-5" />
         </span>
+        <div className="flex items-center gap-1">
+          <button
+            aria-label={`Rename ${doc.name}`}
+            className="rounded-lg p-1.5 text-slate-300 transition hover:bg-slate-100 hover:text-slate-600 group-hover:text-slate-400"
+            onClick={onRename}
+          >
+            <Pencil className="h-4 w-4" />
+          </button>
         <button
           aria-label={`Delete ${doc.name}`}
           disabled={deleting}
@@ -270,6 +352,7 @@ function DocumentCard({
         >
           {deleting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
         </button>
+        </div>
       </div>
 
       {/* Two lines rather than one truncated one. Uploaded filenames are long and

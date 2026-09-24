@@ -2,10 +2,11 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { Search, Upload, UserPlus } from "lucide-react";
-import { useContactSources, useContacts } from "@/hooks/useContacts";
+import { useContactSources, useContacts, useDeleteContact } from "@/hooks/useContacts";
 import { ExportButton } from "@/components/ExportButton";
-import { Button, Card, PageHeader, inputClass } from "@/components/ui";
+import { Button, Card, Modal, PageHeader, inputClass } from "@/components/ui";
 import { AddContactModal } from "@/components/contacts/AddContactModal";
+import { EditContactModal } from "@/components/contacts/EditContactModal";
 import { ImportContactsModal } from "@/components/contacts/ImportContactsModal";
 import {
   ContactTable,
@@ -26,6 +27,10 @@ export default function ContactsPage() {
   const [selected, setSelected] = useState<string[]>([]);
   const [modalOpen, setModalOpen] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
+  const [editContact, setEditContact] = useState<ContactRow | null>(null);
+  const [deleteContact, setDeleteContact] = useState<ContactRow | null>(null);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
+  const deleteMutation = useDeleteContact();
 
   // Debounce the search box so we don't fire a request per keystroke.
   useEffect(() => {
@@ -164,7 +169,64 @@ export default function ContactsPage() {
           setSelected([]);
         }}
         onAddContact={() => setModalOpen(true)}
+        onEditContact={(contact) => setEditContact(contact)}
+        onDeleteContact={(contact) => {
+          setDeleteError(null);
+          setDeleteContact(contact);
+        }}
       />
+
+      <EditContactModal contact={editContact} onClose={() => setEditContact(null)} />
+
+      {/* Deleting a contact takes its conversations and messages with it, so it
+          asks first and names the contact it is about to remove. */}
+      <Modal
+        open={!!deleteContact}
+        onClose={() => {
+          if (!deleteMutation.isPending) setDeleteContact(null);
+        }}
+        title="Delete contact?"
+        description={
+          deleteContact
+            ? `${deleteContact.name ?? deleteContact.phone} will be removed from this workspace, along with their conversations and message history. This cannot be undone.`
+            : ""
+        }
+      >
+        {deleteError && (
+          <p role="alert" className="mb-3 text-sm text-rose-600">
+            {deleteError}
+          </p>
+        )}
+        <div className="flex justify-end gap-2">
+          <Button
+            variant="secondary"
+            onClick={() => setDeleteContact(null)}
+            disabled={deleteMutation.isPending}
+          >
+            Cancel
+          </Button>
+          <Button
+            variant="danger"
+            disabled={deleteMutation.isPending}
+            onClick={() => {
+              if (!deleteContact) return;
+              setDeleteError(null);
+              deleteMutation.mutate(deleteContact.id, {
+                onSuccess: () => {
+                  setSelected((ids) => ids.filter((id) => id !== deleteContact.id));
+                  setDeleteContact(null);
+                },
+                onError: (err) =>
+                  setDeleteError(
+                    err instanceof Error ? err.message : "Could not delete the contact",
+                  ),
+              });
+            }}
+          >
+            {deleteMutation.isPending ? "Deleting…" : "Delete"}
+          </Button>
+        </div>
+      </Modal>
 
       <AddContactModal open={modalOpen} onClose={() => setModalOpen(false)} />
       <ImportContactsModal open={importOpen} onClose={() => setImportOpen(false)} />

@@ -1,9 +1,35 @@
 import { NextRequest, NextResponse } from "next/server";
+import { z } from "zod";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { publicTenantSettings } from "@/lib/publicSettings";
 
 type Params = { params: Promise<{ id: string }> };
+
+/**
+ * What a super-admin may change about a workspace from this route.
+ *
+ * Strict, so a request carrying a plan, a slug or a settings blob is refused
+ * rather than silently dropped — this endpoint used to cast the body and hand it
+ * straight to Prisma, which meant an unexpected type became a 500 and an empty
+ * name became a nameless workspace.
+ *
+ * Everything else about a tenant belongs to another workflow: the plan to
+ * PUT ./subscription, the workspace's own settings to /api/settings, and
+ * id/slug/createdAt to nothing at all.
+ */
+const updateTenantSchema = z
+  .object({
+    name: z.string().trim().min(1, "Workspace name cannot be empty").max(120).optional(),
+    /** Suspends or restores the workspace. Every member is locked out while false. */
+    isActive: z.boolean().optional(),
+    /** Accepted only to return a clear error; see below. */
+    planId: z.string().optional(),
+  })
+  .strict()
+  .refine((v) => v.name !== undefined || v.isActive !== undefined || v.planId !== undefined, {
+    message: "Nothing to update",
+  });
 
 export async function GET(req: NextRequest, { params }: Params) {
   const session = await auth();
@@ -56,7 +82,14 @@ export async function PATCH(req: NextRequest, { params }: Params) {
     return NextResponse.json({ success: false, error: "Invalid JSON body" }, { status: 400 });
   }
 
-  const { isActive, name, planId } = body as { isActive?: boolean; name?: string; planId?: string };
+  const parsed = updateTenantSchema.safeParse(body);
+  if (!parsed.success) {
+    return NextResponse.json(
+      { success: false, error: parsed.error.issues[0].message },
+      { status: 400 },
+    );
+  }
+  const { isActive, name, planId } = parsed.data;
 
   // Plan changes moved to PUT ./subscription. They were only ever half-done here
   // — the upsert hardcoded ACTIVE and a thirty-day window, so assigning a plan
@@ -75,6 +108,22 @@ export async function PATCH(req: NextRequest, { params }: Params) {
     data: {
       ...(name !== undefined && { name }),
       ...(isActive !== undefined && { isActive }),
+    },
+  });
+
+  // Suspending a workspace locks out every one of its users, so the change is
+  // recorded against the tenant it affected, with the acting admin as the actor.
+  await prisma.auditLog.create({
+    data: {
+      tenantId: updated.id,
+      userId: session.user.id,
+      action: isActive === undefined ? "TENANT_UPDATED" : isActive ? "TENANT_ACTIVATED" : "TENANT_SUSPENDED",
+      resource: "tenant",
+      resourceId: updated.id,
+      metadata: {
+        ...(name !== undefined && { name: { from: tenant.name, to: updated.name } }),
+        ...(isActive !== undefined && { isActive: { from: tenant.isActive, to: updated.isActive } }),
+      },
     },
   });
 

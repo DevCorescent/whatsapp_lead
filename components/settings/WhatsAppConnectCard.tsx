@@ -7,15 +7,18 @@ import {
   CheckCircle2,
   Link2Off,
   Loader2,
+  Pencil,
+  Star,
   PlugZap,
   ShieldCheck,
 } from "lucide-react";
-import { Badge, Button, Card, Modal, Skeleton } from "@/components/ui";
+import { Badge, Button, Card, Field, inputClass, Modal, Skeleton } from "@/components/ui";
 import { useBusinesses, type BusinessDTO } from "@/hooks/useBusinesses";
 import {
   useConnectWhatsApp,
   useDisconnectWhatsApp,
   useTestWhatsAppConnection,
+  useUpdateWhatsAppIntegration,
   useWhatsAppIntegrations,
   useWhatsAppSignupConfig,
   type WhatsAppIntegrationDTO,
@@ -158,13 +161,19 @@ function IntegrationCard({
   integration,
   outcome,
   testing,
+  promoting,
   onTest,
+  onRename,
+  onMakeDefault,
   onDisconnect,
 }: {
   integration: WhatsAppIntegrationDTO;
   outcome: TestOutcome | undefined;
   testing: boolean;
+  promoting: boolean;
   onTest: () => void;
+  onRename: () => void;
+  onMakeDefault: () => void;
   onDisconnect: () => void;
 }) {
   const label = integration.phoneNumber || integration.displayName || "this number";
@@ -216,6 +225,31 @@ function IntegrationCard({
               )}
               {testing ? "Testing…" : "Test"}
             </Button>
+            <Button
+              size="sm"
+              variant="secondary"
+              onClick={onRename}
+              aria-label={`Rename ${label}`}
+            >
+              <Pencil className="h-3.5 w-3.5" aria-hidden />
+              Rename
+            </Button>
+            {!integration.isDefault && (
+              <Button
+                size="sm"
+                variant="secondary"
+                onClick={onMakeDefault}
+                disabled={promoting}
+                aria-label={`Make ${label} the default number`}
+              >
+                {promoting ? (
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />
+                ) : (
+                  <Star className="h-3.5 w-3.5" aria-hidden />
+                )}
+                {promoting ? "Setting…" : "Make default"}
+              </Button>
+            )}
             <Button
               size="sm"
               variant="secondary"
@@ -298,12 +332,17 @@ export function WhatsAppConnectCard({ businessId }: { businessId?: string }) {
   const connect = useConnectWhatsApp();
   const disconnect = useDisconnectWhatsApp();
   const test = useTestWhatsAppConnection();
+  const updateIntegration = useUpdateWhatsAppIntegration();
 
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [warnings, setWarnings] = useState<string[]>([]);
   const [testOutcomes, setTestOutcomes] = useState<Record<string, TestOutcome>>({});
   const [confirmDisconnect, setConfirmDisconnect] = useState<WhatsAppIntegrationDTO | null>(null);
+  // The number being renamed, and the draft label. Only our own label is editable
+  // here — Meta's identifiers and every credential are refused by the endpoint.
+  const [renaming, setRenaming] = useState<WhatsAppIntegrationDTO | null>(null);
+  const [draftName, setDraftName] = useState("");
 
   // waba_id / phone_number_id from Meta's postMessage events during the flow.
   const signupDataRef = useRef<EmbeddedSignupMessage["data"] | null>(null);
@@ -318,12 +357,20 @@ export function WhatsAppConnectCard({ businessId }: { businessId?: string }) {
   // Load the Facebook JS SDK once when the app ID is available.
   useEffect(() => {
     if (!config?.appId || typeof window === "undefined") return;
-    if (document.getElementById("facebook-jssdk")) {
-      // Already loaded from a previous mount — check if FB is already ready.
-      if (window.FB) setFbReady(true);
-      return;
-    }
 
+    // Every path to "ready" goes through this callback rather than setting state
+    // in the effect body: a synchronous setState here re-renders the card before
+    // it has painted once, which is what react-hooks/set-state-in-effect reports.
+    // The flag makes a late callback a no-op after unmount.
+    let cancelled = false;
+    const markReady = () => {
+      if (!cancelled) setFbReady(true);
+    };
+
+    // Assigned on every mount, and before the script is appended. The SDK calls
+    // fbAsyncInit the moment it finishes parsing, and a callback left behind by
+    // an earlier mount closes over that mount's setState — after a remount it
+    // would fire into nothing and leave the button stuck on "Loading Meta…".
     window.fbAsyncInit = () => {
       window.FB.init({
         appId: config.appId!,
@@ -331,16 +378,35 @@ export function WhatsAppConnectCard({ businessId }: { businessId?: string }) {
         xfbml: true,
         version: "v21.0",
       });
-      setFbReady(true);
+      markReady();
     };
 
-    const script = document.createElement("script");
-    script.id = "facebook-jssdk";
-    script.src = "https://connect.facebook.net/en_US/sdk.js";
-    script.async = true;
-    script.defer = true;
-    script.crossOrigin = "anonymous";
-    document.head.appendChild(script);
+    // Already initialised by an earlier mount. The SDK will not call fbAsyncInit
+    // again, so readiness is scheduled instead — still a callback, not the body.
+    if (window.FB) {
+      const timer = setTimeout(markReady, 0);
+      return () => {
+        cancelled = true;
+        clearTimeout(timer);
+      };
+    }
+
+    // A script tag already in the document is still loading; its own onload will
+    // call the fbAsyncInit just assigned, so appending another would load the
+    // SDK twice.
+    if (!document.getElementById("facebook-jssdk")) {
+      const script = document.createElement("script");
+      script.id = "facebook-jssdk";
+      script.src = "https://connect.facebook.net/en_US/sdk.js";
+      script.async = true;
+      script.defer = true;
+      script.crossOrigin = "anonymous";
+      document.head.appendChild(script);
+    }
+
+    return () => {
+      cancelled = true;
+    };
   }, [config?.appId]);
 
   // Listen for Meta's WA_EMBEDDED_SIGNUP postMessage events.
@@ -469,6 +535,48 @@ export function WhatsAppConnectCard({ businessId }: { businessId?: string }) {
           },
         })),
     });
+  };
+
+  const openRename = (integration: WhatsAppIntegrationDTO) => {
+    setError(null);
+    setNotice(null);
+    setDraftName(integration.displayName ?? "");
+    setRenaming(integration);
+  };
+
+  const saveRename = () => {
+    const integration = renaming;
+    const name = draftName.trim();
+    if (!integration || !name) return;
+    updateIntegration.mutate(
+      { integrationId: integration.id, displayName: name },
+      {
+        onSuccess: () => {
+          setRenaming(null);
+          setNotice(`Renamed to "${name}".`);
+        },
+        onError: (err) => {
+          setRenaming(null);
+          setError(err instanceof Error ? err.message : "Could not rename the number");
+        },
+      },
+    );
+  };
+
+  const makeDefault = (integration: WhatsAppIntegrationDTO) => {
+    setError(null);
+    setNotice(null);
+    updateIntegration.mutate(
+      { integrationId: integration.id, isDefault: true },
+      {
+        onSuccess: () =>
+          setNotice(
+            `${integration.phoneNumber ?? integration.displayName ?? "That number"} is now the default. Campaigns and templates will use it.`,
+          ),
+        onError: (err) =>
+          setError(err instanceof Error ? err.message : "Could not change the default number"),
+      },
+    );
   };
 
   const runDisconnect = () => {
@@ -630,7 +738,14 @@ export function WhatsAppConnectCard({ businessId }: { businessId?: string }) {
                 integration={integration}
                 outcome={testOutcomes[integration.id]}
                 testing={test.isPending && test.variables === integration.id}
+                promoting={
+                  updateIntegration.isPending &&
+                  updateIntegration.variables?.integrationId === integration.id &&
+                  updateIntegration.variables?.isDefault === true
+                }
                 onTest={() => runTest(integration)}
+                onRename={() => openRename(integration)}
+                onMakeDefault={() => makeDefault(integration)}
                 onDisconnect={() => setConfirmDisconnect(integration)}
               />
             ))}
@@ -670,6 +785,46 @@ export function WhatsAppConnectCard({ businessId }: { businessId?: string }) {
           )}
         </div>
       </Card>
+
+      <Modal
+        open={!!renaming}
+        onClose={() => {
+          if (!updateIntegration.isPending) setRenaming(null);
+        }}
+        title="Rename this WhatsApp number"
+        description="This is the label your team sees. It doesn't change anything at Meta — the number, its WABA and its verified name stay as they are."
+      >
+        <form
+          onSubmit={(e) => {
+            e.preventDefault();
+            saveRename();
+          }}
+        >
+          <Field label="Display name">
+            <input
+              className={inputClass}
+              value={draftName}
+              onChange={(e) => setDraftName(e.target.value)}
+              maxLength={80}
+              autoFocus
+              placeholder="Support line"
+            />
+          </Field>
+          <div className="mt-4 flex justify-end gap-2">
+            <Button
+              type="button"
+              variant="secondary"
+              onClick={() => setRenaming(null)}
+              disabled={updateIntegration.isPending}
+            >
+              Cancel
+            </Button>
+            <Button type="submit" disabled={updateIntegration.isPending || !draftName.trim()}>
+              {updateIntegration.isPending ? "Saving…" : "Save"}
+            </Button>
+          </div>
+        </form>
+      </Modal>
 
       <Modal
         open={!!confirmDisconnect}

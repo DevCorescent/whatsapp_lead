@@ -50,3 +50,28 @@ export const testWhatsAppSchema = z.object({
 });
 
 export type ConnectWhatsAppInput = z.infer<typeof connectWhatsAppSchema>;
+
+/**
+ * What a PATCH to /api/integrations/whatsapp/[id] may change.
+ *
+ * Strict on purpose. The rejected fields are the point of this schema:
+ *
+ *   phoneNumberId, whatsappBusinessId — Meta's identity for the connection.
+ *     Editing them by hand would point the row at an account this workspace never
+ *     authorised while the stored token still belongs to the old one.
+ *   accessToken, verifyToken, appSecret — secrets. They never reach the browser
+ *     and cannot be set from it; they change only by reconnecting.
+ *   tenantId, businessId — ownership. Always derived from the session.
+ *   isActive — disconnecting wipes the token, so "reactivating" a row would
+ *     advertise a number that cannot send. Use connect/disconnect instead.
+ */
+export const updateWhatsAppIntegrationSchema = z
+  .object({
+    displayName: z.string().trim().min(1, "Give the number a name").max(80).optional(),
+    /** Only ever true: a default is moved by promoting another number, not cleared. */
+    isDefault: z.literal(true).optional(),
+  })
+  .strict()
+  .refine((v) => v.displayName !== undefined || v.isDefault !== undefined, {
+    message: "Nothing to update",
+  });

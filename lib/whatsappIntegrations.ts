@@ -345,6 +345,71 @@ export async function syncLegacyIntegration(
   return { status: "synced", integrationId: result.integration.id, created: result.created };
 }
 
+// ─── Metadata edits ──────────────────────────────────────────────────────────
+
+export type UpdateIntegrationResult =
+  | { ok: true; integration: WhatsAppIntegration }
+  | { ok: false; reason: "not-found" | "inactive" };
+
+/**
+ * Edit the parts of a connected number that belong to us rather than to Meta.
+ *
+ * Only two things here are ours to change: the label an operator reads in the
+ * list, and which number the business sends from by default. Everything else on
+ * the row — phoneNumberId, whatsappBusinessId, the access token — is Meta's
+ * record of the connection, and editing it by hand would point the row at an
+ * account this workspace never authorised. Those change only by reconnecting
+ * through Embedded Signup.
+ *
+ * Promoting a default takes the same business-row lock as connect and disconnect,
+ * so two tabs promoting different numbers cannot both win.
+ */
+export async function updateIntegrationMetadata(input: {
+  tenantId: string;
+  integrationId: string;
+  displayName?: string;
+  makeDefault?: boolean;
+}): Promise<UpdateIntegrationResult> {
+  const { tenantId, integrationId } = input;
+
+  const existing = await prisma.whatsAppIntegration.findFirst({
+    where: { id: integrationId, tenantId },
+    select: { id: true, businessId: true, isActive: true, phoneNumberId: true },
+  });
+  if (!existing) return { ok: false, reason: "not-found" };
+  // A disconnected number has no token; making it the default would hand every
+  // campaign a sender that cannot send.
+  if (!existing.isActive && input.makeDefault) return { ok: false, reason: "inactive" };
+
+  const integration = await prisma.$transaction(async (tx) => {
+    await lockBusiness(tx, existing.businessId);
+
+    if (input.makeDefault) {
+      // Clear the old default first: the partial unique index allows exactly one.
+      await tx.whatsAppIntegration.updateMany({
+        where: { businessId: existing.businessId, isDefault: true, NOT: { id: existing.id } },
+        data: { isDefault: false },
+      });
+    }
+
+    return tx.whatsAppIntegration.update({
+      where: { id: existing.id },
+      data: {
+        ...(input.displayName !== undefined && { displayName: input.displayName }),
+        ...(input.makeDefault && { isDefault: true }),
+      },
+    });
+  });
+
+  // The default decides which credentials campaigns and templates resolve.
+  if (input.makeDefault) {
+    await invalidateCredsCache(existing.businessId);
+    await invalidateTenantCache(existing.phoneNumberId);
+  }
+
+  return { ok: true, integration };
+}
+
 // ─── Disconnect ──────────────────────────────────────────────────────────────
 
 export type DisconnectResult =

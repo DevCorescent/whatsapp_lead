@@ -105,6 +105,19 @@ async function postJson<T>(url: string, body: unknown, fallbackError: string): P
   return json as T;
 }
 
+async function patchJson<T>(url: string, body: unknown, fallbackError: string): Promise<T> {
+  const res = await fetch(url, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  const json = await res.json().catch(() => ({}));
+  if (!res.ok || json?.success === false) {
+    throw new Error(json?.error ?? fallbackError);
+  }
+  return json as T;
+}
+
 const INTEGRATIONS_KEY = ["whatsapp-integrations"] as const;
 
 /** Loads the public Meta Embedded Signup configuration. */
@@ -175,6 +188,29 @@ export function useDisconnectWhatsApp() {
         "/api/integrations/whatsapp/disconnect",
         { integrationId },
         "Could not disconnect WhatsApp",
+      ),
+    onSuccess: () => invalidateConnectionState(queryClient),
+  });
+}
+
+/**
+ * Edit what belongs to us on a connected number: its label, and whether it is the
+ * business's default sender.
+ *
+ * Meta's own identifiers and every credential are rejected by the endpoint — those
+ * change only by reconnecting through Embedded Signup.
+ */
+export function useUpdateWhatsAppIntegration() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({
+      integrationId,
+      ...body
+    }: { integrationId: string; displayName?: string; isDefault?: true }) =>
+      patchJson<{ data: WhatsAppIntegrationDTO }>(
+        `/api/integrations/whatsapp/${encodeURIComponent(integrationId)}`,
+        body,
+        "Could not update the WhatsApp number",
       ),
     onSuccess: () => invalidateConnectionState(queryClient),
   });
