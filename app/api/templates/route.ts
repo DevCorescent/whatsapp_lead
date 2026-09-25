@@ -11,12 +11,15 @@ const createTemplateSchema = z.object({
   body: z.string().min(1, "Body is required"),
   headerType: z.enum(["TEXT", "IMAGE", "VIDEO", "DOCUMENT"]).optional(),
   headerContent: z.string().optional(),
+  headerVariables: z.array(z.string()).default([]),
   footer: z.string().optional(),
   buttons: z.array(z.object({
     type: z.enum(["QUICK_REPLY", "URL", "PHONE_NUMBER"]),
     text: z.string(),
     url: z.string().optional(),
     phone: z.string().optional(),
+    urlType: z.enum(["STATIC", "DYNAMIC"]).optional(),
+    urlExample: z.string().optional(),
   })).optional(),
   variables: z.array(z.string()).default([]),
 });
@@ -69,6 +72,7 @@ export async function POST(req: NextRequest) {
         body: data.body,
         status: "DRAFT",
         variables: data.variables,
+        headerVariables: data.headerVariables,
         ...(data.headerType && { headerType: data.headerType }),
         ...(data.headerContent && { headerContent: data.headerContent }),
         ...(data.footer && { footer: data.footer }),

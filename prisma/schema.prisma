@@ -631,6 +631,7 @@ model MessageTemplate {
   footer          String?
   buttons         Json?
   variables       String[]
+  headerVariables String[]  @default([])
   waTemplateId    String?
   status          String    @default("PENDING")
   rejectionReason String?

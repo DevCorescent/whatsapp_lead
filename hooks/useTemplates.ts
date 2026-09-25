@@ -5,6 +5,8 @@ export interface TemplateButton {
   text: string;
   url?: string;
   phone?: string;
+  urlType?: "STATIC" | "DYNAMIC";
+  urlExample?: string;
 }
 
 export interface TemplateInput {
@@ -14,6 +16,7 @@ export interface TemplateInput {
   body: string;
   headerType?: "TEXT" | "IMAGE" | "VIDEO" | "DOCUMENT";
   headerContent?: string;
+  headerVariables?: string[];
   footer?: string;
   buttons?: TemplateButton[];
   variables?: string[];

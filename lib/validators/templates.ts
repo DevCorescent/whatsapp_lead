@@ -9,6 +9,8 @@ const buttonSchema = z.object({
   text: z.string().min(1),
   url: z.string().optional(),
   phone: z.string().optional(),
+  urlType: z.enum(["STATIC", "DYNAMIC"]).optional(),
+  urlExample: z.string().optional(),
 });
 
 export const createTemplateSchema = z.object({
@@ -18,6 +20,7 @@ export const createTemplateSchema = z.object({
   body: z.string().min(1, "Body is required"),
   headerType: z.enum(["TEXT", "IMAGE", "VIDEO", "DOCUMENT"]).optional(),
   headerContent: z.string().optional(),
+  headerVariables: z.array(z.string()).default([]),
   footer: z.string().max(60).optional(),
   buttons: z.array(buttonSchema).max(10).optional(),
   variables: z.array(z.string()).default([]),
@@ -33,6 +36,7 @@ export const updateTemplateSchema = z
     body: z.string().min(1).optional(),
     headerType: z.enum(["TEXT", "IMAGE", "VIDEO", "DOCUMENT"]).nullable().optional(),
     headerContent: z.string().nullable().optional(),
+    headerVariables: z.array(z.string()).optional(),
     footer: z.string().max(60).nullable().optional(),
     buttons: z.array(buttonSchema).max(10).nullable().optional(),
     variables: z.array(z.string()).optional(),

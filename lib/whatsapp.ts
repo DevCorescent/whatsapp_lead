@@ -481,6 +481,7 @@ export interface WATemplateCreateComponent {
   text?: string;
   example?: {
     header_handle?: string[];
+    header_text?: string[];
     body_text?: string[][];
   };
   buttons?: Array<{
@@ -488,6 +489,7 @@ export interface WATemplateCreateComponent {
     text: string;
     url?: string;
     phone_number?: string;
+    example?: string[];
   }>;
 }
 

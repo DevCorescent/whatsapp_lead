@@ -370,6 +370,25 @@ export default function TemplatesPage() {
   );
 }
 
+const HEADER_TYPES = [
+  { value: "NONE", label: "None" },
+  { value: "TEXT", label: "Text" },
+  { value: "IMAGE", label: "Image" },
+  { value: "VIDEO", label: "Video" },
+  { value: "DOCUMENT", label: "Document" },
+] as const;
+type HeaderTypeOption = "NONE" | "TEXT" | "IMAGE" | "VIDEO" | "DOCUMENT";
+
+const HEADER_MEDIA_PLACEHOLDER: Record<string, string> = {
+  IMAGE: "https://example.com/sample-image.jpg",
+  VIDEO: "https://example.com/sample-video.mp4",
+  DOCUMENT: "https://example.com/sample.pdf",
+};
+
+function hasPlaceholder(text: string) {
+  return /\{\{\s*\d+\s*\}\}/.test(text);
+}
+
 function TemplateModal({
   open,
   editing,
@@ -388,13 +407,20 @@ function TemplateModal({
     (editing?.category as (typeof CATEGORIES)[number]) ?? "MARKETING",
   );
   const [language, setLanguage] = useState(editing?.language ?? "en_US");
+  const [headerType, setHeaderType] = useState<HeaderTypeOption>(
+    (editing?.headerType as HeaderTypeOption) ?? "NONE",
+  );
   const [headerContent, setHeaderContent] = useState(editing?.headerContent ?? "");
+  const [headerVarExample, setHeaderVarExample] = useState(
+    (editing?.headerVariables ?? [])[0] ?? "",
+  );
   const [body, setBody] = useState(editing?.body ?? "");
   const [footer, setFooter] = useState(editing?.footer ?? "");
   const [variables, setVariables] = useState((editing?.variables ?? []).join(", "));
   const [buttons, setButtons] = useState<TemplateButton[]>(editing?.buttons ?? []);
 
   const pending = create.isPending || update.isPending;
+  const headerHasVar = headerType === "TEXT" && hasPlaceholder(headerContent);
 
   const submit = () => {
     setError(null);
@@ -404,8 +430,9 @@ function TemplateModal({
       category,
       language,
       body,
-      headerType: headerContent.trim() ? "TEXT" : undefined,
-      headerContent: headerContent.trim() || undefined,
+      headerType: headerType !== "NONE" ? (headerType as TemplateInput["headerType"]) : undefined,
+      headerContent: headerType !== "NONE" && headerContent.trim() ? headerContent.trim() : undefined,
+      headerVariables: headerHasVar && headerVarExample.trim() ? [headerVarExample.trim()] : [],
       footer: footer.trim() || undefined,
       buttons: buttons.length > 0 ? buttons : undefined,
       variables: varList,
@@ -474,15 +501,58 @@ function TemplateModal({
           </Field>
         </div>
 
-        <Field label="Header (optional)" htmlFor="tpl-header">
-          <input
-            id="tpl-header"
-            value={headerContent}
-            onChange={(e) => setHeaderContent(e.target.value)}
-            className={inputClass}
-            placeholder="Your order is confirmed"
-          />
-        </Field>
+        {/* Header */}
+        <div className="space-y-2">
+          <Field label="Header type (optional)" htmlFor="tpl-header-type">
+            <select
+              id="tpl-header-type"
+              value={headerType}
+              onChange={(e) => {
+                setHeaderType(e.target.value as HeaderTypeOption);
+                setHeaderContent("");
+                setHeaderVarExample("");
+              }}
+              className={inputClass}
+            >
+              {HEADER_TYPES.map((h) => (
+                <option key={h.value} value={h.value}>{h.label}</option>
+              ))}
+            </select>
+          </Field>
+
+          {headerType === "TEXT" && (
+            <>
+              <input
+                value={headerContent}
+                onChange={(e) => setHeaderContent(e.target.value)}
+                className={inputClass}
+                placeholder="Your order is confirmed  (use {{1}} for a variable)"
+              />
+              {headerHasVar && (
+                <input
+                  value={headerVarExample}
+                  onChange={(e) => setHeaderVarExample(e.target.value)}
+                  className={inputClass}
+                  placeholder="Example value for {{1}} in header (e.g. Aman)"
+                />
+              )}
+            </>
+          )}
+
+          {(headerType === "IMAGE" || headerType === "VIDEO" || headerType === "DOCUMENT") && (
+            <>
+              <input
+                value={headerContent}
+                onChange={(e) => setHeaderContent(e.target.value)}
+                className={inputClass}
+                placeholder={HEADER_MEDIA_PLACEHOLDER[headerType]}
+              />
+              <p className="text-xs text-slate-500">
+                Sample URL for Meta review. The actual media is provided when sending.
+              </p>
+            </>
+          )}
+        </div>
 
         <Field label="Body" htmlFor="tpl-body" required>
           <textarea
@@ -530,41 +600,67 @@ function TemplateModal({
           </div>
           <div className="space-y-2">
             {buttons.map((b, i) => (
-              <div key={i} className="flex flex-wrap items-center gap-2 rounded-lg border border-slate-200 p-2">
-                <select
-                  value={b.type}
-                  onChange={(e) => updateButton(i, { type: e.target.value as TemplateButton["type"] })}
-                  className={cn(inputClass, "w-36")}
-                >
-                  <option value="QUICK_REPLY">Quick reply</option>
-                  <option value="URL">URL</option>
-                  <option value="PHONE_NUMBER">Phone</option>
-                </select>
-                <input
-                  value={b.text}
-                  onChange={(e) => updateButton(i, { text: e.target.value })}
-                  className={cn(inputClass, "flex-1 min-w-32")}
-                  placeholder="Button text"
-                />
+              <div key={i} className="space-y-1.5 rounded-lg border border-slate-200 p-2">
+                <div className="flex flex-wrap items-center gap-2">
+                  <select
+                    value={b.type}
+                    onChange={(e) => updateButton(i, { type: e.target.value as TemplateButton["type"], urlType: undefined, urlExample: undefined })}
+                    className={cn(inputClass, "w-36")}
+                  >
+                    <option value="QUICK_REPLY">Quick reply</option>
+                    <option value="URL">URL</option>
+                    <option value="PHONE_NUMBER">Phone</option>
+                  </select>
+                  <input
+                    value={b.text}
+                    onChange={(e) => updateButton(i, { text: e.target.value })}
+                    className={cn(inputClass, "flex-1 min-w-32")}
+                    placeholder="Button text"
+                  />
+                  <button type="button" onClick={() => removeButton(i)} className="text-rose-500 hover:text-rose-700" aria-label="Remove button">
+                    <Trash2 className="h-4 w-4" />
+                  </button>
+                </div>
+
                 {b.type === "URL" && (
-                  <input
-                    value={b.url ?? ""}
-                    onChange={(e) => updateButton(i, { url: e.target.value })}
-                    className={cn(inputClass, "flex-1 min-w-32")}
-                    placeholder="https://…"
-                  />
+                  <div className="space-y-1.5 pl-1">
+                    <div className="flex items-center gap-2">
+                      <select
+                        value={b.urlType ?? "STATIC"}
+                        onChange={(e) => updateButton(i, { urlType: e.target.value as "STATIC" | "DYNAMIC", urlExample: undefined })}
+                        className={cn(inputClass, "w-28 text-xs")}
+                      >
+                        <option value="STATIC">Static URL</option>
+                        <option value="DYNAMIC">Dynamic URL</option>
+                      </select>
+                      <input
+                        value={b.url ?? ""}
+                        onChange={(e) => updateButton(i, { url: e.target.value })}
+                        className={cn(inputClass, "flex-1")}
+                        placeholder={b.urlType === "DYNAMIC" ? "https://example.com/track/{{1}}" : "https://example.com"}
+                      />
+                    </div>
+                    {b.urlType === "DYNAMIC" && (
+                      <input
+                        value={b.urlExample ?? ""}
+                        onChange={(e) => updateButton(i, { urlExample: e.target.value })}
+                        className={inputClass}
+                        placeholder="Example URL (e.g. https://example.com/track/ABC123)"
+                      />
+                    )}
+                  </div>
                 )}
+
                 {b.type === "PHONE_NUMBER" && (
-                  <input
-                    value={b.phone ?? ""}
-                    onChange={(e) => updateButton(i, { phone: e.target.value })}
-                    className={cn(inputClass, "flex-1 min-w-32")}
-                    placeholder="+15551234567"
-                  />
+                  <div className="pl-1">
+                    <input
+                      value={b.phone ?? ""}
+                      onChange={(e) => updateButton(i, { phone: e.target.value })}
+                      className={inputClass}
+                      placeholder="+15551234567"
+                    />
+                  </div>
                 )}
-                <button type="button" onClick={() => removeButton(i)} className="text-rose-500 hover:text-rose-700" aria-label="Remove button">
-                  <Trash2 className="h-4 w-4" />
-                </button>
               </div>
             ))}
           </div>

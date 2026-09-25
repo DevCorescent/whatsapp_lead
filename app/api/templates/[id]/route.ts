@@ -85,6 +85,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
         ...(d.body !== undefined && { body: d.body }),
         ...(d.headerType !== undefined && { headerType: d.headerType }),
         ...(d.headerContent !== undefined && { headerContent: d.headerContent }),
+        ...(d.headerVariables !== undefined && { headerVariables: d.headerVariables }),
         ...(d.footer !== undefined && { footer: d.footer }),
         ...(d.buttons !== undefined && { buttons: (d.buttons ?? Prisma.DbNull) as Prisma.InputJsonValue }),
         ...(d.variables !== undefined && { variables: d.variables }),

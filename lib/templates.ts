@@ -106,7 +106,14 @@ export function validatePlaceholders(body: string, variables: string[]): string 
 
 // ─── Meta payload builder ────────────────────────────────────────────────────
 
-type TemplateButton = { type: string; text: string; url?: string; phone?: string };
+type TemplateButton = {
+  type: string;
+  text: string;
+  url?: string;
+  phone?: string;
+  urlType?: "STATIC" | "DYNAMIC";
+  urlExample?: string;
+};
 
 function parseButtons(buttons: MessageTemplate["buttons"]): TemplateButton[] {
   if (!Array.isArray(buttons)) return [];
@@ -117,13 +124,20 @@ function parseButtons(buttons: MessageTemplate["buttons"]): TemplateButton[] {
 export function buildComponents(t: MessageTemplate): WATemplateCreateComponent[] {
   const components: WATemplateCreateComponent[] = [];
 
-  if (t.headerType && t.headerContent) {
+  if (t.headerType) {
     const format = t.headerType.toUpperCase() as "TEXT" | "IMAGE" | "VIDEO" | "DOCUMENT";
-    components.push(
-      format === "TEXT"
-        ? { type: "HEADER", format: "TEXT", text: t.headerContent }
-        : { type: "HEADER", format, example: { header_handle: [t.headerContent] } },
-    );
+    if (format === "TEXT" && t.headerContent) {
+      const hasVar = /\{\{\s*\d+\s*\}\}/.test(t.headerContent);
+      const headerComp: WATemplateCreateComponent = { type: "HEADER", format: "TEXT", text: t.headerContent };
+      if (hasVar) {
+        const hv = (t as MessageTemplate & { headerVariables?: string[] }).headerVariables ?? [];
+        headerComp.example = { header_text: [hv[0] || "Example"] };
+      }
+      components.push(headerComp);
+    } else if (format !== "TEXT" && t.headerContent) {
+      // IMAGE/DOCUMENT/VIDEO — headerContent holds the sample URL/handle
+      components.push({ type: "HEADER", format, example: { header_handle: [t.headerContent] } });
+    }
   }
 
   // Body — with per-variable examples when the body uses placeholders.
@@ -142,9 +156,16 @@ export function buildComponents(t: MessageTemplate): WATemplateCreateComponent[]
     components.push({
       type: "BUTTONS",
       buttons: buttons.map((b) => {
-        if (b.type === "URL") return { type: "URL", text: b.text, url: b.url ?? "" };
-        if (b.type === "PHONE_NUMBER") return { type: "PHONE_NUMBER", text: b.text, phone_number: b.phone ?? "" };
-        return { type: "QUICK_REPLY", text: b.text };
+        if (b.type === "URL") {
+          return {
+            type: "URL" as const,
+            text: b.text,
+            url: b.url ?? "",
+            ...(b.urlType === "DYNAMIC" && b.urlExample ? { example: [b.urlExample] } : {}),
+          };
+        }
+        if (b.type === "PHONE_NUMBER") return { type: "PHONE_NUMBER" as const, text: b.text, phone_number: b.phone ?? "" };
+        return { type: "QUICK_REPLY" as const, text: b.text };
       }),
     });
   }
@@ -352,6 +373,22 @@ export async function importTemplatesFromMeta(
         });
         created++;
       }
+    }
+  }
+
+  // Mark local templates as DISABLED if Meta no longer has them
+  const metaIds = new Set(metaTemplates.map((mt) => mt.id).filter(Boolean));
+  const localSubmitted = await prisma.messageTemplate.findMany({
+    where: { businessId, waTemplateId: { not: null }, status: { notIn: ["DRAFT", "DISABLED"] } },
+    select: { id: true, waTemplateId: true },
+  });
+  for (const local of localSubmitted) {
+    if (local.waTemplateId && !metaIds.has(local.waTemplateId)) {
+      await prisma.messageTemplate.update({
+        where: { id: local.id },
+        data: { status: "DISABLED", lastSyncedAt: new Date() },
+      });
+      updated++;
     }
   }
 
