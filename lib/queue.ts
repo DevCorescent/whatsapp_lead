@@ -109,6 +109,8 @@ export interface CampaignSendJob {
   headerType?: "TEXT" | "IMAGE" | "VIDEO" | "DOCUMENT";
   /** Publicly accessible URL for the header media (IMAGE / VIDEO / DOCUMENT templates). */
   headerMediaUrl?: string;
+  /** Meta media ID from a pre-uploaded asset — takes precedence over headerMediaUrl. */
+  headerMediaId?: string;
 }
 
 // ─── Publishers ───────────────────────────────────────────────────────────────

@@ -79,6 +79,8 @@ const createCampaignSchema = z.object({
   bodyVarMapping: z.array(z.string()).default([]),
   /** Public URL for a media header (IMAGE / VIDEO / DOCUMENT templates). */
   headerMediaUrl: z.string().url("Header media must be a valid URL").optional(),
+  /** Meta media ID from a pre-uploaded asset — alternative to headerMediaUrl. */
+  headerMediaId: z.string().optional(),
   contactIds: z.array(z.string().min(1)).optional(),
   all: z.boolean().optional(),
   scheduledAt: z.string().optional(),
@@ -170,6 +172,7 @@ async function createCampaign(
   templateName: string,
   language: string,
   headerMediaUrl?: string | null,
+  headerMediaId?: string | null,
   headerType?: string | null,
 ) {
   return prisma.$transaction(async (tx) => {
@@ -182,7 +185,7 @@ async function createCampaign(
         status: scheduledAt ? CampaignStatus.SCHEDULED : CampaignStatus.RUNNING,
         ...(scheduledAt ? { scheduledAt } : { startedAt: new Date() }),
         totalCount: contacts.length,
-        metadata: { templateName, language, bodyVarMapping: input.bodyVarMapping, headerMediaUrl: headerMediaUrl ?? null, headerType: headerType ?? null },
+        metadata: { templateName, language, bodyVarMapping: input.bodyVarMapping, headerMediaUrl: headerMediaUrl ?? null, headerMediaId: headerMediaId ?? null, headerType: headerType ?? null },
       },
       select: { id: true },
     });
@@ -229,6 +232,7 @@ async function publishCampaign(
   language: string,
   bodyVarMapping: string[],
   headerMediaUrl: string | undefined | null,
+  headerMediaId: string | undefined | null,
   headerType: string | undefined | null,
   /** CampaignContact rows — `id` must be CampaignContact.id, not Contact.id */
   campaignContacts: { id: string; phone: string; contactId: string | null }[],
@@ -275,6 +279,7 @@ async function publishCampaign(
           language,
           bodyParams: bodyParams.length ? bodyParams : undefined,
           headerType: (headerType as CampaignSendJob["headerType"]) ?? undefined,
+          headerMediaId: headerMediaId ?? undefined,
           headerMediaUrl: headerMediaUrl ?? undefined,
         },
         scheduledAt ?? undefined,
@@ -472,6 +477,7 @@ export async function POST(req: NextRequest) {
       template.name,
       template.language,
       input.headerMediaUrl,
+      input.headerMediaId,
       template.headerType,
     );
 
@@ -483,6 +489,7 @@ export async function POST(req: NextRequest) {
       template.language,
       input.bodyVarMapping,
       input.headerMediaUrl,
+      input.headerMediaId,
       template.headerType,
       recipients,
       contactsById,

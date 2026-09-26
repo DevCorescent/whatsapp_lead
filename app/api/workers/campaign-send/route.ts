@@ -33,7 +33,7 @@ import { CampaignStatus } from "@prisma/client";
 import { verifyQStashSignature } from "@/lib/qstash-verify";
 import { cachedBusinessCreds } from "@/lib/cache";
 import { resolveWhatsAppCreds } from "@/lib/business";
-import { sendTextMessage, sendTemplateMessage, type WATemplateComponent } from "@/lib/whatsapp";
+import { sendTextMessage, sendTemplateMessage, type WATemplateComponent, type WATemplateParameter } from "@/lib/whatsapp";
 import { prisma } from "@/lib/prisma";
 import type { CampaignSendJob } from "@/lib/queue";
 
@@ -206,16 +206,22 @@ export async function POST(req: NextRequest) {
         const components: WATemplateComponent[] = [];
 
         // Header component — required for media templates.
-        if (
-          job.headerMediaUrl &&
-          (job.headerType === "IMAGE" || job.headerType === "VIDEO" || job.headerType === "DOCUMENT")
-        ) {
-          const mediaParam =
-            job.headerType === "IMAGE"
-              ? { type: "image" as const, image: { link: job.headerMediaUrl } }
-              : job.headerType === "VIDEO"
-                ? { type: "video" as const, video: { link: job.headerMediaUrl } }
-                : { type: "document" as const, document: { link: job.headerMediaUrl } };
+        // Prefer an uploaded media ID (no CDN needed); fall back to a public URL.
+        const hasMediaHeader =
+          (job.headerMediaId || job.headerMediaUrl) &&
+          (job.headerType === "IMAGE" || job.headerType === "VIDEO" || job.headerType === "DOCUMENT");
+        if (hasMediaHeader) {
+          const mediaRef = job.headerMediaId
+            ? { id: job.headerMediaId }
+            : { link: job.headerMediaUrl! };
+          let mediaParam: WATemplateParameter;
+          if (job.headerType === "IMAGE") {
+            mediaParam = { type: "image", image: mediaRef };
+          } else if (job.headerType === "VIDEO") {
+            mediaParam = { type: "video", video: mediaRef };
+          } else {
+            mediaParam = { type: "document", document: mediaRef };
+          }
           components.push({ type: "header", parameters: [mediaParam] });
         }
 

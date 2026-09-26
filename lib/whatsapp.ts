@@ -144,9 +144,9 @@ export async function sendTextMessage(
 
 export type WATemplateParameter =
   | { type: "text"; text: string }
-  | { type: "image"; image: { link: string } }
-  | { type: "video"; video: { link: string } }
-  | { type: "document"; document: { link: string; filename?: string } }
+  | { type: "image"; image: { link: string } | { id: string } }
+  | { type: "video"; video: { link: string } | { id: string } }
+  | { type: "document"; document: { link: string; filename?: string } | { id: string } }
   | { type: "payload"; payload: string }
   | {
       type: "currency";

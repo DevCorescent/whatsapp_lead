@@ -442,6 +442,10 @@ function CreateCampaignModal({ open, onClose }: { open: boolean; onClose: () => 
   const [schedule, setSchedule] = useState("");
   const [showPreview, setShowPreview] = useState(false);
   const [headerMediaUrl, setHeaderMediaUrl] = useState("");
+  const [headerMediaId, setHeaderMediaId] = useState("");
+  const [headerInputMode, setHeaderInputMode] = useState<"upload" | "url">("upload");
+  const [uploadState, setUploadState] = useState<"idle" | "uploading" | "done" | "error">("idle");
+  const [uploadFileName, setUploadFileName] = useState("");
   const [error, setError] = useState<string | null>(null);
 
   const { data: templatesData, isLoading: tplLoading } = useTemplates(open);
@@ -473,6 +477,9 @@ function CreateCampaignModal({ open, onClose }: { open: boolean; onClose: () => 
     setMappedTemplateId(selectedTemplateId);
     setBodyVarMapping(Array.from({ length: varSlotCount }, () => "name"));
     setHeaderMediaUrl("");
+    setHeaderMediaId("");
+    setUploadState("idle");
+    setUploadFileName("");
   }
 
   const create = useMutation({
@@ -501,6 +508,25 @@ function CreateCampaignModal({ open, onClose }: { open: boolean; onClose: () => 
     onError: (err: Error) => setError(err.message),
   });
 
+  async function handleFileUpload(file: File) {
+    setUploadState("uploading");
+    setUploadFileName(file.name);
+    setHeaderMediaId("");
+    setHeaderMediaUrl("");
+    const form = new FormData();
+    form.append("file", file);
+    try {
+      const res = await fetch("/api/campaigns/upload-media", { method: "POST", body: form });
+      const json = await res.json();
+      if (!res.ok || !json.success) throw new Error(json.error ?? "Upload failed");
+      setHeaderMediaId((json.data as { mediaId: string }).mediaId);
+      setUploadState("done");
+    } catch (err) {
+      setUploadState("error");
+      setError(err instanceof Error ? err.message : "File upload failed");
+    }
+  }
+
   function resetForm() {
     setName("");
     setTemplateId("");
@@ -511,6 +537,10 @@ function CreateCampaignModal({ open, onClose }: { open: boolean; onClose: () => 
     setSchedule("");
     setShowPreview(false);
     setHeaderMediaUrl("");
+    setHeaderMediaId("");
+    setHeaderInputMode("upload");
+    setUploadState("idle");
+    setUploadFileName("");
     setError(null);
   }
 
@@ -554,7 +584,8 @@ function CreateCampaignModal({ open, onClose }: { open: boolean; onClose: () => 
         ? { all: true }
         : { contactIds: selectedIds }),
       ...(when && !Number.isNaN(when.getTime()) && { scheduledAt: when.toISOString() }),
-      ...(headerMediaUrl.trim() && { headerMediaUrl: headerMediaUrl.trim() }),
+      ...(headerMediaId && { headerMediaId }),
+      ...(headerMediaUrl.trim() && !headerMediaId && { headerMediaUrl: headerMediaUrl.trim() }),
     });
   }
 
@@ -568,7 +599,7 @@ function CreateCampaignModal({ open, onClose }: { open: boolean; onClose: () => 
     templateId &&
     !create.isPending &&
     (audienceMode === "all" || selectedIds.length > 0) &&
-    (!needsMediaUrl || headerMediaUrl.trim());
+    (!needsMediaUrl || headerMediaId || headerMediaUrl.trim());
 
   const allVisibleSelected =
     contacts.length > 0 && contacts.every((c) => selectedIds.includes(c.id));
@@ -678,26 +709,114 @@ function CreateCampaignModal({ open, onClose }: { open: boolean; onClose: () => 
           </div>
         )}
 
-        {/* Media header URL — required when the template has an image/video/document header */}
+        {/* Media header — required when the template has an image/video/document header */}
         {needsMediaUrl && (
-          <Field
-            label={`${selectedTemplate?.headerType === "IMAGE" ? "Image" : selectedTemplate?.headerType === "VIDEO" ? "Video" : "Document"} URL`}
-            htmlFor="header-media-url"
-            required
-          >
-            <input
-              id="header-media-url"
-              type="url"
-              value={headerMediaUrl}
-              onChange={(e) => setHeaderMediaUrl(e.target.value)}
-              className={inputClass}
-              placeholder="https://example.com/file.jpg"
-            />
-            <p className="mt-1.5 flex items-center gap-1 text-[11px] text-slate-400">
-              <Info className="h-3 w-3 shrink-0" />
-              Must be a publicly accessible URL. This media is sent as the template header to every recipient.
+          <div>
+            <p className="mb-1.5 text-sm font-medium text-slate-700">
+              {selectedTemplate?.headerType === "IMAGE" ? "Image" : selectedTemplate?.headerType === "VIDEO" ? "Video" : "Document"}{" "}
+              <span className="text-rose-500">*</span>
             </p>
-          </Field>
+
+            {/* Upload / URL toggle */}
+            <div className="mb-3 flex rounded-lg border border-slate-200 bg-slate-50 p-0.5">
+              {(["upload", "url"] as const).map((mode) => (
+                <button
+                  key={mode}
+                  type="button"
+                  onClick={() => { setHeaderInputMode(mode); setHeaderMediaId(""); setHeaderMediaUrl(""); setUploadState("idle"); setUploadFileName(""); }}
+                  className={cn(
+                    "flex-1 rounded-md px-3 py-1.5 text-xs font-medium transition",
+                    headerInputMode === mode
+                      ? "bg-white text-slate-800 shadow-sm"
+                      : "text-slate-500 hover:text-slate-700",
+                  )}
+                >
+                  {mode === "upload" ? "📎 Upload file" : "🔗 Enter URL"}
+                </button>
+              ))}
+            </div>
+
+            {headerInputMode === "upload" ? (
+              <div>
+                <label
+                  className={cn(
+                    "flex cursor-pointer flex-col items-center justify-center gap-2 rounded-xl border-2 border-dashed px-4 py-6 text-center transition",
+                    uploadState === "done"
+                      ? "border-emerald-300 bg-emerald-50"
+                      : uploadState === "error"
+                        ? "border-rose-300 bg-rose-50"
+                        : "border-slate-200 bg-slate-50 hover:border-slate-300 hover:bg-slate-100",
+                  )}
+                >
+                  {uploadState === "uploading" ? (
+                    <>
+                      <Loader2 className="h-6 w-6 animate-spin text-slate-400" />
+                      <span className="text-xs text-slate-500">Uploading to Meta…</span>
+                    </>
+                  ) : uploadState === "done" ? (
+                    <>
+                      <span className="text-2xl">✅</span>
+                      <span className="text-xs font-medium text-emerald-700">{uploadFileName}</span>
+                      <span className="text-[11px] text-emerald-600">Uploaded — click to replace</span>
+                    </>
+                  ) : uploadState === "error" ? (
+                    <>
+                      <span className="text-2xl">❌</span>
+                      <span className="text-xs text-rose-600">Upload failed — click to retry</span>
+                    </>
+                  ) : (
+                    <>
+                      <span className="text-2xl">
+                        {selectedTemplate?.headerType === "IMAGE" ? "🖼️" : selectedTemplate?.headerType === "VIDEO" ? "🎬" : "📄"}
+                      </span>
+                      <span className="text-xs text-slate-600">
+                        Click to select{" "}
+                        {selectedTemplate?.headerType === "IMAGE"
+                          ? "an image (JPEG, PNG, WebP — max 5 MB)"
+                          : selectedTemplate?.headerType === "VIDEO"
+                            ? "a video (MP4, 3GPP — max 16 MB)"
+                            : "a document (PDF, Word, Excel — max 16 MB)"}
+                      </span>
+                    </>
+                  )}
+                  <input
+                    type="file"
+                    className="sr-only"
+                    accept={
+                      selectedTemplate?.headerType === "IMAGE"
+                        ? "image/jpeg,image/png,image/webp"
+                        : selectedTemplate?.headerType === "VIDEO"
+                          ? "video/mp4,video/3gpp"
+                          : "application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                    }
+                    onChange={(e) => {
+                      const f = e.target.files?.[0];
+                      if (f) handleFileUpload(f);
+                      e.target.value = "";
+                    }}
+                  />
+                </label>
+                <p className="mt-1.5 flex items-center gap-1 text-[11px] text-slate-400">
+                  <Info className="h-3 w-3 shrink-0" />
+                  File is uploaded directly to Meta and sent to every recipient.
+                </p>
+              </div>
+            ) : (
+              <div>
+                <input
+                  type="url"
+                  value={headerMediaUrl}
+                  onChange={(e) => setHeaderMediaUrl(e.target.value)}
+                  className={inputClass}
+                  placeholder="https://example.com/banner.jpg"
+                />
+                <p className="mt-1.5 flex items-center gap-1 text-[11px] text-slate-400">
+                  <Info className="h-3 w-3 shrink-0" />
+                  Must be a publicly accessible URL — no login or redirect.
+                </p>
+              </div>
+            )}
+          </div>
         )}
 
         {/* Variable mapping */}
