@@ -9,6 +9,8 @@ export interface UploadedMedia {
   mimeType: string;
   size: number;
   category: string;
+  /** Meta media ID returned when the file was pre-uploaded to Meta's Upload API. */
+  mediaId?: string;
 }
 
 interface UploadOptions {
@@ -46,7 +48,7 @@ export function useUploadAttachments() {
   }, []);
 
   const upload = useCallback(
-    (files: File[], options?: UploadOptions): Promise<UploadedMedia[]> => {
+    (files: File[], options?: UploadOptions & { conversationId?: string }): Promise<UploadedMedia[]> => {
       return new Promise<UploadedMedia[]>((resolve, reject) => {
         const form = new FormData();
         for (const file of files) form.append("files", file, file.name);
@@ -99,7 +101,10 @@ export function useUploadAttachments() {
           reject(new DOMException("Upload cancelled", "AbortError"));
         };
 
-        xhr.open("POST", "/api/media/upload");
+        const url = options?.conversationId
+          ? `/api/media/upload?conversationId=${encodeURIComponent(options.conversationId)}`
+          : "/api/media/upload";
+        xhr.open("POST", url);
         xhr.send(form);
       });
     },

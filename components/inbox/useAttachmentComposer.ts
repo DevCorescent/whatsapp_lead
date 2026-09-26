@@ -67,6 +67,8 @@ export interface AttachmentSendInput {
   conversationId: string;
   type: "IMAGE" | "VIDEO" | "AUDIO" | "DOCUMENT";
   mediaUrl: string;
+  /** Meta media ID — when present, the send route uses id-based sending (no public URL needed). */
+  mediaId?: string;
   mediaMimeType?: string;
   mediaSize?: number;
   content?: string;
@@ -242,7 +244,7 @@ export function useAttachmentComposer({
       const ordered = items;
       let uploaded;
       try {
-        uploaded = await upload(ordered.map((it) => it.file));
+        uploaded = await upload(ordered.map((it) => it.file), { conversationId: conversationId ?? undefined });
       } catch {
         // Upload failed or was cancelled — leave the preview and its files intact so the
         // agent can retry without re-selecting anything. `uploadError` carries the reason.
@@ -264,6 +266,7 @@ export function useAttachmentComposer({
               conversationId,
               type: msgType,
               mediaUrl: media.url,
+              mediaId: media.mediaId,
               mediaMimeType: media.mimeType ?? undefined,
               mediaSize: media.size ?? undefined,
               content,

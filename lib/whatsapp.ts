@@ -366,6 +366,43 @@ export async function sendMediaByUrl(
   return res.json() as Promise<WASendMessageResponse>;
 }
 
+/**
+ * Upload a file buffer to Meta's Media Upload API and return the resulting media ID.
+ *
+ * Prefer this over URL-based sending (`sendMediaByUrl`) in serverless environments where
+ * there is no guarantee the file URL will be reachable by Meta's download servers. Once
+ * uploaded, the media_id can be passed to `sendMediaMessage` — Meta serves the file from
+ * its own infrastructure and our storage is never called at send time.
+ */
+export async function uploadMediaToMeta(
+  phoneNumberId: string,
+  apiKey: string,
+  bytes: Buffer,
+  mimeType: string,
+  filename: string
+): Promise<string> {
+  const form = new FormData();
+  form.append("messaging_product", "whatsapp");
+  form.append("type", mimeType);
+  const slice = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength);
+  form.append("file", new Blob([slice as ArrayBuffer], { type: mimeType }), filename);
+
+  const res = await fetch(`${WA_BASE_URL}/${phoneNumberId}/media`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${apiKey}` },
+    body: form,
+  });
+
+  if (!res.ok) {
+    const body = await res.text().catch(() => "");
+    throw new WASendError(`Could not upload media to WhatsApp (${res.status}). ${body}`);
+  }
+
+  const json = (await res.json()) as { id?: string };
+  if (!json.id) throw new WASendError("Meta did not return a media ID after upload.");
+  return json.id;
+}
+
 /** Metadata returned by the WhatsApp Cloud API for a stored media asset. */
 export interface WAMediaResponse {
   url: string;

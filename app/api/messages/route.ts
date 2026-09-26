@@ -24,7 +24,7 @@ import { auth } from "@/lib/auth";
 import { guardLimit } from "@/lib/billing/guard";
 import { prisma } from "@/lib/prisma";
 import { pusher, tenantChannel, PusherEvent } from "@/lib/pusher";
-import { sendTextMessage, sendInteractiveMessage, sendMediaByUrl, WASendError, type WAMediaType } from "@/lib/whatsapp";
+import { sendTextMessage, sendInteractiveMessage, sendMediaByUrl, sendMediaMessage, WASendError, type WAMediaType } from "@/lib/whatsapp";
 import { resolveConversationWhatsAppCreds } from "@/lib/business";
 import { sendMessageSchema } from "@/lib/validators/message";
 
@@ -229,7 +229,7 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const { conversationId, type, content, isNote, interactive, replyToId, mediaUrl, mediaMimeType, mediaSize } = parsed.data;
+    const { conversationId, type, content, isNote, interactive, replyToId, mediaUrl, mediaId, mediaMimeType, mediaSize } = parsed.data;
 
     const body = content?.trim();
     const MEDIA_TYPES = ["IMAGE", "VIDEO", "AUDIO", "DOCUMENT"] as const;
@@ -317,18 +317,29 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ success: true, data: message }, { status: 201 });
     }
 
-    if (isMedia && mediaUrl) {
+    if (isMedia && (mediaId || mediaUrl)) {
       const waType = type.toLowerCase() as WAMediaType;
-      const sent = await sendMediaByUrl(
-        creds.phoneNumberId,
-        creds.apiKey,
-        conversation.contact.phone,
-        waType,
-        mediaUrl,
-        body || undefined,
-        // filename only matters for documents; derive it from the URL
-        waType === "document" ? mediaUrl.split("/").pop()?.split("?")[0] : undefined
-      );
+      // Prefer media_id (uploaded to Meta's servers) over URL-based sending.
+      // URL-based sending requires Meta to fetch from our server, which is unreliable
+      // on serverless runtimes and requires a publicly accessible, unauthenticated URL.
+      const sent = mediaId
+        ? await sendMediaMessage(
+            creds.phoneNumberId,
+            creds.apiKey,
+            conversation.contact.phone,
+            waType,
+            mediaId,
+            body || undefined
+          )
+        : await sendMediaByUrl(
+            creds.phoneNumberId,
+            creds.apiKey,
+            conversation.contact.phone,
+            waType,
+            mediaUrl!,
+            body || undefined,
+            waType === "document" ? mediaUrl!.split("/").pop()?.split("?")[0] : undefined
+          );
       waMessageId = sent.messages?.[0]?.id ?? null;
       const message = await saveOutboundMessage(
         tenantId, conversationId, userId, body ?? "", waMessageId,

@@ -44,6 +44,7 @@ export const sendMessageSchema = z.object({
   type: z.enum(["TEXT", "IMAGE", "VIDEO", "AUDIO", "DOCUMENT", "TEMPLATE", "INTERACTIVE"]).default("TEXT"),
   content: z.string().optional(),
   mediaUrl: z.string().url().optional(),
+  mediaId: z.string().optional(),
   mediaMimeType: z.string().optional(),
   mediaSize: z.number().int().positive().optional(),
   isNote: z.boolean().default(false),

@@ -37,6 +37,7 @@ export interface SendMessageInput {
   interactive?: InteractivePayload;
   replyToId?: string;
   mediaUrl?: string;
+  mediaId?: string;
   mediaMimeType?: string;
   mediaSize?: number;
 }
