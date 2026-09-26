@@ -33,6 +33,9 @@ const BASE_DIR = process.env.MEDIA_UPLOAD_DIR
   ? path.resolve(process.env.MEDIA_UPLOAD_DIR)
   : path.join(os.tmpdir(), "whatscrm-uploads");
 
+/** Public base URL — used to build absolute media URLs that Meta can fetch. */
+const APP_URL = (process.env.NEXT_PUBLIC_APP_URL ?? "https://whatsapp-lead-five.vercel.app").replace(/\/$/, "");
+
 /** cuid/uuid-shaped ids and simple extensions only — nothing that can traverse. */
 const SEGMENT_RE = /^[a-zA-Z0-9_-]+$/;
 const EXTENSION_RE = /^[a-zA-Z0-9]+$/;
@@ -73,7 +76,7 @@ export async function saveMedia(
   await mkdir(dir, { recursive: true });
   await writeFile(path.join(dir, fileName), bytes);
 
-  return { fileName, url: `/api/media/${tenantId}/${fileName}` };
+  return { fileName, url: `${APP_URL}/api/media/${tenantId}/${fileName}` };
 }
 
 /**
