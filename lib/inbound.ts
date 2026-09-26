@@ -543,6 +543,12 @@ async function saveInboundMessage(
 ): Promise<SavedInboundMessage> {
   const media =
     message.image ?? message.video ?? message.audio ?? message.document;
+
+  if (media) {
+    console.log("[INBOUND] Media message received — type:", message.type, "media.id:", (media as { id?: string }).id ?? "(none)", "mime_type:", media.mime_type ?? "(none)");
+    console.log("[INBOUND] mediaUrl intentionally NOT saved (Meta URL expires in minutes). Media ID is in metadata.image.id / metadata.video.id etc.");
+  }
+
   const content = extractContent(message);
 
   // Media with no caption still needs something in the inbox list, or the row renders empty.

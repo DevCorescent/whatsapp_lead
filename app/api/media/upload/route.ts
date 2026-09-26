@@ -57,6 +57,8 @@ export async function POST(req: NextRequest) {
   const conversationId = req.nextUrl.searchParams.get("conversationId");
   let waCreds: { phoneNumberId: string; apiKey: string } | null = null;
 
+  console.log("[UPLOAD] conversationId from query:", conversationId ?? "(none — no Meta pre-upload)");
+
   if (conversationId) {
     const conv = await prisma.conversation.findFirst({
       where: { id: conversationId, tenantId },
@@ -66,7 +68,12 @@ export async function POST(req: NextRequest) {
       const resolved = await resolveConversationWhatsAppCreds(conv);
       if (resolved.phoneNumberId && resolved.apiKey) {
         waCreds = { phoneNumberId: resolved.phoneNumberId, apiKey: resolved.apiKey };
+        console.log("[UPLOAD] WhatsApp creds resolved — will pre-upload to Meta. phoneNumberId:", resolved.phoneNumberId);
+      } else {
+        console.warn("[UPLOAD] Conversation found but WhatsApp creds not available:", resolved.unavailableReason);
       }
+    } else {
+      console.warn("[UPLOAD] Conversation not found for tenantId:", tenantId, "conversationId:", conversationId);
     }
   }
 
@@ -120,13 +127,17 @@ export async function POST(req: NextRequest) {
 
       const mimeType = file.type || "application/octet-stream";
 
+      console.log(`[UPLOAD] Processing file: "${file.name}", mimeType: ${mimeType}, size: ${buffer.byteLength} bytes`);
+
       // Save locally for CRM display (best-effort; ephemeral on serverless).
       const stored = await saveMedia(tenantId, fileExtension(file.name), buffer);
+      console.log(`[UPLOAD] Local save OK → url: ${stored.url}`);
 
       // Upload to Meta if we have credentials — the resulting media_id is used
       // for the actual WhatsApp send so Meta never needs to fetch from our server.
       let mediaId: string | undefined;
       if (waCreds) {
+        console.log(`[UPLOAD] Attempting Meta pre-upload for "${file.name}" (${mimeType}) via phoneNumberId: ${waCreds.phoneNumberId}`);
         try {
           mediaId = await uploadMediaToMeta(
             waCreds.phoneNumberId,
@@ -135,9 +146,12 @@ export async function POST(req: NextRequest) {
             mimeType,
             file.name
           );
+          console.log(`[UPLOAD] Meta pre-upload SUCCESS — mediaId: ${mediaId}`);
         } catch (err) {
-          console.warn("[MEDIA UPLOAD] Meta pre-upload failed, will fall back to URL send:", err);
+          console.warn("[UPLOAD] Meta pre-upload FAILED — will fall back to URL-based send. Error:", err instanceof Error ? err.message : err);
         }
+      } else {
+        console.log("[UPLOAD] No WhatsApp creds — skipping Meta pre-upload (URL-based send will be used)");
       }
 
       uploaded.push({
@@ -148,6 +162,7 @@ export async function POST(req: NextRequest) {
         category: spec.spec.category,
         ...(mediaId ? { mediaId } : {}),
       });
+      console.log(`[UPLOAD] File result: { filename: "${file.name}", mediaId: ${mediaId ?? "(none)"}, url: ${stored.url} }`);
     }
 
     return NextResponse.json({ success: true, data: uploaded }, { status: 201 });

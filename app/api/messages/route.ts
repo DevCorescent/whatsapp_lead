@@ -221,8 +221,11 @@ export async function POST(req: NextRequest) {
   const { tenantId, id: userId } = session.user;
 
   try {
-    const parsed = sendMessageSchema.safeParse(await req.json());
+    const rawBody = await req.json();
+    console.log("[MESSAGES] POST received — type:", rawBody?.type, "mediaId:", rawBody?.mediaId ?? "(none)", "mediaUrl:", rawBody?.mediaUrl ?? "(none)");
+    const parsed = sendMessageSchema.safeParse(rawBody);
     if (!parsed.success) {
+      console.error("[MESSAGES] Validation failed:", parsed.error.issues);
       return NextResponse.json(
         { success: false, error: parsed.error.issues[0].message },
         { status: 400 }
@@ -322,6 +325,15 @@ export async function POST(req: NextRequest) {
       // Prefer media_id (uploaded to Meta's servers) over URL-based sending.
       // URL-based sending requires Meta to fetch from our server, which is unreliable
       // on serverless runtimes and requires a publicly accessible, unauthenticated URL.
+      console.log("[MESSAGES] Media send:", {
+        type,
+        waType,
+        sendMethod: mediaId ? "media_id" : "url",
+        mediaId: mediaId ?? "(none)",
+        mediaUrl: mediaUrl ?? "(none)",
+        to: conversation.contact.phone,
+        phoneNumberId: creds.phoneNumberId,
+      });
       const sent = mediaId
         ? await sendMediaMessage(
             creds.phoneNumberId,
@@ -341,6 +353,7 @@ export async function POST(req: NextRequest) {
             waType === "document" ? mediaUrl!.split("/").pop()?.split("?")[0] : undefined
           );
       waMessageId = sent.messages?.[0]?.id ?? null;
+      console.log("[MESSAGES] Media send result — waMessageId:", waMessageId, "raw:", JSON.stringify(sent));
       const message = await saveOutboundMessage(
         tenantId, conversationId, userId, body ?? "", waMessageId,
         {

@@ -242,10 +242,20 @@ export function useAttachmentComposer({
       if (!conversationId || items.length === 0) return false;
 
       const ordered = items;
+      console.log("[ATTACH] Starting upload for", ordered.length, "file(s), conversationId:", conversationId);
+
       let uploaded;
       try {
         uploaded = await upload(ordered.map((it) => it.file), { conversationId: conversationId ?? undefined });
-      } catch {
+        console.log("[ATTACH] Upload succeeded:", uploaded.map((m) => ({
+          filename: m.filename,
+          mimeType: m.mimeType,
+          size: m.size,
+          url: m.url,
+          mediaId: m.mediaId ?? "(none — will use URL-based send)",
+        })));
+      } catch (err) {
+        console.error("[ATTACH] Upload failed:", err);
         // Upload failed or was cancelled — leave the preview and its files intact so the
         // agent can retry without re-selecting anything. `uploadError` carries the reason.
         return false;
@@ -261,18 +271,27 @@ export function useAttachmentComposer({
         const msgType = item.spec.messageType as "IMAGE" | "VIDEO" | "AUDIO" | "DOCUMENT";
 
         if (sendFn) {
+          const payload = {
+            conversationId,
+            type: msgType,
+            mediaUrl: media.url,
+            mediaId: media.mediaId,
+            mediaMimeType: media.mimeType ?? undefined,
+            mediaSize: media.size ?? undefined,
+            content,
+            isNote,
+          };
+          console.log(`[ATTACH] Calling sendFn for file ${index + 1}/${uploaded.length}:`, {
+            type: payload.type,
+            sendMethod: payload.mediaId ? "meta-upload-id" : "url-link",
+            mediaId: payload.mediaId,
+            mediaUrl: payload.mediaUrl,
+          });
           try {
-            await sendFn({
-              conversationId,
-              type: msgType,
-              mediaUrl: media.url,
-              mediaId: media.mediaId,
-              mediaMimeType: media.mimeType ?? undefined,
-              mediaSize: media.size ?? undefined,
-              content,
-              isNote,
-            });
-          } catch {
+            await sendFn(payload);
+            console.log(`[ATTACH] sendFn succeeded for file ${index + 1}`);
+          } catch (err) {
+            console.error(`[ATTACH] sendFn failed for file ${index + 1}:`, err instanceof Error ? err.message : err);
             allSent = false;
             // Continue to next file even if one fails; errors surfaced by the caller.
             continue;
