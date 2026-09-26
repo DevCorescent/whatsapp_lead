@@ -234,9 +234,11 @@ export function buildComponents(t: MessageTemplate): WATemplateCreateComponent[]
 // ─── Credentials ─────────────────────────────────────────────────────────────
 
 export class TemplateCredsError extends Error {
-  constructor(message: string) {
+  readonly debug?: Record<string, unknown>;
+  constructor(message: string, debug?: Record<string, unknown>) {
     super(message);
     this.name = "TemplateCredsError";
+    this.debug = debug;
   }
 }
 
@@ -291,16 +293,19 @@ export async function submitTemplate(id: string, businessId: string): Promise<Me
     throw new TemplateCredsError("Template is already being submitted.");
   }
 
+  // Build the components payload before the Meta call so we can attach it to the error on failure.
+  const isNamed = detectParameterFormat(template.body) === "NAMED";
+  const components = buildComponents(template);
+  const metaPayload = {
+    name: template.name,
+    language: template.language,
+    category: template.category,
+    ...(isNamed ? { parameter_format: "named" } : {}),
+    components,
+  };
+
   try {
-    const isNamed = detectParameterFormat(template.body) === "NAMED";
-    const result = await createMessageTemplate(wabaId, apiKey, {
-      name: template.name,
-      language: template.language,
-      category: template.category as "MARKETING" | "UTILITY" | "AUTHENTICATION",
-      components: buildComponents(template),
-      // Only include parameter_format for named templates — Meta rejects "positional" as unexpected.
-      ...(isNamed ? { parameter_format: "named" as const } : {}),
-    });
+    const result = await createMessageTemplate(wabaId, apiKey, metaPayload as Parameters<typeof createMessageTemplate>[2]);
 
     return await prisma.messageTemplate.update({
       where: { id },
@@ -318,7 +323,7 @@ export async function submitTemplate(id: string, businessId: string): Promise<Me
       where: { id },
       data: { status: "DRAFT", rejectionReason: message.slice(0, 1000) },
     });
-    throw new TemplateCredsError(message);
+    throw new TemplateCredsError(message, { metaPayload, templateId: id });
   }
 }
 

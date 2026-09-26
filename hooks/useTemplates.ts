@@ -123,8 +123,28 @@ export function useSubmitTemplate() {
     mutationFn: async (id: string) => {
       const res = await fetch(`/api/templates/${id}/submit`, { method: "POST" });
       if (!res.ok) {
-        const err = await res.json().catch(() => ({}));
-        throw new Error((err as { error?: string }).error ?? "Failed to submit template");
+        const body = await res.json().catch(() => ({})) as {
+          error?: string;
+          debug?: { metaPayload?: unknown; templateId?: string } | null;
+        };
+
+        // ── Client-side debug logs ───────────────────────────────────────
+        console.group("%c🔴 Template submit failed", "color:#dc2626;font-weight:bold");
+        console.log("Template ID :", id);
+        console.log("Error       :", body.error ?? "(no message)");
+        if (body.debug?.metaPayload) {
+          console.log("Payload sent to Meta (exact JSON):");
+          console.log(JSON.stringify(body.debug.metaPayload, null, 2));
+          console.log("Payload object:", body.debug.metaPayload);
+        } else {
+          console.log("No payload debug available (error occurred before Meta call)");
+        }
+        console.groupEnd();
+        // ────────────────────────────────────────────────────────────────
+
+        const err = new Error(body.error ?? "Failed to submit template") as Error & { debug?: typeof body.debug };
+        err.debug = body.debug;
+        throw err;
       }
       return res.json() as Promise<TemplateDTO>;
     },

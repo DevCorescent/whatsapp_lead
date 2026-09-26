@@ -19,7 +19,10 @@ export async function POST(_req: NextRequest, { params }: { params: Promise<{ id
     return NextResponse.json({ success: true, data: template });
   } catch (error) {
     if (error instanceof TemplateCredsError) {
-      return NextResponse.json({ success: false, error: error.message }, { status: 400 });
+      return NextResponse.json(
+        { success: false, error: error.message, debug: error.debug ?? null },
+        { status: 400 },
+      );
     }
     console.error("[TEMPLATE SUBMIT]", error);
     return NextResponse.json({ success: false, error: "Failed to submit template" }, { status: 500 });
