@@ -12,6 +12,8 @@ import {
   Download,
   AlertCircle,
   RotateCw,
+  Loader2,
+  Info,
 } from "lucide-react";
 import {
   Badge,
@@ -422,6 +424,28 @@ function TemplateModal({
   const pending = create.isPending || update.isPending;
   const headerHasVar = headerType === "TEXT" && hasPlaceholder(headerContent);
 
+  const [headerInputMode, setHeaderInputMode] = useState<"upload" | "url">("url");
+  const [headerUploadState, setHeaderUploadState] = useState<"idle" | "uploading" | "done" | "error">("idle");
+  const [headerUploadFileName, setHeaderUploadFileName] = useState("");
+
+  async function handleHeaderFileUpload(file: File) {
+    setHeaderUploadState("uploading");
+    setHeaderUploadFileName(file.name);
+    setHeaderContent("");
+    const form = new FormData();
+    form.append("file", file);
+    try {
+      const res = await fetch("/api/campaigns/upload-media", { method: "POST", body: form });
+      const json = await res.json() as { success: boolean; data?: { mediaId: string }; error?: string };
+      if (!res.ok || !json.success) throw new Error(json.error ?? "Upload failed");
+      setHeaderContent(json.data!.mediaId);
+      setHeaderUploadState("done");
+    } catch (err) {
+      setHeaderUploadState("error");
+      setError(err instanceof Error ? err.message : "Upload failed");
+    }
+  }
+
   const submit = () => {
     setError(null);
     const varList = variables.split(",").map((v) => v.trim()).filter(Boolean);
@@ -511,6 +535,8 @@ function TemplateModal({
                 setHeaderType(e.target.value as HeaderTypeOption);
                 setHeaderContent("");
                 setHeaderVarExample("");
+                setHeaderUploadState("idle");
+                setHeaderUploadFileName("");
               }}
               className={inputClass}
             >
@@ -540,17 +566,111 @@ function TemplateModal({
           )}
 
           {(headerType === "IMAGE" || headerType === "VIDEO" || headerType === "DOCUMENT") && (
-            <>
-              <input
-                value={headerContent}
-                onChange={(e) => setHeaderContent(e.target.value)}
-                className={inputClass}
-                placeholder={HEADER_MEDIA_PLACEHOLDER[headerType]}
-              />
-              <p className="text-xs text-slate-500">
-                Sample URL for Meta review. The actual media is provided when sending.
-              </p>
-            </>
+            <div className="space-y-2">
+              {/* Upload / URL toggle */}
+              <div className="flex rounded-lg border border-slate-200 bg-slate-50 p-0.5">
+                {(["upload", "url"] as const).map((mode) => (
+                  <button
+                    key={mode}
+                    type="button"
+                    onClick={() => {
+                      setHeaderInputMode(mode);
+                      setHeaderContent("");
+                      setHeaderUploadState("idle");
+                      setHeaderUploadFileName("");
+                    }}
+                    className={cn(
+                      "flex-1 rounded-md px-3 py-1.5 text-xs font-medium transition",
+                      headerInputMode === mode
+                        ? "bg-white text-slate-800 shadow-sm"
+                        : "text-slate-500 hover:text-slate-700",
+                    )}
+                  >
+                    {mode === "upload" ? "📎 Upload sample file" : "🔗 Enter URL"}
+                  </button>
+                ))}
+              </div>
+
+              {headerInputMode === "upload" ? (
+                <>
+                  <label
+                    className={cn(
+                      "flex cursor-pointer flex-col items-center justify-center gap-2 rounded-xl border-2 border-dashed px-4 py-5 text-center transition",
+                      headerUploadState === "done"
+                        ? "border-emerald-300 bg-emerald-50"
+                        : headerUploadState === "error"
+                          ? "border-rose-300 bg-rose-50"
+                          : "border-slate-200 bg-slate-50 hover:border-slate-300 hover:bg-slate-100",
+                    )}
+                  >
+                    {headerUploadState === "uploading" ? (
+                      <>
+                        <Loader2 className="h-5 w-5 animate-spin text-slate-400" />
+                        <span className="text-xs text-slate-500">Uploading to Meta…</span>
+                      </>
+                    ) : headerUploadState === "done" ? (
+                      <>
+                        <span className="text-xl">✅</span>
+                        <span className="text-xs font-medium text-emerald-700">{headerUploadFileName}</span>
+                        <span className="text-[11px] text-emerald-600">Uploaded — click to replace</span>
+                      </>
+                    ) : headerUploadState === "error" ? (
+                      <>
+                        <span className="text-xl">❌</span>
+                        <span className="text-xs text-rose-600">Upload failed — click to retry</span>
+                      </>
+                    ) : (
+                      <>
+                        <span className="text-xl">
+                          {headerType === "IMAGE" ? "🖼️" : headerType === "VIDEO" ? "🎬" : "📄"}
+                        </span>
+                        <span className="text-xs text-slate-600">
+                          Click to select{" "}
+                          {headerType === "IMAGE"
+                            ? "an image (JPEG, PNG, WebP)"
+                            : headerType === "VIDEO"
+                              ? "a video (MP4)"
+                              : "a document (PDF, Word, Excel)"}
+                        </span>
+                      </>
+                    )}
+                    <input
+                      type="file"
+                      className="sr-only"
+                      accept={
+                        headerType === "IMAGE"
+                          ? "image/jpeg,image/png,image/webp"
+                          : headerType === "VIDEO"
+                            ? "video/mp4,video/3gpp"
+                            : "application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                      }
+                      onChange={(e) => {
+                        const f = e.target.files?.[0];
+                        if (f) void handleHeaderFileUpload(f);
+                        e.target.value = "";
+                      }}
+                    />
+                  </label>
+                  <p className="flex items-center gap-1 text-[11px] text-slate-400">
+                    <Info className="h-3 w-3 shrink-0" />
+                    This sample is uploaded to Meta and used during template review only.
+                  </p>
+                </>
+              ) : (
+                <>
+                  <input
+                    value={headerContent}
+                    onChange={(e) => setHeaderContent(e.target.value)}
+                    className={inputClass}
+                    placeholder={HEADER_MEDIA_PLACEHOLDER[headerType]}
+                  />
+                  <p className="flex items-center gap-1 text-[11px] text-slate-400">
+                    <Info className="h-3 w-3 shrink-0" />
+                    Sample URL shown to Meta during template review. Must be publicly accessible.
+                  </p>
+                </>
+              )}
+            </div>
           )}
         </div>
 
