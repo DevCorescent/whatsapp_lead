@@ -44,6 +44,10 @@ export function ImportLeadsModal({ open, onClose }: { open: boolean; onClose: ()
       validate: (rows, mapping) => validateLeadRows(rows, mapping, { stageNames, users }),
       importBatch: (payload, mode, dryRun) => mutateAsync({ leads: payload, mode, dryRun }),
       busy: stagesLoading || teamLoading,
+      sampleFiles: [
+        { label: "Excel (.xlsx)", href: "/leads-sample.xlsx" },
+        { label: "CSV", href: "/leads-sample.csv" },
+      ],
       mappingHint: (
         <>
           A <span className="font-medium">Phone</span> column is required. Stage and Assigned To are

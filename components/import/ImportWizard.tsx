@@ -42,6 +42,8 @@ export interface ImportWizardConfig<T> {
   busy?: boolean;
   /** Optional guidance rendered under the mapping grid. */
   mappingHint?: ReactNode;
+  /** Sample files offered as downloads in the upload step. */
+  sampleFiles?: { label: string; href: string }[];
 }
 
 type Step = "upload" | "map" | "preview" | "importing" | "done";
@@ -207,6 +209,24 @@ function ImportFlow<T>({ onClose, config }: { onClose: () => void; config: Impor
             </span>
             <span className="text-xs text-slate-500">Excel (.xlsx, .xls) or CSV · up to {IMPORT_MAX_ROWS.toLocaleString()} rows</span>
           </button>
+          {config.sampleFiles && config.sampleFiles.length > 0 && (
+            <div className="mt-3 flex items-center gap-1 text-[11px] text-slate-500">
+              <span>Download sample:</span>
+              {config.sampleFiles.map((f, i) => (
+                <span key={f.href} className="contents">
+                  {i > 0 && <span className="text-slate-300">·</span>}
+                  <a
+                    href={f.href}
+                    download
+                    className="font-medium text-emerald-600 underline-offset-2 hover:underline"
+                    onClick={(e) => e.stopPropagation()}
+                  >
+                    {f.label}
+                  </a>
+                </span>
+              ))}
+            </div>
+          )}
           {config.mappingHint && <div className="mt-3 text-xs text-slate-500">{config.mappingHint}</div>}
         </div>
       )}

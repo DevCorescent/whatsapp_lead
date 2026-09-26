@@ -21,6 +21,10 @@ export function ImportContactsModal({ open, onClose }: { open: boolean; onClose:
       fields: IMPORT_FIELDS,
       validate: validateRows,
       importBatch: (payload, mode, dryRun) => mutateAsync({ contacts: payload, mode, dryRun }),
+      sampleFiles: [
+        { label: "Excel (.xlsx)", href: "/contacts-sample.xlsx" },
+        { label: "CSV", href: "/contacts-sample.csv" },
+      ],
       mappingHint: (
         <>
           Your file needs a header row. A <span className="font-medium">Phone</span> column is
