@@ -110,6 +110,22 @@ export function extractNamedParams(text: string): string[] {
 }
 
 /**
+ * Meta rejects template submissions when any body variable example is a URL
+ * (error 100 / subcode 2388299). URLs must go in a CTA button, not body text.
+ * Returns an error string, or null when valid.
+ */
+export function validateVariableExamples(variables: string[], isNamed = false, paramNames: string[] = []): string | null {
+  const urlPattern = /^https?:\/\//i;
+  for (let i = 0; i < variables.length; i++) {
+    if (urlPattern.test(variables[i].trim())) {
+      const label = isNamed && paramNames[i] ? `{{${paramNames[i]}}}` : `{{${i + 1}}}`;
+      return `Example value for ${label} is a URL. Meta does not allow URLs in body variable examples (error 2388299). Use a short code or text instead — e.g. "TRACK123". If you need to send a link, add a "Visit website" button with a Dynamic URL.`;
+    }
+  }
+  return null;
+}
+
+/**
  * Meta requires body placeholders to be numeric and contiguous starting at 1
  * ({{1}}, {{2}}, …) for positional, or lowercase snake_case for named.
  * Returns an error string, or null when valid.
@@ -281,6 +297,10 @@ export async function submitTemplate(id: string, businessId: string): Promise<Me
   if (nameError) throw new TemplateCredsError(nameError);
   const placeholderError = validatePlaceholders(template.body, template.variables);
   if (placeholderError) throw new TemplateCredsError(placeholderError);
+  const isNamed = detectParameterFormat(template.body) === "NAMED";
+  const paramNames = isNamed ? extractNamedParams(template.body) : [];
+  const exampleError = validateVariableExamples(template.variables, isNamed, paramNames);
+  if (exampleError) throw new TemplateCredsError(exampleError);
 
   const { wabaId, apiKey } = await getBusinessTemplateCreds(businessId);
 

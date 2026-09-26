@@ -932,25 +932,37 @@ function TemplateModal({
               <span className="ml-1.5 text-xs font-normal text-slate-400">(required for Meta review)</span>
             </p>
             <div className="space-y-2">
-              {Array.from({ length: bodyVarCount }, (_, i) => (
-                <div key={i} className="flex items-center gap-2">
-                  <span className="w-24 shrink-0 rounded bg-slate-100 px-2 py-1.5 text-center font-mono text-xs text-slate-600">
-                    {isNamedParams ? `{{${namedParamNames[i] ?? i + 1}}}` : `{{${i + 1}}}`}
-                  </span>
-                  <input
-                    value={varExamples[i] ?? ""}
-                    onChange={(e) => {
-                      const next = [...varExamples];
-                      next[i] = e.target.value;
-                      setVarExamples(next);
-                    }}
-                    className={inputClass}
-                    placeholder={isNamedParams
-                      ? `Example for {{${namedParamNames[i] ?? i + 1}}} — e.g. ${i === 0 ? "Aman" : i === 1 ? "ORDER123" : "sample"}`
-                      : `Example for {{${i + 1}}} — e.g. ${i === 0 ? "Aman" : i === 1 ? "#12345" : "sample"}`}
-                  />
-                </div>
-              ))}
+              {Array.from({ length: bodyVarCount }, (_, i) => {
+                const exVal = varExamples[i] ?? "";
+                const isUrl = /^https?:\/\//i.test(exVal.trim());
+                return (
+                  <div key={i} className="space-y-1">
+                    <div className="flex items-center gap-2">
+                      <span className="w-24 shrink-0 rounded bg-slate-100 px-2 py-1.5 text-center font-mono text-xs text-slate-600">
+                        {isNamedParams ? `{{${namedParamNames[i] ?? i + 1}}}` : `{{${i + 1}}}`}
+                      </span>
+                      <input
+                        value={exVal}
+                        onChange={(e) => {
+                          const next = [...varExamples];
+                          next[i] = e.target.value;
+                          setVarExamples(next);
+                        }}
+                        className={cn(inputClass, isUrl && "border-amber-400 focus:ring-amber-400")}
+                        placeholder={isNamedParams
+                          ? `Example for {{${namedParamNames[i] ?? i + 1}}} — e.g. ${i === 0 ? "Aman" : i === 1 ? "ORDER123" : "sample"}`
+                          : `Example for {{${i + 1}}} — e.g. ${i === 0 ? "Aman" : i === 1 ? "#12345" : "sample"}`}
+                      />
+                    </div>
+                    {isUrl && (
+                      <p className="flex items-start gap-1.5 rounded-md bg-amber-50 px-2.5 py-1.5 text-[11px] text-amber-800">
+                        <AlertCircle className="mt-0.5 h-3 w-3 shrink-0 text-amber-500" aria-hidden />
+                        URLs are not allowed as body variable examples (Meta error 2388299). Use a short text instead — e.g. <strong>TRACK123</strong>. To send a link, add a &ldquo;Visit website&rdquo; button with a Dynamic URL.
+                      </p>
+                    )}
+                  </div>
+                );
+              })}
             </div>
             <p className="mt-1.5 text-[11px] text-slate-400">
               These examples are shown to Meta reviewers only — not sent to customers.
