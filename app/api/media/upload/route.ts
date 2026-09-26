@@ -129,9 +129,12 @@ export async function POST(req: NextRequest) {
 
       console.log(`[UPLOAD] Processing file: "${file.name}", mimeType: ${mimeType}, size: ${buffer.byteLength} bytes`);
 
-      // Save locally for CRM display (best-effort; ephemeral on serverless).
-      const stored = await saveMedia(tenantId, fileExtension(file.name), buffer);
-      console.log(`[UPLOAD] Local save OK → url: ${stored.url}`);
+      // Save to persistent storage (Uploadthing in prod, local FS in dev).
+      const stored = await saveMedia(tenantId, fileExtension(file.name), buffer, {
+        mimeType,
+        originalName: file.name,
+      });
+      console.log(`[UPLOAD] Storage OK → url: ${stored.url}`);
 
       // Upload to Meta if we have credentials — the resulting media_id is used
       // for the actual WhatsApp send so Meta never needs to fetch from our server.

@@ -3,11 +3,9 @@
 //
 // Tenant-partitioned object store for inbox attachments.
 //
-// Production (Vercel Blob): when BLOB_READ_WRITE_TOKEN is present, files are
-// uploaded to Vercel's CDN and a permanent public URL is returned. The
-// /api/media/[...path] serve route is not involved — the blob URL is served
-// directly from Vercel's edge, so there is no auth gate and no ephemeral
-// filesystem problem.
+// Production (Uploadthing): when UPLOADTHING_TOKEN is present, files are
+// uploaded via UTApi and a permanent public CDN URL is returned. No serve
+// route is involved — the URL is served directly from Uploadthing's CDN.
 //
 // Local dev / fallback: without the token, files land on the local filesystem
 // under os.tmpdir()/whatscrm-uploads and are served through the authenticated
@@ -46,7 +44,7 @@ export interface StoredMedia {
   fileName: string;
   /**
    * URL to load the asset from.
-   * - With Vercel Blob: a permanent public CDN URL (blob.vercel-storage.com/…).
+   * - With Uploadthing: a permanent public CDN URL (utfs.io/f/…).
    * - Without it: an authenticated /api/media/… URL (local dev only).
    */
   url: string;
@@ -55,27 +53,40 @@ export interface StoredMedia {
 /**
  * Persist an uploaded asset and return its handle.
  *
- * Uses Vercel Blob when BLOB_READ_WRITE_TOKEN is set (production). Falls back
- * to the local filesystem for local development. The returned URL is always
- * absolute and loadable by the browser that owns a session.
+ * Uses Uploadthing's UTApi when UPLOADTHING_TOKEN is set (production). Falls
+ * back to the local filesystem for local development. The returned URL is
+ * always absolute and loadable by the browser.
  */
 export async function saveMedia(
   tenantId: string,
   extension: string,
-  bytes: Buffer
+  bytes: Buffer,
+  opts?: { mimeType?: string; originalName?: string }
 ): Promise<StoredMedia> {
   const ext = extension.toLowerCase();
   const fileName = `${randomUUID()}.${ext}`;
   assertSafe(tenantId, fileName);
 
-  if (process.env.BLOB_READ_WRITE_TOKEN) {
-    // Vercel Blob: persistent CDN storage, public URL, no serve route needed.
-    const { put } = await import("@vercel/blob");
-    const blob = await put(`${tenantId}/${fileName}`, bytes, {
-      access: "public",
-      addRandomSuffix: false,
-    });
-    return { fileName, url: blob.url };
+  if (process.env.UPLOADTHING_TOKEN) {
+    const { UTApi, UTFile } = await import("uploadthing/server");
+    const utapi = new UTApi();
+
+    // UTFile accepts a Blob/ArrayBuffer and takes a name + optional type.
+    const mimeType = opts?.mimeType ?? "application/octet-stream";
+    const uploadName = opts?.originalName ?? fileName;
+    // Slice to a plain ArrayBuffer so TypeScript's strict BlobPart check is satisfied
+    // (Buffer's underlying .buffer may be a SharedArrayBuffer on some runtimes).
+    const slice = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
+    const utFile = new UTFile([slice], uploadName, { type: mimeType });
+
+    const result = await utapi.uploadFiles(utFile);
+    if (result.error) {
+      throw new Error(`Uploadthing upload failed: ${result.error.message}`);
+    }
+
+    const url = result.data.ufsUrl ?? result.data.url;
+    console.log(`[STORAGE] Uploadthing upload OK → ${url}`);
+    return { fileName, url };
   }
 
   // Local filesystem fallback (local dev only — not shared between serverless instances).
@@ -88,8 +99,8 @@ export async function saveMedia(
 /**
  * Read a stored asset back, or null when it does not exist.
  *
- * Only used on the local-filesystem path; on Vercel Blob the browser loads the
- * public CDN URL directly and never calls /api/media/[...path].
+ * Only used on the local-filesystem path; with Uploadthing the browser loads
+ * the public CDN URL directly and /api/media/[...path] is not involved.
  */
 export async function readMedia(tenantId: string, fileName: string): Promise<Buffer | null> {
   assertSafe(tenantId, fileName);
