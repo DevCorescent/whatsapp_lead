@@ -14,6 +14,17 @@
 
 const WA_BASE_URL = `https://graph.facebook.com/${process.env.WHATSAPP_API_VERSION ?? "v19.0"}`;
 
+/**
+ * Thrown when Meta's Cloud API rejects a send (text or interactive).
+ * `.message` is already user-friendly — safe to return directly to the client.
+ */
+export class WASendError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "WASendError";
+  }
+}
+
 /** Digits-only E.164 without '+'. Meta accepts this form for Cloud API `to`. */
 function normalizeWaTo(to: string): string {
   return to.replace(/\D/g, "");
@@ -85,6 +96,28 @@ function formatMetaSendError(status: number, statusText: string, to: string, raw
   return `WhatsApp API error (${status} ${statusText}) sending text to ${to}: ${summary}${hint}`;
 }
 
+function userFriendlyWASendError(code: number | undefined, status: number): string {
+  if (code === 190 || status === 401) {
+    return "WhatsApp session has expired. Please go to Settings → WhatsApp and reconnect your account.";
+  }
+  if (code === 100) {
+    return "WhatsApp configuration error. Please check your Phone Number ID in Settings → WhatsApp.";
+  }
+  if (code === 131030) {
+    return "This number is not in your WhatsApp test list. Add it under Meta → WhatsApp → API Setup → 'To' numbers, or switch your account to live mode.";
+  }
+  if (code === 131047) {
+    return "The 24-hour reply window has closed. Ask the customer to message you first, or send an approved template instead.";
+  }
+  if (code === 131026) {
+    return "This number cannot receive WhatsApp messages. It may not be registered on WhatsApp or has blocked messages.";
+  }
+  if (status === 400) {
+    return "WhatsApp rejected the message. Please check your connection settings in Settings → WhatsApp.";
+  }
+  return "Message failed to send. Please try again, or check your WhatsApp connection in Settings.";
+}
+
 export async function sendTextMessage(
   phoneNumberId: string,
   apiKey: string,
@@ -126,6 +159,8 @@ export async function sendTextMessage(
     // here would throw a SyntaxError *inside the error handler*, destroying the real failure and
     // replacing it with a parse error — precisely when the real failure matters most.
     const err = await res.text();
+    let errorCode: number | undefined;
+    try { errorCode = (JSON.parse(err) as { error?: { code?: number } })?.error?.code; } catch { /* non-JSON */ }
     console.error("[WA SEND] Meta rejected text message", {
       status: res.status,
       phoneNumberId,
@@ -133,8 +168,9 @@ export async function sendTextMessage(
       bodyLength: text.length,
       bodyPreview: text.slice(0, 120),
       meta: err.slice(0, 800),
+      tech: formatMetaSendError(res.status, res.statusText, recipient, err),
     });
-    throw new Error(formatMetaSendError(res.status, res.statusText, recipient, err));
+    throw new WASendError(userFriendlyWASendError(errorCode, res.status));
   }
 
   return res.json() as Promise<WASendMessageResponse>;
@@ -446,9 +482,15 @@ export async function sendInteractiveMessage(
     // Meta returns JSON on error, but can emit HTML on gateway failures —
     // read as text so the error path never throws over the real error.
     const err = await res.text();
-    throw new Error(
-      `WhatsApp API error (${res.status} ${res.statusText}) sending interactive message to ${to}: ${err}`
-    );
+    let errorCode: number | undefined;
+    try { errorCode = (JSON.parse(err) as { error?: { code?: number } })?.error?.code; } catch { /* non-JSON */ }
+    console.error("[WA SEND] Meta rejected interactive message", {
+      status: res.status,
+      phoneNumberId,
+      to,
+      meta: err.slice(0, 800),
+    });
+    throw new WASendError(userFriendlyWASendError(errorCode, res.status));
   }
 
   return res.json() as Promise<WASendMessageResponse>;

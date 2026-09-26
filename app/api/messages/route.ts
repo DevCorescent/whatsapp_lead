@@ -24,7 +24,7 @@ import { auth } from "@/lib/auth";
 import { guardLimit } from "@/lib/billing/guard";
 import { prisma } from "@/lib/prisma";
 import { pusher, tenantChannel, PusherEvent } from "@/lib/pusher";
-import { sendTextMessage, sendInteractiveMessage } from "@/lib/whatsapp";
+import { sendTextMessage, sendInteractiveMessage, WASendError } from "@/lib/whatsapp";
 import { resolveConversationWhatsAppCreds } from "@/lib/business";
 import { sendMessageSchema } from "@/lib/validators/message";
 
@@ -335,10 +335,13 @@ export async function POST(req: NextRequest) {
 
     return NextResponse.json({ success: true, data: message }, { status: 201 });
   } catch (error) {
-    // Meta's client throws with the upstream response body embedded, which can carry account
-    // identifiers and token hints — so it is logged in full and never returned to the caller.
+    if (error instanceof WASendError) {
+      return NextResponse.json(
+        { success: false, error: error.message },
+        { status: 400 }
+      );
+    }
     console.error("[MESSAGES]", error);
-
     return NextResponse.json(
       { success: false, error: "Failed to send message" },
       { status: 500 }

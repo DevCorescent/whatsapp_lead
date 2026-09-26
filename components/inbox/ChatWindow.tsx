@@ -737,7 +737,18 @@ export function ChatWindow({
         </form>
 
         {sendError && (
-          <p className="mt-2 text-xs font-medium text-rose-600">{sendError}</p>
+          <div className="mt-2 flex items-start gap-2 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-800">
+            <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-rose-500" aria-hidden />
+            <span className="flex-1 leading-snug">{sendError}</span>
+            <button
+              type="button"
+              onClick={() => setSendError(null)}
+              className="shrink-0 text-rose-400 hover:text-rose-600"
+              aria-label="Dismiss"
+            >
+              <X className="h-3.5 w-3.5" />
+            </button>
+          </div>
         )}
       </div>
 
