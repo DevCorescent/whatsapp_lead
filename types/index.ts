@@ -88,6 +88,10 @@ export interface WAChangeValue {
 export interface WAContact {
   profile: { name: string };
   wa_id: string;
+  /** Present for individual accounts (Meta legacy field). */
+  username?: string;
+  /** Business WhatsApp unique ID — replaces phone number for businesses. */
+  bsuid?: string;
 }
 
 export interface WAMessage {

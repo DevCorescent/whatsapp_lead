@@ -93,7 +93,7 @@ export async function POST(req: NextRequest) {
     // 2. The ingestion spine, unchanged: contact → conversation → message, then the reactions
     //    (read receipt, broadcast, campaign credit, flow engine, and the AI reply which
     //    `dispatchAutoReply` publishes on to /api/workers/ai-reply rather than running here).
-    const result = await processIncomingMessage(tenant, job.rawMessage, job.contactName);
+    const result = await processIncomingMessage(tenant, job.rawMessage, job.contactName, job.contactWaId);
 
     console.log("[WORKER INBOUND] Message processed successfully", {
       waMessageId: job.waMessageId,

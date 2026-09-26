@@ -381,6 +381,7 @@ model Contact {
   tenantId     String
   name         String
   phone        String
+  waId         String?
   email        String?
   company      String?
   designation  String?

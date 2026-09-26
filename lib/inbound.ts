@@ -350,18 +350,22 @@ async function upsertContact(
   tenantId: string,
   businessId: string,
   phone: string,
-  name?: string
+  name?: string,
+  waId?: string
 ): Promise<Contact> {
   const profileName = name?.trim();
 
+  // Only update waId when Meta supplies one — never blank it out on subsequent messages.
+  const updateFields: Record<string, unknown> = {};
+  if (profileName) updateFields.name = profileName;
+  if (waId) updateFields.waId = waId;
+
   return prisma.contact.upsert({
     where: { phone_businessId: { phone, businessId } },
-    // Omitting `name` entirely leaves the stored value untouched; Prisma maintains
-    // `updatedAt` on its own via the schema's `@updatedAt` attribute.
-    update: profileName ? { name: profileName } : {},
+    update: updateFields,
     // A contact with no profile name is still addressable by number, so the phone
     // doubles as the display name until an agent or a later payload supplies a better one.
-    create: { tenantId, businessId, phone, name: profileName || phone },
+    create: { tenantId, businessId, phone, name: profileName || phone, ...(waId ? { waId } : {}) },
   });
 }
 
@@ -1487,7 +1491,8 @@ export interface InboundMessageResult {
 export async function processIncomingMessage(
   tenant: ResolvedTenant,
   message: WAMessage,
-  contactName?: string
+  contactName?: string,
+  contactWaId?: string
 ): Promise<InboundMessageResult> {
   const integrationId = tenant.whatsappIntegrationId;
 
@@ -1522,7 +1527,8 @@ export async function processIncomingMessage(
     scopedTenant.tenantId,
     businessId,
     message.from,
-    contactName
+    contactName,
+    contactWaId
   );
 
   // One thread per contact per WhatsApp number: a customer who writes to number A and to

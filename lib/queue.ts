@@ -53,6 +53,8 @@ export interface InboundMessageJob {
   waMessageId: string;
   from: string;
   contactName?: string;
+  /** WhatsApp account identifier — wa_id, bsuid, or username from the webhook contact entry. */
+  contactWaId?: string;
   type: string;
   content: string | null;
   timestamp: string;

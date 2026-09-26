@@ -396,7 +396,8 @@ interface TenantIdentity {
 async function dispatchInboundMessage(
   identity: TenantIdentity,
   message: WAMessage,
-  contactName?: string
+  contactName?: string,
+  contactWaId?: string
 ): Promise<void> {
   if (process.env.SKIP_QUEUE === "true") {
     console.log("[WEBHOOK] SKIP_QUEUE enabled; processing inbound inline", {
@@ -412,7 +413,7 @@ async function dispatchInboundMessage(
       identity.businessId,
       identity.whatsappIntegrationId
     );
-    await processIncomingMessage(tenant, message, contactName);
+    await processIncomingMessage(tenant, message, contactName, contactWaId);
     console.log("[WEBHOOK] Inline inbound processing finished", {
       waMessageId: message.id,
       tenantId: identity.tenantId,
@@ -438,6 +439,7 @@ async function dispatchInboundMessage(
     waMessageId: message.id,
     from: message.from,
     contactName,
+    contactWaId,
     type: message.type,
     content: extractContent(message),
     timestamp: message.timestamp,
@@ -504,13 +506,16 @@ async function processChange(change: WAChange): Promise<void> {
     // into one change, in which case taking contacts[0] would file every message under the first
     // sender's name — creating the second contact with the wrong person's name entirely.
     const profile = contacts?.find((contact) => contact.wa_id === message.from);
+    // bsuid (businesses) or username (individuals) is the stable identifier Meta is moving to.
+    const contactWaId = profile?.bsuid ?? profile?.username ?? profile?.wa_id;
 
     console.log("[WEBHOOK] Dispatching message", { waMessageId: message.id, from: message.from, type: message.type, skipQueue: process.env.SKIP_QUEUE === "true" });
 
     await dispatchInboundMessage(
       { tenantId, businessId, phoneNumberId, whatsappIntegrationId },
       message,
-      profile?.profile?.name
+      profile?.profile?.name,
+      contactWaId
     );
 
     console.log("[WEBHOOK] Message dispatched", { waMessageId: message.id });
