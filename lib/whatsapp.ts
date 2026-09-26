@@ -570,16 +570,20 @@ export async function createMessageTemplate(
     category: string;
     components: WATemplateCreateComponent[];
     parameter_format?: "named";
+    allow_category_change?: boolean;
   }
 ): Promise<WATemplateCreateResponse> {
-  console.log("[WA TEMPLATE CREATE] submitting to Meta:", JSON.stringify(payload, null, 2));
+  // Always send allow_category_change: true so Meta auto-corrects the category rather than
+  // rejecting with code 100 / subcode 2388299 when its classifier disagrees with ours.
+  const body = { allow_category_change: true, ...payload };
+  console.log("[WA TEMPLATE CREATE] submitting to Meta:", JSON.stringify(body, null, 2));
 
   const res = await fetch(
     `https://graph.facebook.com/${process.env.WHATSAPP_API_VERSION ?? "v19.0"}/${businessAccountId}/message_templates`,
     {
       method: "POST",
       headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
+      body: JSON.stringify(body),
     }
   );
 
