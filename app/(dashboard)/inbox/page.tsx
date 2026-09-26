@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import PusherClient from "pusher-js";
 import { useQueryClient } from "@tanstack/react-query";
 import { useSession } from "next-auth/react";
@@ -70,8 +70,11 @@ export default function InboxPage() {
     setSelectedId(id);
     markConversationRead(id);
   }, [markConversationRead]);
-  /** Optimistically "sent" messages, per conversation, until POST /api/messages exists. */
+  /** Optimistically "sent" messages, per conversation, cleared when server confirms. */
   const [outbox, setOutbox] = useState<Record<string, InboxMessage[]>>({});
+  // Track the last seen server message count per conversation so we can detect
+  // when new messages land from the server and clear the matching optimistic copies.
+  const serverMsgCount = useRef<Record<string, number>>({});
 
   const handleSend = useCallback((conversationId: string, message: InboxMessage) => {
     setOutbox((prev) => ({
@@ -139,6 +142,17 @@ export default function InboxPage() {
     const detail = unwrap<InboxConversation>(detailData);
     return toArray<InboxMessage>(detail?.messages ?? unwrap<unknown>(detailData));
   }, [detailData]);
+
+  // When the server delivers new messages for this conversation, clear any optimistic
+  // outbox entries — they are now superseded by the real persisted messages.
+  useEffect(() => {
+    if (!selectedId || messages.length === 0) return;
+    const prev = serverMsgCount.current[selectedId] ?? 0;
+    if (messages.length > prev) {
+      serverMsgCount.current[selectedId] = messages.length;
+      setOutbox((o) => (o[selectedId]?.length ? { ...o, [selectedId]: [] } : o));
+    }
+  }, [messages, selectedId]);
 
   /** No team endpoint exists yet — build the assignee options from what we have. */
   const agents = useMemo<InboxAgent[]>(() => {
