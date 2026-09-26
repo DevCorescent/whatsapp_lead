@@ -36,7 +36,7 @@ import { prisma } from "@/lib/prisma";
 import { guardCeiling, guardLimit } from "@/lib/billing/guard";
 import { resolveTenantPlan } from "@/lib/billing/usage";
 import { getBusinessScope, resolveWhatsAppCreds } from "@/lib/business";
-import { publishCampaignSend } from "@/lib/queue";
+import { publishCampaignSend, type CampaignSendJob } from "@/lib/queue";
 
 /**
  * Columns the campaigns list actually renders.
@@ -77,6 +77,8 @@ const createCampaignSchema = z.object({
    * Accepted values: "name" | "phone" | "company" | any literal string.
    */
   bodyVarMapping: z.array(z.string()).default([]),
+  /** Public URL for a media header (IMAGE / VIDEO / DOCUMENT templates). */
+  headerMediaUrl: z.string().url("Header media must be a valid URL").optional(),
   contactIds: z.array(z.string().min(1)).optional(),
   all: z.boolean().optional(),
   scheduledAt: z.string().optional(),
@@ -167,6 +169,8 @@ async function createCampaign(
   scheduledAt: Date | null,
   templateName: string,
   language: string,
+  headerMediaUrl?: string | null,
+  headerType?: string | null,
 ) {
   return prisma.$transaction(async (tx) => {
     const campaign = await tx.campaign.create({
@@ -178,7 +182,7 @@ async function createCampaign(
         status: scheduledAt ? CampaignStatus.SCHEDULED : CampaignStatus.RUNNING,
         ...(scheduledAt ? { scheduledAt } : { startedAt: new Date() }),
         totalCount: contacts.length,
-        metadata: { templateName, language, bodyVarMapping: input.bodyVarMapping },
+        metadata: { templateName, language, bodyVarMapping: input.bodyVarMapping, headerMediaUrl: headerMediaUrl ?? null, headerType: headerType ?? null },
       },
       select: { id: true },
     });
@@ -224,6 +228,8 @@ async function publishCampaign(
   templateName: string,
   language: string,
   bodyVarMapping: string[],
+  headerMediaUrl: string | undefined | null,
+  headerType: string | undefined | null,
   /** CampaignContact rows — `id` must be CampaignContact.id, not Contact.id */
   campaignContacts: { id: string; phone: string; contactId: string | null }[],
   contactsById: Map<string, CampaignRecipient>,
@@ -268,6 +274,8 @@ async function publishCampaign(
           templateName,
           language,
           bodyParams: bodyParams.length ? bodyParams : undefined,
+          headerType: (headerType as CampaignSendJob["headerType"]) ?? undefined,
+          headerMediaUrl: headerMediaUrl ?? undefined,
         },
         scheduledAt ?? undefined,
       );
@@ -412,7 +420,7 @@ export async function POST(req: NextRequest) {
     // Verify the template belongs to this tenant and is approved.
     const template = await prisma.messageTemplate.findFirst({
       where: { id: input.templateId, tenantId },
-      select: { id: true, name: true, language: true, status: true },
+      select: { id: true, name: true, language: true, status: true, headerType: true },
     });
     if (!template) {
       return NextResponse.json(
@@ -463,6 +471,8 @@ export async function POST(req: NextRequest) {
       scheduledAt,
       template.name,
       template.language,
+      input.headerMediaUrl,
+      template.headerType,
     );
 
     const contactsById = new Map(contacts.map((c) => [c.id, c]));
@@ -472,6 +482,8 @@ export async function POST(req: NextRequest) {
       template.name,
       template.language,
       input.bodyVarMapping,
+      input.headerMediaUrl,
+      template.headerType,
       recipients,
       contactsById,
       scheduledAt,

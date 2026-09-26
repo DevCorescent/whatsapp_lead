@@ -204,6 +204,21 @@ export async function POST(req: NextRequest) {
         // Template campaigns use the WhatsApp template API — the only channel Meta allows
         // for proactive (outside-24-hour-window) broadcasts.
         const components: WATemplateComponent[] = [];
+
+        // Header component — required for media templates.
+        if (
+          job.headerMediaUrl &&
+          (job.headerType === "IMAGE" || job.headerType === "VIDEO" || job.headerType === "DOCUMENT")
+        ) {
+          const mediaParam =
+            job.headerType === "IMAGE"
+              ? { type: "image" as const, image: { link: job.headerMediaUrl } }
+              : job.headerType === "VIDEO"
+                ? { type: "video" as const, video: { link: job.headerMediaUrl } }
+                : { type: "document" as const, document: { link: job.headerMediaUrl } };
+          components.push({ type: "header", parameters: [mediaParam] });
+        }
+
         if (job.bodyParams?.length) {
           components.push({
             type: "body",

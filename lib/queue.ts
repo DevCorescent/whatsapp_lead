@@ -105,6 +105,10 @@ export interface CampaignSendJob {
   language?: string;
   /** Per-contact resolved values for body {{1}}, {{2}}, … parameters, in order. */
   bodyParams?: string[];
+  /** Header type when the template uses a media header. */
+  headerType?: "TEXT" | "IMAGE" | "VIDEO" | "DOCUMENT";
+  /** Publicly accessible URL for the header media (IMAGE / VIDEO / DOCUMENT templates). */
+  headerMediaUrl?: string;
 }
 
 // ─── Publishers ───────────────────────────────────────────────────────────────

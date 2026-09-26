@@ -42,6 +42,8 @@ interface TemplateRow {
   body: string;
   footer?: string | null;
   variables: string[];
+  headerType?: "TEXT" | "IMAGE" | "VIDEO" | "DOCUMENT" | null;
+  headerContent?: string | null;
 }
 
 // ─── Constants ────────────────────────────────────────────────────────────────
@@ -439,6 +441,7 @@ function CreateCampaignModal({ open, onClose }: { open: boolean; onClose: () => 
   const [contactSearch, setContactSearch] = useState("");
   const [schedule, setSchedule] = useState("");
   const [showPreview, setShowPreview] = useState(false);
+  const [headerMediaUrl, setHeaderMediaUrl] = useState("");
   const [error, setError] = useState<string | null>(null);
 
   const { data: templatesData, isLoading: tplLoading } = useTemplates(open);
@@ -469,6 +472,7 @@ function CreateCampaignModal({ open, onClose }: { open: boolean; onClose: () => 
   if (selectedTemplateId !== mappedTemplateId) {
     setMappedTemplateId(selectedTemplateId);
     setBodyVarMapping(Array.from({ length: varSlotCount }, () => "name"));
+    setHeaderMediaUrl("");
   }
 
   const create = useMutation({
@@ -506,6 +510,7 @@ function CreateCampaignModal({ open, onClose }: { open: boolean; onClose: () => 
     setContactSearch("");
     setSchedule("");
     setShowPreview(false);
+    setHeaderMediaUrl("");
     setError(null);
   }
 
@@ -549,14 +554,21 @@ function CreateCampaignModal({ open, onClose }: { open: boolean; onClose: () => 
         ? { all: true }
         : { contactIds: selectedIds }),
       ...(when && !Number.isNaN(when.getTime()) && { scheduledAt: when.toISOString() }),
+      ...(headerMediaUrl.trim() && { headerMediaUrl: headerMediaUrl.trim() }),
     });
   }
+
+  const needsMediaUrl =
+    selectedTemplate?.headerType === "IMAGE" ||
+    selectedTemplate?.headerType === "VIDEO" ||
+    selectedTemplate?.headerType === "DOCUMENT";
 
   const canSubmit =
     name.trim() &&
     templateId &&
     !create.isPending &&
-    (audienceMode === "all" || selectedIds.length > 0);
+    (audienceMode === "all" || selectedIds.length > 0) &&
+    (!needsMediaUrl || headerMediaUrl.trim());
 
   const allVisibleSelected =
     contacts.length > 0 && contacts.every((c) => selectedIds.includes(c.id));
@@ -630,17 +642,62 @@ function CreateCampaignModal({ open, onClose }: { open: boolean; onClose: () => 
               {showPreview ? "Hide preview" : "Preview template"}
             </button>
             {showPreview && (
-              <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
-                <p className="mb-1 text-[11px] font-medium uppercase tracking-wide text-slate-400">
-                  Body
-                </p>
-                <p className="whitespace-pre-wrap text-sm text-slate-700">{selectedTemplate.body}</p>
+              <div className="rounded-lg border border-slate-200 bg-slate-50 p-3 space-y-2">
+                {selectedTemplate.headerType && (
+                  <div>
+                    <p className="mb-1 text-[11px] font-medium uppercase tracking-wide text-slate-400">
+                      Header
+                    </p>
+                    {selectedTemplate.headerType === "TEXT" ? (
+                      <p className="text-sm font-semibold text-slate-800">{selectedTemplate.headerContent}</p>
+                    ) : (
+                      <span className={cn(
+                        "inline-flex items-center gap-1 rounded px-2 py-0.5 text-xs font-medium",
+                        selectedTemplate.headerType === "IMAGE" && "bg-blue-50 text-blue-700",
+                        selectedTemplate.headerType === "VIDEO" && "bg-purple-50 text-purple-700",
+                        selectedTemplate.headerType === "DOCUMENT" && "bg-amber-50 text-amber-700",
+                      )}>
+                        {selectedTemplate.headerType === "IMAGE" && "🖼 Image"}
+                        {selectedTemplate.headerType === "VIDEO" && "🎬 Video"}
+                        {selectedTemplate.headerType === "DOCUMENT" && "📄 Document"}
+                      </span>
+                    )}
+                  </div>
+                )}
+                <div>
+                  <p className="mb-1 text-[11px] font-medium uppercase tracking-wide text-slate-400">
+                    Body
+                  </p>
+                  <p className="whitespace-pre-wrap text-sm text-slate-700">{selectedTemplate.body}</p>
+                </div>
                 {selectedTemplate.footer && (
-                  <p className="mt-2 text-xs text-slate-400">{selectedTemplate.footer}</p>
+                  <p className="text-xs text-slate-400">{selectedTemplate.footer}</p>
                 )}
               </div>
             )}
           </div>
+        )}
+
+        {/* Media header URL — required when the template has an image/video/document header */}
+        {needsMediaUrl && (
+          <Field
+            label={`${selectedTemplate?.headerType === "IMAGE" ? "Image" : selectedTemplate?.headerType === "VIDEO" ? "Video" : "Document"} URL`}
+            htmlFor="header-media-url"
+            required
+          >
+            <input
+              id="header-media-url"
+              type="url"
+              value={headerMediaUrl}
+              onChange={(e) => setHeaderMediaUrl(e.target.value)}
+              className={inputClass}
+              placeholder="https://example.com/file.jpg"
+            />
+            <p className="mt-1.5 flex items-center gap-1 text-[11px] text-slate-400">
+              <Info className="h-3 w-3 shrink-0" />
+              Must be a publicly accessible URL. This media is sent as the template header to every recipient.
+            </p>
+          </Field>
         )}
 
         {/* Variable mapping */}
