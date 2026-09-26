@@ -229,11 +229,12 @@ export function buildComponents(t: MessageTemplate): WATemplateCreateComponent[]
       type: "BUTTONS",
       buttons: buttons.map((b) => {
         if (b.type === "URL") {
+          const isDynamic = b.urlType === "DYNAMIC" || /\{\{1\}\}/.test(b.url ?? "");
           return {
             type: "URL" as const,
             text: b.text,
             url: b.url ?? "",
-            ...(b.urlType === "DYNAMIC" && b.urlExample ? { example: [b.urlExample] } : {}),
+            ...(isDynamic && b.urlExample ? { example: [b.urlExample] } : {}),
           };
         }
         if (b.type === "PHONE_NUMBER") return { type: "PHONE_NUMBER" as const, text: b.text, phone_number: b.phone ?? "" };
@@ -301,6 +302,18 @@ export async function submitTemplate(id: string, businessId: string): Promise<Me
   const paramNames = isNamed ? extractNamedParams(template.body) : [];
   const exampleError = validateVariableExamples(template.variables, isNamed, paramNames);
   if (exampleError) throw new TemplateCredsError(exampleError);
+
+  const buttons = parseButtons(template.buttons);
+  for (const btn of buttons) {
+    if (btn.type === "URL") {
+      const isDynamic = btn.urlType === "DYNAMIC" || /\{\{1\}\}/.test(btn.url ?? "");
+      if (isDynamic && !btn.urlExample) {
+        throw new TemplateCredsError(
+          `The "${btn.text || "Visit website"}" button has a dynamic URL (contains {{1}}) but no example URL. Add an example URL so Meta can review the template — e.g. https://yourstore.com/track/ABC123.`,
+        );
+      }
+    }
+  }
 
   const { wabaId, apiKey } = await getBusinessTemplateCreds(businessId);
 
