@@ -5,12 +5,14 @@ import { z } from "zod";
 // time; these schemas only guarantee the JSON shape before it is persisted.
 
 const buttonSchema = z.object({
-  type: z.enum(["QUICK_REPLY", "URL", "PHONE_NUMBER"]),
-  text: z.string().min(1),
+  type: z.enum(["QUICK_REPLY", "URL", "PHONE_NUMBER", "VOICE_CALL", "COPY_CODE", "OTP"]),
+  text: z.string(),
   url: z.string().optional(),
   phone: z.string().optional(),
   urlType: z.enum(["STATIC", "DYNAMIC"]).optional(),
   urlExample: z.string().optional(),
+  offerCode: z.string().optional(),
+  otpType: z.enum(["COPY_CODE", "ONE_TAP"]).optional(),
 });
 
 export const createTemplateSchema = z.object({

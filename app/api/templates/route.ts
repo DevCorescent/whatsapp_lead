@@ -14,12 +14,14 @@ const createTemplateSchema = z.object({
   headerVariables: z.array(z.string()).default([]),
   footer: z.string().optional(),
   buttons: z.array(z.object({
-    type: z.enum(["QUICK_REPLY", "URL", "PHONE_NUMBER"]),
+    type: z.enum(["QUICK_REPLY", "URL", "PHONE_NUMBER", "VOICE_CALL", "COPY_CODE", "OTP"]),
     text: z.string(),
     url: z.string().optional(),
     phone: z.string().optional(),
     urlType: z.enum(["STATIC", "DYNAMIC"]).optional(),
     urlExample: z.string().optional(),
+    offerCode: z.string().optional(),
+    otpType: z.enum(["COPY_CODE", "ONE_TAP"]).optional(),
   })).optional(),
   variables: z.array(z.string()).default([]),
 });
@@ -27,11 +29,11 @@ const createTemplateSchema = z.object({
 export async function GET(req: NextRequest) {
   const scope = await getBusinessScope();
   if (!scope) return NextResponse.json({ success: false, error: "Unauthorized" }, { status: 401 });
-  const { tenantId } = scope;
+  const { tenantId, businessId } = scope;
 
   try {
     const templates = await prisma.messageTemplate.findMany({
-      where: { tenantId },
+      where: { tenantId, businessId },
       orderBy: { createdAt: "desc" },
     });
     return NextResponse.json({ success: true, data: templates });
