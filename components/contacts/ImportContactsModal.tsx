@@ -25,10 +25,21 @@ export function ImportContactsModal({ open, onClose }: { open: boolean; onClose:
         { label: "Excel (.xlsx)", href: "/contacts-sample.xlsx" },
         { label: "CSV", href: "/contacts-sample.csv" },
       ],
+      columnGuide: [
+        { header: "Phone",       example: "+919876543210",    required: true },
+        { header: "Name",        example: "Rahul Sharma" },
+        { header: "Email",       example: "rahul@acme.com" },
+        { header: "Company",     example: "Acme Pvt Ltd" },
+        { header: "Designation", example: "Manager" },
+        { header: "Location",    example: "Mumbai" },
+        { header: "Source",      example: "Website" },
+        { header: "Notes",       example: "Interested in plan A" },
+        { header: "Tags",        example: "hot, vip" },
+      ],
       mappingHint: (
         <>
           Your file needs a header row. A <span className="font-medium">Phone</span> column is
-          required; Name, Email, Company, Source, Tags and Notes are optional.
+          required; all other columns are optional. Tags can be comma-separated.
         </>
       ),
     }),

@@ -5,6 +5,7 @@ import {
   AlertTriangle,
   ArrowLeft,
   CheckCircle2,
+  Download,
   FileSpreadsheet,
   Loader2,
   Upload,
@@ -44,6 +45,11 @@ export interface ImportWizardConfig<T> {
   mappingHint?: ReactNode;
   /** Sample files offered as downloads in the upload step. */
   sampleFiles?: { label: string; href: string }[];
+  /**
+   * Column format guide shown as a mini-table in the upload step so users know
+   * exactly what headers and values to use before they build their file.
+   */
+  columnGuide?: { header: string; example: string; required?: boolean }[];
 }
 
 type Step = "upload" | "map" | "preview" | "importing" | "done";
@@ -209,24 +215,78 @@ function ImportFlow<T>({ onClose, config }: { onClose: () => void; config: Impor
             </span>
             <span className="text-xs text-slate-500">Excel (.xlsx, .xls) or CSV · up to {IMPORT_MAX_ROWS.toLocaleString()} rows</span>
           </button>
-          {config.sampleFiles && config.sampleFiles.length > 0 && (
-            <div className="mt-3 flex items-center gap-1 text-[11px] text-slate-500">
-              <span>Download sample:</span>
-              {config.sampleFiles.map((f, i) => (
-                <span key={f.href} className="contents">
-                  {i > 0 && <span className="text-slate-300">·</span>}
-                  <a
-                    href={f.href}
-                    download
-                    className="font-medium text-emerald-600 underline-offset-2 hover:underline"
-                    onClick={(e) => e.stopPropagation()}
-                  >
-                    {f.label}
-                  </a>
-                </span>
+          {/* Column format guide */}
+          {config.columnGuide && config.columnGuide.length > 0 && (
+            <div className="mt-4 rounded-xl border border-slate-200 bg-white">
+              <div className="flex items-center justify-between border-b border-slate-100 px-3 py-2">
+                <p className="text-xs font-semibold text-slate-700">
+                  Expected column format
+                  <span className="ml-1.5 font-normal text-slate-400">
+                    (<span className="text-rose-500">*</span> = required)
+                  </span>
+                </p>
+                {config.sampleFiles && config.sampleFiles.length > 0 && (
+                  <div className="flex gap-2">
+                    {config.sampleFiles.map((f) => (
+                      <a
+                        key={f.href}
+                        href={f.href}
+                        download
+                        onClick={(e) => e.stopPropagation()}
+                        className="flex items-center gap-1 rounded-md border border-emerald-200 bg-emerald-50 px-2 py-1 text-[11px] font-medium text-emerald-700 hover:bg-emerald-100 transition"
+                      >
+                        <Download className="h-3 w-3" />
+                        {f.label}
+                      </a>
+                    ))}
+                  </div>
+                )}
+              </div>
+              <div className="scrollbar-slim overflow-x-auto">
+                <table className="w-full text-left text-xs">
+                  <thead>
+                    <tr className="bg-slate-50 text-slate-500">
+                      {config.columnGuide.map((col) => (
+                        <th key={col.header} className="whitespace-nowrap px-3 py-1.5 font-medium">
+                          {col.header}
+                          {col.required && <span className="ml-0.5 text-rose-500">*</span>}
+                        </th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr className="border-t border-slate-100 text-slate-500">
+                      {config.columnGuide.map((col) => (
+                        <td key={col.header} className="whitespace-nowrap px-3 py-2 font-mono text-[11px]">
+                          {col.example}
+                        </td>
+                      ))}
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+
+          {/* Fallback download links if no column guide */}
+          {!config.columnGuide && config.sampleFiles && config.sampleFiles.length > 0 && (
+            <div className="mt-3 flex items-center gap-2">
+              <span className="text-[11px] text-slate-500">Download sample:</span>
+              {config.sampleFiles.map((f) => (
+                <a
+                  key={f.href}
+                  href={f.href}
+                  download
+                  onClick={(e) => e.stopPropagation()}
+                  className="flex items-center gap-1 rounded-md border border-emerald-200 bg-emerald-50 px-2 py-1 text-[11px] font-medium text-emerald-700 hover:bg-emerald-100 transition"
+                >
+                  <Download className="h-3 w-3" />
+                  {f.label}
+                </a>
               ))}
             </div>
           )}
+
           {config.mappingHint && <div className="mt-3 text-xs text-slate-500">{config.mappingHint}</div>}
         </div>
       )}

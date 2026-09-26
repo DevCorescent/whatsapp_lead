@@ -48,11 +48,23 @@ export function ImportLeadsModal({ open, onClose }: { open: boolean; onClose: ()
         { label: "Excel (.xlsx)", href: "/leads-sample.xlsx" },
         { label: "CSV", href: "/leads-sample.csv" },
       ],
+      columnGuide: [
+        { header: "Phone",       example: "+919876543210",  required: true },
+        { header: "Lead Name",   example: "Website Enquiry" },
+        { header: "Email",       example: "rahul@acme.com" },
+        { header: "Company",     example: "Acme Pvt Ltd" },
+        { header: "Assigned To", example: "john@team.com" },
+        { header: "Stage",       example: "New" },
+        { header: "Source",      example: "Website" },
+        { header: "Value",       example: "50000" },
+        { header: "Notes",       example: "Hot lead" },
+        { header: "Tags",        example: "hot, vip" },
+      ],
       mappingHint: (
         <>
-          A <span className="font-medium">Phone</span> column is required. Stage and Assigned To are
-          matched to your existing pipeline stages and team members — unknown values are flagged and
-          never created. Each lead links to a contact (created if new).
+          A <span className="font-medium">Phone</span> column is required. <strong>Stage</strong> must match
+          one of your pipeline stages exactly. <strong>Assigned To</strong> must be a team member&apos;s
+          email or name — unknown values are flagged. Tags can be comma-separated.
         </>
       ),
     }),
