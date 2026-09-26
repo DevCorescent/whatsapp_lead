@@ -315,7 +315,6 @@ export async function submitTemplate(id: string, businessId: string): Promise<Me
   }
 
   // Build the components payload before the Meta call so we can attach it to the error on failure.
-  const isNamed = detectParameterFormat(template.body) === "NAMED";
   const components = buildComponents(template);
   const metaPayload = {
     name: template.name,
