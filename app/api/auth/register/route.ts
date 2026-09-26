@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { randomBytes } from "crypto";
 import { prisma } from "@/lib/prisma";
 import bcrypt from "bcryptjs";
 import { registerSchema } from "@/lib/validators/auth";
@@ -10,32 +11,15 @@ function slugify(text: string) {
     .replace(/^-+|-+$/g, "");
 }
 
+function generateInviteCode(): string {
+  const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
+  const bytes = randomBytes(8);
+  return Array.from(bytes, (b) => chars[b % chars.length]).join("");
+}
+
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
-
-    // Validate access token if env var is configured.
-    // Trim both sides: Vercel env values often pick up trailing newlines or wrapping quotes
-    // ("CORESCENT-2026"), which makes a strict === fail even when the UI shows the right token.
-    const requiredToken = process.env.SIGNUP_ACCESS_TOKEN?.trim().replace(/^["']|["']$/g, "");
-    if (requiredToken) {
-      const providedToken =
-        typeof (body as Record<string, unknown>).accessToken === "string"
-          ? ((body as Record<string, unknown>).accessToken as string).trim()
-          : "";
-      if (!providedToken || providedToken !== requiredToken) {
-        console.warn("[REGISTER] Access token mismatch", {
-          providedLength: providedToken.length,
-          requiredLength: requiredToken.length,
-          providedPrefix: providedToken.slice(0, 4),
-          requiredPrefix: requiredToken.slice(0, 4),
-        });
-        return NextResponse.json(
-          { success: false, error: "Invalid access token. Contact us to get access." },
-          { status: 403 }
-        );
-      }
-    }
 
     const parsed = registerSchema.safeParse(body);
 
@@ -47,6 +31,12 @@ export async function POST(req: NextRequest) {
     }
 
     const { name, email, password, workspaceName } = parsed.data;
+
+    // Optional invite code from the signup form — stored for referral tracking only.
+    const inviteCode =
+      typeof (body as Record<string, unknown>).inviteCode === "string"
+        ? ((body as Record<string, unknown>).inviteCode as string).trim() || null
+        : null;
 
     // Check if email already exists
     const existingUser = await prisma.user.findFirst({ where: { email } });
@@ -64,6 +54,13 @@ export async function POST(req: NextRequest) {
 
     const hashedPassword = await bcrypt.hash(password, 12);
 
+    // Generate a unique invite code for the new user.
+    // Retry on the rare collision (8 uppercase alphanumeric chars = 36^8 ≈ 2.8 trillion combos).
+    let newInviteCode = generateInviteCode();
+    while (await prisma.user.findUnique({ where: { inviteCode: newInviteCode } })) {
+      newInviteCode = generateInviteCode();
+    }
+
     // Create tenant + owner user + default settings + starter plan subscription
     const starterPlan = await prisma.plan.findFirst({ where: { name: "STARTER" } });
 
@@ -72,6 +69,7 @@ export async function POST(req: NextRequest) {
         data: {
           name: workspaceName,
           slug,
+          referredByCode: inviteCode,
           settings: { create: {} },
         },
       });
@@ -83,6 +81,7 @@ export async function POST(req: NextRequest) {
           email,
           password: hashedPassword,
           role: "TENANT_OWNER",
+          inviteCode: newInviteCode,
         },
       });
 
@@ -93,7 +92,7 @@ export async function POST(req: NextRequest) {
             planId: starterPlan.id,
             status: "TRIALING",
             currentPeriodStart: new Date(),
-            currentPeriodEnd: new Date(Date.now() + 14 * 24 * 60 * 60 * 1000), // 14 day trial
+            currentPeriodEnd: new Date(Date.now() + 14 * 24 * 60 * 60 * 1000),
             trialEndsAt: new Date(Date.now() + 14 * 24 * 60 * 60 * 1000),
           },
         });

@@ -33,12 +33,11 @@ import { Button, Field, inputClass } from "@/components/ui";
 import { cn } from "@/lib/utils";
 import { registerSchema } from "@/lib/validators/auth";
 
-// Builds on the shared registerSchema. `confirmPassword` and `terms` are UI-only and are never
-// sent to /api/auth/register; `accessToken` is sent, because the route rejects any signup that
-// omits it while SIGNUP_ACCESS_TOKEN is configured.
+// Builds on the shared registerSchema. `confirmPassword` and `terms` are UI-only.
+// `inviteCode` is optional — sent when the user has a referral code from an existing user.
 const registerFormSchema = registerSchema
   .extend({
-    accessToken: z.string().min(1, "Access token is required"),
+    inviteCode: z.string().optional(),
     confirmPassword: z.string().min(1, "Please confirm your password"),
     terms: z.boolean().refine((v) => v === true, {
       message: "You must accept the terms to continue",
@@ -107,9 +106,7 @@ export default function RegisterPage() {
         email: values.email,
         password: values.password,
         workspaceName: values.workspaceName,
-        // Required by the signup gate. Without it every submission from this page is refused
-        // with 403 "Invalid access token", which is what used to happen here.
-        accessToken: values.accessToken,
+        inviteCode: values.inviteCode || undefined,
       }),
     });
 
@@ -317,27 +314,26 @@ export default function RegisterPage() {
           </div>
         </Field>
 
-        {/* Access token — the signup gate. Placed last so it reads as the final step. */}
+        {/* Invite code — optional referral field */}
         <Field
-          label="Access token"
-          htmlFor="accessToken"
-          error={errors.accessToken?.message}
-          required
+          label="Invite code"
+          htmlFor="inviteCode"
+          error={errors.inviteCode?.message}
         >
           <div className="relative">
             <Lock className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
             <input
-              {...register("accessToken")}
-              id="accessToken"
+              {...register("inviteCode")}
+              id="inviteCode"
               type="text"
               autoComplete="off"
-              placeholder="Your invitation code"
-              aria-invalid={!!errors.accessToken}
-              className={cn(inputClass, "pl-9.5", errors.accessToken && "border-rose-300")}
+              placeholder="Have a referral code? Enter it here"
+              aria-invalid={!!errors.inviteCode}
+              className={cn(inputClass, "pl-9.5", errors.inviteCode && "border-rose-300")}
             />
           </div>
           <p className="mt-1 text-xs text-slate-500">
-            Signup is invite-only. Contact us if you do not have a code.
+            Optional — leave blank if you don&apos;t have one.
           </p>
         </Field>
 

@@ -2,8 +2,9 @@
 
 import { useState } from "react";
 import { useSession } from "next-auth/react";
-import { Building2, MessageSquare, CreditCard, Bell, KanbanSquare, Zap } from "lucide-react";
+import { Building2, MessageSquare, CreditCard, Bell, KanbanSquare, UserCircle, Zap } from "lucide-react";
 import { PageHeader } from "@/components/ui";
+import { AccountTab } from "@/components/settings/AccountTab";
 import { GeneralTab } from "@/components/settings/GeneralTab";
 import { WhatsAppTab } from "@/components/settings/WhatsAppTab";
 import { BillingTab } from "@/components/settings/BillingTab";
@@ -17,6 +18,7 @@ const STAGE_ADMIN_ROLES = ["SUPER_ADMIN", "TENANT_OWNER", "ADMIN"];
 const BILLING_ROLES = ["SUPER_ADMIN", "TENANT_OWNER"];
 
 const TABS = [
+  { key: "account", label: "Account", icon: UserCircle, adminOnly: false },
   { key: "general", label: "General", icon: Building2, adminOnly: false },
   { key: "pipeline", label: "Lead Pipeline Stages", icon: KanbanSquare, adminOnly: true },
   { key: "whatsapp", label: "WhatsApp", icon: MessageSquare, adminOnly: false },
@@ -33,7 +35,7 @@ export default function SettingsPage() {
   const isStageAdmin = STAGE_ADMIN_ROLES.includes(role);
   const canSeeBilling = BILLING_ROLES.includes(role);
 
-  const [tab, setTab] = useState<TabKey>("general");
+  const [tab, setTab] = useState<TabKey>("account");
 
   // The stage manager / billing tabs are hidden from non-admins on the frontend
   // (APIs enforce separately), and selecting via stale state falls back to General.
@@ -73,6 +75,7 @@ export default function SettingsPage() {
       </div>
 
       <div className="max-w-4xl">
+        {activeTab === "account" && <AccountTab />}
         {activeTab === "general" && <GeneralTab />}
         {activeTab === "pipeline" && isStageAdmin && <LeadStagesTab />}
         {activeTab === "whatsapp" && <WhatsAppTab />}
