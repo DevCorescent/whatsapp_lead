@@ -163,7 +163,7 @@ export function ChatWindow({
 
   // All attachment behaviour (drag-and-drop, file picker, clipboard paste, preview and the
   // shared upload → send pipeline) lives in this hook so the composer stays a thin shell.
-  const attach = useAttachmentComposer({ conversationId, onSend });
+  const attach = useAttachmentComposer({ conversationId, onSend, sendFn: sendMessage.mutateAsync });
 
   const timeline = useMemo(() => {
     const all = [...messages, ...localMessages];
@@ -943,7 +943,7 @@ function MessageBody({
           ) : (
             <MediaChip icon={ImageIcon} label="Image unavailable" outbound={outbound} />
           )}
-          {caption && <p className="whitespace-pre-wrap wrap-break-word text-sm">{caption}</p>}
+          {caption && <p className="whitespace-pre-wrap break-words text-sm">{caption}</p>}
         </div>
       );
 
@@ -959,7 +959,7 @@ function MessageBody({
           ) : (
             <MediaChip icon={ImageIcon} label="Video unavailable" outbound={outbound} />
           )}
-          {caption && <p className="whitespace-pre-wrap wrap-break-word text-sm">{caption}</p>}
+          {caption && <p className="whitespace-pre-wrap break-words text-sm">{caption}</p>}
         </div>
       );
 
@@ -1029,7 +1029,7 @@ function MessageBody({
           (interactive.action as { buttons?: Array<{ reply?: { title?: string } }> } | undefined)?.buttons ?? [];
         return (
           <div className="space-y-2">
-            {bodyText && <p className="whitespace-pre-wrap wrap-break-word text-sm">{bodyText}</p>}
+            {bodyText && <p className="whitespace-pre-wrap break-words text-sm">{bodyText}</p>}
             <div className="flex flex-wrap gap-1.5">
               {buttons.map((btn, i) => (
                 <span
@@ -1054,7 +1054,7 @@ function MessageBody({
           (interactive.action as { button?: string } | undefined)?.button ?? "View options";
         return (
           <div className="space-y-2">
-            {bodyText && <p className="whitespace-pre-wrap wrap-break-word text-sm">{bodyText}</p>}
+            {bodyText && <p className="whitespace-pre-wrap break-words text-sm">{bodyText}</p>}
             <span
               className={cn(
                 "inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-medium ring-1 ring-inset",
@@ -1071,7 +1071,7 @@ function MessageBody({
       }
 
       return (
-        <p className="whitespace-pre-wrap wrap-break-word text-sm">
+        <p className="whitespace-pre-wrap break-words text-sm">
           {bodyText || <span className="italic opacity-70">Interactive message</span>}
         </p>
       );
@@ -1079,7 +1079,7 @@ function MessageBody({
 
     default:
       return (
-        <p className="whitespace-pre-wrap wrap-break-word text-sm">
+        <p className="whitespace-pre-wrap break-words text-sm">
           {caption || <span className="italic opacity-70">Empty message</span>}
         </p>
       );

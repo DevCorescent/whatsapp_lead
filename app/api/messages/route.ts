@@ -24,7 +24,7 @@ import { auth } from "@/lib/auth";
 import { guardLimit } from "@/lib/billing/guard";
 import { prisma } from "@/lib/prisma";
 import { pusher, tenantChannel, PusherEvent } from "@/lib/pusher";
-import { sendTextMessage, sendInteractiveMessage, WASendError } from "@/lib/whatsapp";
+import { sendTextMessage, sendInteractiveMessage, sendMediaByUrl, WASendError, type WAMediaType } from "@/lib/whatsapp";
 import { resolveConversationWhatsAppCreds } from "@/lib/business";
 import { sendMessageSchema } from "@/lib/validators/message";
 
@@ -132,6 +132,9 @@ async function saveOutboundMessage(
     type?: MessageType;
     replyToId?: string;
     metadata?: Prisma.InputJsonObject;
+    mediaUrl?: string;
+    mediaMimeType?: string;
+    mediaSize?: number;
   }
 ): Promise<Message> {
   const type = opts?.type ?? MessageType.TEXT;
@@ -145,18 +148,19 @@ async function saveOutboundMessage(
         direction: MessageDirection.OUTBOUND,
         type,
         status: MessageStatus.SENT,
-        content,
+        content: content || null,
         ...(opts?.replyToId ? { replyToId: opts.replyToId } : {}),
         ...(opts?.metadata ? { metadata: opts.metadata } : {}),
+        ...(opts?.mediaUrl ? { mediaUrl: opts.mediaUrl } : {}),
+        ...(opts?.mediaMimeType ? { mediaMimeType: opts.mediaMimeType } : {}),
+        ...(opts?.mediaSize ? { mediaSize: opts.mediaSize } : {}),
       },
     });
 
+    const preview = content?.slice(0, PREVIEW_MAX_LENGTH) || `[${type.toLowerCase()}]`;
     await tx.conversation.update({
       where: { id: conversationId },
-      data: {
-        lastMessageAt: saved.createdAt,
-        lastMessagePreview: content.slice(0, PREVIEW_MAX_LENGTH),
-      },
+      data: { lastMessageAt: saved.createdAt, lastMessagePreview: preview },
     });
 
     return saved;
@@ -225,28 +229,24 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const { conversationId, type, content, isNote, interactive, replyToId } = parsed.data;
+    const { conversationId, type, content, isNote, interactive, replyToId, mediaUrl, mediaMimeType, mediaSize } = parsed.data;
 
-    // Notes are always TEXT — interactive notes make no sense and we don't send them to WhatsApp.
     const body = content?.trim();
+    const MEDIA_TYPES = ["IMAGE", "VIDEO", "AUDIO", "DOCUMENT"] as const;
+    type MediaMsgType = (typeof MEDIA_TYPES)[number];
+    const isMedia = (MEDIA_TYPES as readonly string[]).includes(type);
 
     if (type === "TEXT" && !body) {
-      return NextResponse.json(
-        { success: false, error: "Message content is required" },
-        { status: 400 }
-      );
+      return NextResponse.json({ success: false, error: "Message content is required" }, { status: 400 });
     }
     if (type === "INTERACTIVE" && !interactive) {
-      return NextResponse.json(
-        { success: false, error: "interactive payload is required for INTERACTIVE messages" },
-        { status: 400 }
-      );
+      return NextResponse.json({ success: false, error: "interactive payload is required for INTERACTIVE messages" }, { status: 400 });
     }
-    if (!["TEXT", "INTERACTIVE"].includes(type)) {
-      return NextResponse.json(
-        { success: false, error: `Unsupported message type: ${type}` },
-        { status: 400 }
-      );
+    if (isMedia && !mediaUrl) {
+      return NextResponse.json({ success: false, error: "mediaUrl is required for media messages" }, { status: 400 });
+    }
+    if (!["TEXT", "INTERACTIVE", ...MEDIA_TYPES].includes(type)) {
+      return NextResponse.json({ success: false, error: `Unsupported message type: ${type}` }, { status: 400 });
     }
 
     const conversation = await resolveConversation(tenantId, conversationId);
@@ -312,6 +312,33 @@ export async function POST(req: NextRequest) {
       const message = await saveOutboundMessage(
         tenantId, conversationId, userId, interactiveBody, waMessageId,
         { type: MessageType.INTERACTIVE, replyToId, metadata: { interactive } as Prisma.InputJsonObject }
+      );
+      await broadcastMessage(tenantId, message);
+      return NextResponse.json({ success: true, data: message }, { status: 201 });
+    }
+
+    if (isMedia && mediaUrl) {
+      const waType = type.toLowerCase() as WAMediaType;
+      const sent = await sendMediaByUrl(
+        creds.phoneNumberId,
+        creds.apiKey,
+        conversation.contact.phone,
+        waType,
+        mediaUrl,
+        body || undefined,
+        // filename only matters for documents; derive it from the URL
+        waType === "document" ? mediaUrl.split("/").pop()?.split("?")[0] : undefined
+      );
+      waMessageId = sent.messages?.[0]?.id ?? null;
+      const message = await saveOutboundMessage(
+        tenantId, conversationId, userId, body ?? "", waMessageId,
+        {
+          type: type as MessageType,
+          replyToId,
+          mediaUrl,
+          mediaMimeType: mediaMimeType ?? undefined,
+          mediaSize: mediaSize ?? undefined,
+        }
       );
       await broadcastMessage(tenantId, message);
       return NextResponse.json({ success: true, data: message }, { status: 201 });

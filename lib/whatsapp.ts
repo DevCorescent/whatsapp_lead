@@ -323,6 +323,49 @@ export async function sendMediaMessage(
   return res.json() as Promise<WASendMessageResponse>;
 }
 
+/**
+ * Send a media message using a publicly accessible URL instead of a Meta media ID.
+ * Use this when the file is hosted on our storage (Vercel Blob / S3) and not yet
+ * uploaded to Meta's servers. Meta fetches the file at send time.
+ */
+export async function sendMediaByUrl(
+  phoneNumberId: string,
+  apiKey: string,
+  to: string,
+  type: WAMediaType,
+  link: string,
+  caption?: string,
+  filename?: string
+): Promise<WASendMessageResponse> {
+  const res = await fetch(`${WA_BASE_URL}/${phoneNumberId}/messages`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${apiKey}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      messaging_product: "whatsapp",
+      recipient_type: "individual",
+      to,
+      type,
+      [type]: {
+        link,
+        ...(caption && type !== "audio" ? { caption } : {}),
+        ...(filename && type === "document" ? { filename } : {}),
+      },
+    }),
+  });
+
+  if (!res.ok) {
+    const label = type === "audio" ? "voice message" : type;
+    throw new WASendError(
+      `Could not send ${label}. Check that the file is under the size limit and try again.`,
+    );
+  }
+
+  return res.json() as Promise<WASendMessageResponse>;
+}
+
 /** Metadata returned by the WhatsApp Cloud API for a stored media asset. */
 export interface WAMediaResponse {
   url: string;

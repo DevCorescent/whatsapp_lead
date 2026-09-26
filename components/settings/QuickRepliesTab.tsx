@@ -106,7 +106,7 @@ export function QuickRepliesTab() {
             <li key={reply.id} className="flex items-start gap-3 px-4 py-3">
               <div className="min-w-0 flex-1">
                 <p className="font-mono text-xs font-semibold text-emerald-700">/{reply.shortcode}</p>
-                <p className="mt-0.5 whitespace-pre-wrap wrap-break-word text-sm text-slate-600">
+                <p className="mt-0.5 whitespace-pre-wrap break-words text-sm text-slate-600">
                   {reply.content}
                 </p>
               </div>

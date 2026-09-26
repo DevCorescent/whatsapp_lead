@@ -62,6 +62,17 @@ function measure(item: PendingAttachment): Promise<Partial<PendingAttachment>> {
   });
 }
 
+/** Minimum shape `sendFn` must satisfy — mirrors SendMessageInput for media fields. */
+export interface AttachmentSendInput {
+  conversationId: string;
+  type: "IMAGE" | "VIDEO" | "AUDIO" | "DOCUMENT";
+  mediaUrl: string;
+  mediaMimeType?: string;
+  mediaSize?: number;
+  content?: string;
+  isNote?: boolean;
+}
+
 /**
  * All attachment state and behaviour for one conversation's composer, in one hook.
  *
@@ -74,9 +85,11 @@ function measure(item: PendingAttachment): Promise<Partial<PendingAttachment>> {
 export function useAttachmentComposer({
   conversationId,
   onSend,
+  sendFn,
 }: {
   conversationId: string | null;
   onSend: (conversationId: string, message: InboxMessage) => void;
+  sendFn?: (input: AttachmentSendInput) => Promise<unknown>;
 }) {
   const [items, setItems] = useState<PendingAttachment[]>([]);
   const [caption, setCaption] = useState("");
@@ -237,14 +250,39 @@ export function useAttachmentComposer({
       }
 
       const trimmedCaption = caption.trim();
-      uploaded.forEach((media, index) => {
+      let allSent = true;
+
+      for (let index = 0; index < uploaded.length; index++) {
+        const media = uploaded[index];
         const item = ordered[index];
+        const content = index === 0 && trimmedCaption ? trimmedCaption : undefined;
+        const msgType = item.spec.messageType as "IMAGE" | "VIDEO" | "AUDIO" | "DOCUMENT";
+
+        if (sendFn) {
+          try {
+            await sendFn({
+              conversationId,
+              type: msgType,
+              mediaUrl: media.url,
+              mediaMimeType: media.mimeType ?? undefined,
+              mediaSize: media.size ?? undefined,
+              content,
+              isNote,
+            });
+          } catch {
+            allSent = false;
+            // Continue to next file even if one fails; errors surfaced by the caller.
+            continue;
+          }
+        }
+
+        // Add to local thread for immediate feedback (React Query invalidation shows
+        // the persisted version on the next poll/mutation success).
         const message: InboxMessage = {
           id: localId("local"),
-          type: item.spec.messageType,
+          type: msgType,
           direction: "OUTBOUND",
-          // WhatsApp attaches one caption to a multi-file send; carry it on the first.
-          content: index === 0 && trimmedCaption ? trimmedCaption : null,
+          content: content ?? null,
           mediaUrl: media.url,
           mediaMimeType: media.mimeType,
           mediaSize: media.size,
@@ -260,12 +298,12 @@ export function useAttachmentComposer({
           createdAt: new Date().toISOString(),
         };
         onSend(conversationId, message);
-      });
+      }
 
       clear();
-      return true;
+      return allSent;
     },
-    [conversationId, items, caption, upload, onSend, clear]
+    [conversationId, items, caption, upload, sendFn, onSend, clear]
   );
 
   return {

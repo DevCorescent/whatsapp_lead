@@ -32,10 +32,13 @@ type ApiResponse<T> =
 export interface SendMessageInput {
   conversationId: string;
   content?: string;
-  type?: "TEXT" | "INTERACTIVE";
+  type?: "TEXT" | "INTERACTIVE" | "IMAGE" | "VIDEO" | "AUDIO" | "DOCUMENT";
   isNote?: boolean;
   interactive?: InteractivePayload;
   replyToId?: string;
+  mediaUrl?: string;
+  mediaMimeType?: string;
+  mediaSize?: number;
 }
 
 /**
