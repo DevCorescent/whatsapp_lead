@@ -553,9 +553,11 @@ export async function createMessageTemplate(
     language: string;
     category: string;
     components: WATemplateCreateComponent[];
-    parameter_format?: "named" | "positional";
+    parameter_format?: "named";
   }
 ): Promise<WATemplateCreateResponse> {
+  console.log("[WA TEMPLATE CREATE] submitting to Meta:", JSON.stringify(payload, null, 2));
+
   const res = await fetch(
     `https://graph.facebook.com/${process.env.WHATSAPP_API_VERSION ?? "v19.0"}/${businessAccountId}/message_templates`,
     {
@@ -564,9 +566,29 @@ export async function createMessageTemplate(
       body: JSON.stringify(payload),
     }
   );
+
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));
-    throw new Error((body as { error?: { message?: string } }).error?.message ?? "Failed to create template");
+    const err = body as {
+      error?: {
+        message?: string;
+        code?: number;
+        error_subcode?: number;
+        error_data?: { details?: string; messaging_product?: string };
+        fbtrace_id?: string;
+      };
+    };
+    console.error("[WA TEMPLATE CREATE] Meta rejected:", {
+      status: res.status,
+      code: err.error?.code,
+      subcode: err.error?.error_subcode,
+      message: err.error?.message,
+      details: err.error?.error_data?.details,
+      fbtrace_id: err.error?.fbtrace_id,
+    });
+    const msg = err.error?.message ?? "Failed to create template";
+    const details = err.error?.error_data?.details;
+    throw new Error(details ? `${msg} — ${details}` : msg);
   }
   return res.json() as Promise<WATemplateCreateResponse>;
 }

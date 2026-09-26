@@ -177,9 +177,23 @@ export default function TemplatesPage() {
         <div className="mb-3 rounded-lg bg-rose-50 px-3 py-2 text-sm text-rose-700">{syncError}</div>
       )}
       {actionError && (
-        <div className="mb-3 flex items-center justify-between rounded-lg bg-rose-50 px-3 py-2 text-sm text-rose-700">
-          <span>{actionError}</span>
-          <button type="button" onClick={() => setActionError(null)} className="ml-3 shrink-0 text-rose-500 hover:text-rose-700 text-xs underline">dismiss</button>
+        <div className="mb-3 flex items-start gap-3 rounded-lg border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-800">
+          <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-rose-500" aria-hidden />
+          <div className="flex-1 min-w-0">
+            {actionError.includes(" — ")
+              ? (() => {
+                  const [headline, ...rest] = actionError.split(" — ");
+                  return (
+                    <>
+                      <p className="font-semibold">{headline}</p>
+                      <p className="mt-0.5 text-rose-700">{rest.join(" — ")}</p>
+                    </>
+                  );
+                })()
+              : <p>{actionError}</p>
+            }
+          </div>
+          <button type="button" onClick={() => setActionError(null)} className="shrink-0 text-rose-400 hover:text-rose-600 text-xs">✕</button>
         </div>
       )}
 

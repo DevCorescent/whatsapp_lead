@@ -169,8 +169,16 @@ export function buildComponents(t: MessageTemplate): WATemplateCreateComponent[]
       }
       components.push(headerComp);
     } else if (format !== "TEXT" && t.headerContent) {
-      // IMAGE/DOCUMENT/VIDEO — headerContent holds the sample URL/handle
-      components.push({ type: "HEADER", format, example: { header_handle: [t.headerContent] } });
+      // IMAGE/DOCUMENT/VIDEO — headerContent is either:
+      //   • a Meta media ID (from the upload endpoint) → use as header_handle
+      //   • a public https:// URL → skip the example (Meta requires a proper handle)
+      //     URLs passed as header_handle cause "Invalid parameter" — omit rather than fail.
+      const isUrl = t.headerContent.startsWith("http");
+      components.push({
+        type: "HEADER",
+        format,
+        ...(isUrl ? {} : { example: { header_handle: [t.headerContent] } }),
+      });
     }
   }
 
@@ -284,12 +292,14 @@ export async function submitTemplate(id: string, businessId: string): Promise<Me
   }
 
   try {
+    const isNamed = detectParameterFormat(template.body) === "NAMED";
     const result = await createMessageTemplate(wabaId, apiKey, {
       name: template.name,
       language: template.language,
       category: template.category as "MARKETING" | "UTILITY" | "AUTHENTICATION",
       components: buildComponents(template),
-      parameter_format: detectParameterFormat(template.body) === "NAMED" ? "named" : "positional",
+      // Only include parameter_format for named templates — Meta rejects "positional" as unexpected.
+      ...(isNamed ? { parameter_format: "named" as const } : {}),
     });
 
     return await prisma.messageTemplate.update({
