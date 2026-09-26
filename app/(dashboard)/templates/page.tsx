@@ -498,8 +498,15 @@ function TemplateModal({
   const [varExamples, setVarExamples] = useState<string[]>(editing?.variables ?? []);
   const [buttons, setButtons] = useState<TemplateButton[]>(editing?.buttons ?? []);
 
-  // Detect variable format from body text: named ({{first_name}}) or positional ({{1}})
-  const isNamedParams = /\{\{[a-z_][a-z0-9_]*\}\}/.test(body) && !/\{\{\d+\}\}/.test(body);
+  // User-selected variable format. Seeded from the editing template's body on open.
+  const [paramFormat, setParamFormat] = useState<"POSITIONAL" | "NAMED">(() => {
+    const b = editing?.body ?? "";
+    return /\{\{[a-z_][a-z0-9_]*\}\}/.test(b) && !/\{\{\d+\}\}/.test(b) ? "NAMED" : "POSITIONAL";
+  });
+
+  const isNamedParams = paramFormat === "NAMED";
+
+  // Extract named param identifiers from the body in order of appearance (deduped).
   const namedParamNames: string[] = (() => {
     if (!isNamedParams) return [];
     const names: string[] = [];
@@ -512,7 +519,7 @@ function TemplateModal({
     return names;
   })();
 
-  // Auto-detect how many {{n}} slots the body uses, keep varExamples in sync when count grows.
+  // Count variable slots. Keep varExamples in sync when count grows.
   const bodyVarCount = isNamedParams
     ? namedParamNames.length
     : (() => {
@@ -785,20 +792,44 @@ function TemplateModal({
           )}
         </div>
 
-        {/* Variable type hint — chosen automatically by what's in the body */}
-        <div className="rounded-lg border border-slate-200 bg-slate-50 p-3 text-xs text-slate-600 space-y-1">
-          <p className="font-medium text-slate-700">Variable type</p>
-          <div className="flex gap-4">
-            <label className="flex items-center gap-1.5 cursor-pointer">
-              <input type="radio" name="paramFmt" checked={!isNamedParams} readOnly className="accent-emerald-600" />
-              <span><code className="rounded bg-slate-100 px-1">{"{{1}}"}</code>, <code className="rounded bg-slate-100 px-1">{"{{2}}"}</code>… — Number (positional)</span>
+        {/* Variable type — user picks the format; examples section updates accordingly */}
+        <div className="rounded-lg border border-slate-200 bg-slate-50 p-3 text-xs text-slate-600 space-y-2">
+          <p className="text-xs font-medium text-slate-700">Variable type</p>
+          <div className="flex flex-col gap-1.5 sm:flex-row sm:gap-4">
+            <label className="flex cursor-pointer items-center gap-2">
+              <input
+                type="radio"
+                name="tpl-param-fmt"
+                checked={paramFormat === "POSITIONAL"}
+                onChange={() => setParamFormat("POSITIONAL")}
+                className="accent-emerald-600"
+              />
+              <span>
+                <code className="rounded bg-slate-100 px-1">{"{{1}}"}</code>,{" "}
+                <code className="rounded bg-slate-100 px-1">{"{{2}}"}</code>… —{" "}
+                <span className="font-medium text-slate-800">Number</span>
+              </span>
             </label>
-            <label className="flex items-center gap-1.5 cursor-pointer">
-              <input type="radio" name="paramFmt" checked={isNamedParams} readOnly className="accent-emerald-600" />
-              <span><code className="rounded bg-slate-100 px-1">{"{{first_name}}"}</code>… — Name</span>
+            <label className="flex cursor-pointer items-center gap-2">
+              <input
+                type="radio"
+                name="tpl-param-fmt"
+                checked={paramFormat === "NAMED"}
+                onChange={() => setParamFormat("NAMED")}
+                className="accent-emerald-600"
+              />
+              <span>
+                <code className="rounded bg-slate-100 px-1">{"{{first_name}}"}</code>,{" "}
+                <code className="rounded bg-slate-100 px-1">{"{{order_id}}"}</code>… —{" "}
+                <span className="font-medium text-slate-800">Name</span>
+              </span>
             </label>
           </div>
-          <p className="text-slate-400">Auto-detected from your body text. Use <code className="rounded bg-slate-100 px-1">{"{{1}}"}</code> for Number or <code className="rounded bg-slate-100 px-1">{"{{first_name}}"}</code> for Name format.</p>
+          <p className="text-slate-400">
+            {paramFormat === "NAMED"
+              ? "Use lowercase letters and underscores: {{first_name}}, {{order_id}}. Each unique name is one variable."
+              : "Use numbers in order from 1: {{1}}, {{2}}, {{3}}…"}
+          </p>
         </div>
 
         <Field label="Body" htmlFor="tpl-body" required>
