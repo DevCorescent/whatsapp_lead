@@ -21,6 +21,7 @@ import {
   createMessageTemplate,
   getMessageTemplate,
   listMessageTemplates,
+  MetaTemplateError,
   type WATemplateCreateComponent,
 } from "@/lib/whatsapp";
 
@@ -323,7 +324,20 @@ export async function submitTemplate(id: string, businessId: string): Promise<Me
       where: { id },
       data: { status: "DRAFT", rejectionReason: message.slice(0, 1000) },
     });
-    throw new TemplateCredsError(message, { metaPayload, templateId: id });
+
+    // Attach full Meta error details to the debug payload so the UI can show them.
+    const metaError = error instanceof MetaTemplateError
+      ? {
+          message: error.metaMessage,
+          details: error.details,
+          code: error.code,
+          subcode: error.subcode,
+          fbtrace_id: error.fbtrace_id,
+          httpStatus: error.httpStatus,
+        }
+      : undefined;
+
+    throw new TemplateCredsError(message, { metaPayload, templateId: id, metaError });
   }
 }
 

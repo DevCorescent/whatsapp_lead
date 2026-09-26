@@ -125,17 +125,22 @@ export function useSubmitTemplate() {
       if (!res.ok) {
         const body = await res.json().catch(() => ({})) as {
           error?: string;
-          debug?: { metaPayload?: unknown; templateId?: string } | null;
+          debug?: { metaPayload?: unknown; templateId?: string; metaError?: unknown } | null;
         };
 
         // ── Client-side debug logs ───────────────────────────────────────
         console.group("%c🔴 Template submit failed", "color:#dc2626;font-weight:bold");
-        console.log("Template ID :", id);
-        console.log("Error       :", body.error ?? "(no message)");
+        console.log("Template ID  :", id);
+        console.log("Error message:", body.error ?? "(no message)");
+        if (body.debug?.metaError) {
+          console.group("%c↳ Meta API error", "color:#b91c1c");
+          console.table(body.debug.metaError);
+          console.groupEnd();
+        }
         if (body.debug?.metaPayload) {
-          console.log("Payload sent to Meta (exact JSON):");
+          console.group("%c↳ Payload sent to Meta", "color:#6b7280");
           console.log(JSON.stringify(body.debug.metaPayload, null, 2));
-          console.log("Payload object:", body.debug.metaPayload);
+          console.groupEnd();
         } else {
           console.log("No payload debug available (error occurred before Meta call)");
         }

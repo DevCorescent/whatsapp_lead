@@ -545,6 +545,22 @@ interface WATemplateCreateResponse {
   category: string;
 }
 
+/** Thrown by createMessageTemplate when Meta returns a non-2xx — carries the full Meta error object. */
+export class MetaTemplateError extends Error {
+  constructor(
+    readonly metaMessage: string,
+    readonly code: number | undefined,
+    readonly subcode: number | undefined,
+    readonly details: string | undefined,
+    readonly fbtrace_id: string | undefined,
+    readonly httpStatus: number,
+  ) {
+    const full = details ? `${metaMessage} — ${details}` : metaMessage;
+    super(full);
+    this.name = "MetaTemplateError";
+  }
+}
+
 export async function createMessageTemplate(
   businessAccountId: string,
   apiKey: string,
@@ -578,17 +594,24 @@ export async function createMessageTemplate(
         fbtrace_id?: string;
       };
     };
+    const metaMessage = err.error?.message ?? "Failed to create template";
+    const details = err.error?.error_data?.details;
     console.error("[WA TEMPLATE CREATE] Meta rejected:", {
       status: res.status,
       code: err.error?.code,
       subcode: err.error?.error_subcode,
-      message: err.error?.message,
-      details: err.error?.error_data?.details,
+      message: metaMessage,
+      details,
       fbtrace_id: err.error?.fbtrace_id,
     });
-    const msg = err.error?.message ?? "Failed to create template";
-    const details = err.error?.error_data?.details;
-    throw new Error(details ? `${msg} — ${details}` : msg);
+    throw new MetaTemplateError(
+      metaMessage,
+      err.error?.code,
+      err.error?.error_subcode,
+      details,
+      err.error?.fbtrace_id,
+      res.status,
+    );
   }
   return res.json() as Promise<WATemplateCreateResponse>;
 }
