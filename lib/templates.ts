@@ -165,6 +165,7 @@ export function buildComponents(t: MessageTemplate): WATemplateCreateComponent[]
           };
         }
         if (b.type === "PHONE_NUMBER") return { type: "PHONE_NUMBER" as const, text: b.text, phone_number: b.phone ?? "" };
+        if (b.type === "OTP") return { type: "OTP" as const, otp_type: "COPY_CODE" as const, text: b.text };
         return { type: "QUICK_REPLY" as const, text: b.text };
       }),
     });

@@ -174,6 +174,7 @@ async function createCampaign(
   headerMediaUrl?: string | null,
   headerMediaId?: string | null,
   headerType?: string | null,
+  hasOtpButton?: boolean,
 ) {
   return prisma.$transaction(async (tx) => {
     const campaign = await tx.campaign.create({
@@ -185,7 +186,7 @@ async function createCampaign(
         status: scheduledAt ? CampaignStatus.SCHEDULED : CampaignStatus.RUNNING,
         ...(scheduledAt ? { scheduledAt } : { startedAt: new Date() }),
         totalCount: contacts.length,
-        metadata: { templateName, language, bodyVarMapping: input.bodyVarMapping, headerMediaUrl: headerMediaUrl ?? null, headerMediaId: headerMediaId ?? null, headerType: headerType ?? null },
+        metadata: { templateName, language, bodyVarMapping: input.bodyVarMapping, headerMediaUrl: headerMediaUrl ?? null, headerMediaId: headerMediaId ?? null, headerType: headerType ?? null, hasOtpButton: hasOtpButton ?? false },
       },
       select: { id: true },
     });
@@ -238,6 +239,7 @@ async function publishCampaign(
   campaignContacts: { id: string; phone: string; contactId: string | null }[],
   contactsById: Map<string, CampaignRecipient>,
   scheduledAt?: Date | null,
+  hasOtpButton?: boolean,
 ): Promise<{ published: number; failed: number }> {
   let published = 0;
   let failed = 0;
@@ -281,6 +283,7 @@ async function publishCampaign(
           headerType: (headerType as CampaignSendJob["headerType"]) ?? undefined,
           headerMediaId: headerMediaId ?? undefined,
           headerMediaUrl: headerMediaUrl ?? undefined,
+          hasOtpButton: hasOtpButton ?? false,
         },
         scheduledAt ?? undefined,
       );
@@ -425,7 +428,7 @@ export async function POST(req: NextRequest) {
     // Verify the template belongs to this tenant and is approved.
     const template = await prisma.messageTemplate.findFirst({
       where: { id: input.templateId, tenantId },
-      select: { id: true, name: true, language: true, status: true, headerType: true },
+      select: { id: true, name: true, language: true, status: true, headerType: true, buttons: true },
     });
     if (!template) {
       return NextResponse.json(
@@ -439,6 +442,9 @@ export async function POST(req: NextRequest) {
         { status: 422 },
       );
     }
+
+    const buttons = Array.isArray(template.buttons) ? template.buttons as { type: string }[] : [];
+    const hasOtpButton = buttons.some((b) => b.type === "OTP");
 
     const creds = await resolveWhatsAppCreds(businessId);
     if (!creds.phoneNumberId || !creds.apiKey) {
@@ -479,6 +485,7 @@ export async function POST(req: NextRequest) {
       input.headerMediaUrl,
       input.headerMediaId,
       template.headerType,
+      hasOtpButton,
     );
 
     const contactsById = new Map(contacts.map((c) => [c.id, c]));
@@ -494,6 +501,7 @@ export async function POST(req: NextRequest) {
       recipients,
       contactsById,
       scheduledAt,
+      hasOtpButton,
     );
 
     if (published === 0 && recipients.length > 0) {

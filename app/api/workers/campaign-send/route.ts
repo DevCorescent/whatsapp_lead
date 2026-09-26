@@ -231,6 +231,16 @@ export async function POST(req: NextRequest) {
             parameters: job.bodyParams.map((text) => ({ type: "text" as const, text })),
           });
         }
+
+        // OTP button — the first body param (the OTP code) is also passed as the copy_code button parameter.
+        if (job.hasOtpButton && job.bodyParams?.[0]) {
+          components.push({
+            type: "button",
+            sub_type: "copy_code" as const,
+            index: "0",
+            parameters: [{ type: "text" as const, text: job.bodyParams[0] }],
+          });
+        }
         console.log("[WORKER CAMPAIGN-SEND] Sending template", {
           phone: job.phone,
           templateName: job.templateName,

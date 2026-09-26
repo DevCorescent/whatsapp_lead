@@ -1,12 +1,13 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 
 export interface TemplateButton {
-  type: "QUICK_REPLY" | "URL" | "PHONE_NUMBER";
+  type: "QUICK_REPLY" | "URL" | "PHONE_NUMBER" | "OTP";
   text: string;
   url?: string;
   phone?: string;
   urlType?: "STATIC" | "DYNAMIC";
   urlExample?: string;
+  otpType?: "COPY_CODE";
 }
 
 export interface TemplateInput {

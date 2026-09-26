@@ -157,7 +157,7 @@ export type WATemplateParameter =
 export interface WATemplateComponent {
   type: "header" | "body" | "button";
   /** Required when type is "button" */
-  sub_type?: "quick_reply" | "url";
+  sub_type?: "quick_reply" | "url" | "copy_code";
   /** Zero-based button position, as a string. Required when type is "button" */
   index?: string;
   parameters?: WATemplateParameter[];
@@ -479,17 +479,20 @@ export interface WATemplateCreateComponent {
   type: "HEADER" | "BODY" | "FOOTER" | "BUTTONS";
   format?: "TEXT" | "IMAGE" | "VIDEO" | "DOCUMENT";
   text?: string;
+  add_security_recommendation?: boolean;
+  code_expiration_minutes?: number;
   example?: {
     header_handle?: string[];
     header_text?: string[];
     body_text?: string[][];
   };
   buttons?: Array<{
-    type: "QUICK_REPLY" | "URL" | "PHONE_NUMBER";
-    text: string;
+    type: "QUICK_REPLY" | "URL" | "PHONE_NUMBER" | "OTP";
+    text?: string;
     url?: string;
     phone_number?: string;
     example?: string[];
+    otp_type?: "COPY_CODE" | "ONE_TAP";
   }>;
 }
 

@@ -111,6 +111,8 @@ export interface CampaignSendJob {
   headerMediaUrl?: string;
   /** Meta media ID from a pre-uploaded asset — takes precedence over headerMediaUrl. */
   headerMediaId?: string;
+  /** True when the template has an OTP COPY_CODE button — the OTP code (bodyParams[0]) is also sent as the button parameter. */
+  hasOtpButton?: boolean;
 }
 
 // ─── Publishers ───────────────────────────────────────────────────────────────

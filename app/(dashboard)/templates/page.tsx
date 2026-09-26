@@ -63,6 +63,9 @@ const STATUS_LABEL: Record<string, string> = {
 const TABS = ["ALL", "DRAFT", "SUBMITTED", "PENDING", "APPROVED", "REJECTED", "DISABLED"] as const;
 type Tab = (typeof TABS)[number];
 
+const CATEGORY_TABS = ["ALL", "MARKETING", "UTILITY", "AUTHENTICATION"] as const;
+type CategoryTab = (typeof CATEGORY_TABS)[number];
+
 const CATEGORIES = ["MARKETING", "UTILITY", "AUTHENTICATION"] as const;
 const LANGUAGES = [
   { code: "en_US", label: "English (US)" },
@@ -81,6 +84,7 @@ const DELETABLE = new Set(["DRAFT", "REJECTED", "DISABLED"]);
 
 export default function TemplatesPage() {
   const [tab, setTab] = useState<Tab>("ALL");
+  const [categoryTab, setCategoryTab] = useState<CategoryTab>("ALL");
   const { data, isLoading, isError } = useTemplates();
   const [modal, setModal] = useState<{ open: boolean; editing: TemplateDTO | null }>({ open: false, editing: null });
   const [rejection, setRejection] = useState<TemplateDTO | null>(null);
@@ -98,8 +102,12 @@ export default function TemplatesPage() {
 
   const all: TemplateDTO[] = useMemo(() => data ?? [], [data]);
   const templates = useMemo(
-    () => (tab === "ALL" ? all : all.filter((t) => t.status === tab)),
-    [all, tab],
+    () => {
+      let list = tab === "ALL" ? all : all.filter((t) => t.status === tab);
+      if (categoryTab !== "ALL") list = list.filter((t) => t.category === categoryTab);
+      return list;
+    },
+    [all, tab, categoryTab],
   );
 
   const handleSyncAll = async () => {
@@ -188,6 +196,23 @@ export default function TemplatesPage() {
             )}
           >
             {t === "ALL" ? "All" : STATUS_LABEL[t]}
+          </button>
+        ))}
+      </div>
+
+      <div className="mb-4 flex gap-2">
+        {CATEGORY_TABS.map((c) => (
+          <button
+            key={c}
+            onClick={() => setCategoryTab(c)}
+            className={cn(
+              "rounded-full px-3 py-1 text-xs font-medium transition",
+              categoryTab === c
+                ? "bg-emerald-600 text-white"
+                : "bg-slate-100 text-slate-600 hover:bg-slate-200",
+            )}
+          >
+            {c === "ALL" ? "All categories" : c.charAt(0) + c.slice(1).toLowerCase()}
           </button>
         ))}
       </div>
@@ -724,12 +749,13 @@ function TemplateModal({
                 <div className="flex flex-wrap items-center gap-2">
                   <select
                     value={b.type}
-                    onChange={(e) => updateButton(i, { type: e.target.value as TemplateButton["type"], urlType: undefined, urlExample: undefined })}
+                    onChange={(e) => updateButton(i, { type: e.target.value as TemplateButton["type"], urlType: undefined, urlExample: undefined, otpType: e.target.value === "OTP" ? "COPY_CODE" : undefined })}
                     className={cn(inputClass, "w-36")}
                   >
                     <option value="QUICK_REPLY">Quick reply</option>
                     <option value="URL">URL</option>
                     <option value="PHONE_NUMBER">Phone</option>
+                    <option value="OTP">Copy Code (OTP)</option>
                   </select>
                   <input
                     value={b.text}
@@ -779,6 +805,14 @@ function TemplateModal({
                       className={inputClass}
                       placeholder="+15551234567"
                     />
+                  </div>
+                )}
+
+                {b.type === "OTP" && (
+                  <div className="pl-1">
+                    <p className="text-xs text-slate-500">
+                      Meta will show a "Copy Code" button. At send time, pass the OTP code as the first body variable — it will be injected into both the message body and this button automatically.
+                    </p>
                   </div>
                 )}
               </div>
