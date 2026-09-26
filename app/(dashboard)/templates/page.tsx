@@ -416,6 +416,58 @@ function hasPlaceholder(text: string) {
   return /\{\{\s*\d+\s*\}\}/.test(text);
 }
 
+// ─── Button compatibility rules (Meta official) ───────────────────────────────
+// AUTH  → 1 OTP only. No other types.
+// MARKETING / UTILITY → Quick Reply (max 10) OR CTA buttons — never mixed.
+//   CTA limits: URL ×2, PHONE_NUMBER ×1, VOICE_CALL ×1, COPY_CODE ×1.
+// Max 10 buttons total across all categories.
+
+const BUTTON_TYPE_META = [
+  { value: "QUICK_REPLY",  label: "Quick reply",         group: "qr"  },
+  { value: "URL",          label: "Visit website",        group: "cta" },
+  { value: "PHONE_NUMBER", label: "Call phone number",    group: "cta" },
+  { value: "VOICE_CALL",   label: "Call on WhatsApp",     group: "cta" },
+  { value: "COPY_CODE",    label: "Copy offer code",      group: "cta" },
+  { value: "OTP",          label: "Copy Code (OTP)",      group: "otp" },
+] as const;
+
+const BUTTON_MAX: Record<string, number> = {
+  QUICK_REPLY: 10,
+  URL: 2,
+  PHONE_NUMBER: 1,
+  VOICE_CALL: 1,
+  COPY_CODE: 1,
+  OTP: 1,
+};
+
+function getAvailableButtonTypes(
+  category: string,
+  existing: TemplateButton[],
+  excludeIndex?: number,
+) {
+  const others = excludeIndex !== undefined
+    ? existing.filter((_, i) => i !== excludeIndex)
+    : existing;
+
+  if (category === "AUTHENTICATION") {
+    return BUTTON_TYPE_META.filter(
+      (t) => t.value === "OTP" && !others.some((b) => b.type === "OTP"),
+    );
+  }
+
+  const hasQR  = others.some((b) => b.type === "QUICK_REPLY");
+  const hasCTA = others.some((b) =>
+    ["URL", "PHONE_NUMBER", "VOICE_CALL", "COPY_CODE"].includes(b.type),
+  );
+
+  return BUTTON_TYPE_META.filter((t) => {
+    if (t.value === "OTP") return false;           // OTP → AUTH only
+    if (t.group === "qr"  && hasCTA) return false; // can't mix
+    if (t.group === "cta" && hasQR)  return false; // can't mix
+    return others.filter((b) => b.type === t.value).length < (BUTTON_MAX[t.value] ?? 1);
+  });
+}
+
 function TemplateModal({
   open,
   editing,
@@ -501,8 +553,6 @@ function TemplateModal({
     req.then(onClose).catch((e: Error) => setError(e.message));
   };
 
-  const addButton = () =>
-    setButtons((b) => [...b, { type: "QUICK_REPLY", text: "" } as TemplateButton].slice(0, 10));
   const updateButton = (i: number, patch: Partial<TemplateButton>) =>
     setButtons((b) => b.map((btn, idx) => (idx === i ? { ...btn, ...patch } : btn)));
   const removeButton = (i: number) => setButtons((b) => b.filter((_, idx) => idx !== i));
@@ -537,7 +587,13 @@ function TemplateModal({
             <select
               id="tpl-category"
               value={category}
-              onChange={(e) => setCategory(e.target.value as (typeof CATEGORIES)[number])}
+              onChange={(e) => {
+                const next = e.target.value as (typeof CATEGORIES)[number];
+                const wasAuth = category === "AUTHENTICATION";
+                const willBeAuth = next === "AUTHENTICATION";
+                if (wasAuth !== willBeAuth) setButtons([]); // incompatible button types
+                setCategory(next);
+              }}
               className={inputClass}
             >
               {CATEGORIES.map((c) => (
@@ -772,104 +828,176 @@ function TemplateModal({
         <div>
           <div className="mb-1.5 flex items-center justify-between">
             <span className="text-sm font-medium text-slate-700">Buttons (optional)</span>
-            {buttons.length < 10 && (
-              <button type="button" onClick={addButton} className="text-xs font-medium text-emerald-700 hover:underline">
-                + Add button
-              </button>
-            )}
           </div>
+
+          {/* Category-specific rule hint */}
+          {category === "AUTHENTICATION" ? (
+            <p className="mb-2 flex items-start gap-1.5 rounded-lg bg-sky-50 px-3 py-2 text-xs text-sky-700">
+              <Info className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+              Authentication templates support only 1 Copy Code (OTP) button.
+            </p>
+          ) : buttons.some((b) => b.type === "QUICK_REPLY") && buttons.some((b) => ["URL","PHONE_NUMBER","VOICE_CALL","COPY_CODE"].includes(b.type)) ? (
+            <p className="mb-2 flex items-start gap-1.5 rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-700">
+              <AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+              Quick reply buttons cannot be mixed with call-to-action buttons (URL, phone, etc.).
+            </p>
+          ) : buttons.length > 0 ? (
+            <p className="mb-2 text-[11px] text-slate-400">
+              {buttons.some((b) => b.type === "QUICK_REPLY")
+                ? `Quick reply — max 10. Cannot mix with URL / phone buttons.`
+                : `CTA limits: URL ×2, Phone ×1, WhatsApp call ×1, Offer code ×1. Cannot mix with quick reply.`}
+            </p>
+          ) : null}
+
           <div className="space-y-2">
-            {buttons.map((b, i) => (
-              <div key={i} className="space-y-1.5 rounded-lg border border-slate-200 p-2">
-                <div className="flex flex-wrap items-center gap-2">
-                  <select
-                    value={b.type}
-                    onChange={(e) => updateButton(i, { type: e.target.value as TemplateButton["type"], urlType: undefined, urlExample: undefined, otpType: e.target.value === "OTP" ? "COPY_CODE" : undefined, offerCode: undefined })}
-                    className={cn(inputClass, "w-36")}
-                  >
-                    <option value="QUICK_REPLY">Quick reply</option>
-                    <option value="URL">Visit website</option>
-                    <option value="PHONE_NUMBER">Call phone number</option>
-                    <option value="VOICE_CALL">Call on WhatsApp</option>
-                    <option value="COPY_CODE">Copy offer code</option>
-                    <option value="OTP">Copy Code (OTP)</option>
-                  </select>
-                  <input
-                    value={b.text}
-                    onChange={(e) => updateButton(i, { text: e.target.value })}
-                    className={cn(inputClass, "flex-1 min-w-32")}
-                    placeholder="Button text"
-                  />
-                  <button type="button" onClick={() => removeButton(i)} className="text-rose-500 hover:text-rose-700" aria-label="Remove button">
-                    <Trash2 className="h-4 w-4" />
-                  </button>
-                </div>
+            {buttons.map((b, i) => {
+              // Build the type options: always include the current type + types that are available
+              const available = getAvailableButtonTypes(category, buttons, i);
+              const currentMeta = BUTTON_TYPE_META.find((t) => t.value === b.type);
+              const typeOptions = currentMeta && !available.find((t) => t.value === b.type)
+                ? [currentMeta, ...available]
+                : available;
 
-                {b.type === "URL" && (
-                  <div className="space-y-1.5 pl-1">
-                    <div className="flex items-center gap-2">
-                      <select
-                        value={b.urlType ?? "STATIC"}
-                        onChange={(e) => updateButton(i, { urlType: e.target.value as "STATIC" | "DYNAMIC", urlExample: undefined })}
-                        className={cn(inputClass, "w-28 text-xs")}
-                      >
-                        <option value="STATIC">Static URL</option>
-                        <option value="DYNAMIC">Dynamic URL</option>
-                      </select>
+              return (
+                <div key={i} className="space-y-1.5 rounded-lg border border-slate-200 p-2">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <select
+                      value={b.type}
+                      onChange={(e) => {
+                        const t = e.target.value as TemplateButton["type"];
+                        updateButton(i, {
+                          type: t,
+                          url: undefined, urlType: undefined, urlExample: undefined,
+                          phone: undefined, offerCode: undefined,
+                          otpType: t === "OTP" ? "COPY_CODE" : undefined,
+                        });
+                      }}
+                      className={cn(inputClass, "w-44")}
+                    >
+                      {typeOptions.map((t) => (
+                        <option key={t.value} value={t.value}>{t.label}</option>
+                      ))}
+                    </select>
+                    {b.type !== "COPY_CODE" && (
                       <input
-                        value={b.url ?? ""}
-                        onChange={(e) => updateButton(i, { url: e.target.value })}
-                        className={cn(inputClass, "flex-1")}
-                        placeholder={b.urlType === "DYNAMIC" ? "https://example.com/track/{{1}}" : "https://example.com"}
+                        value={b.text}
+                        onChange={(e) => updateButton(i, { text: e.target.value })}
+                        className={cn(inputClass, "flex-1 min-w-32")}
+                        placeholder="Button text"
+                        maxLength={25}
                       />
+                    )}
+                    <button type="button" onClick={() => removeButton(i)} className="text-rose-500 hover:text-rose-700" aria-label="Remove button">
+                      <Trash2 className="h-4 w-4" />
+                    </button>
+                  </div>
+
+                  {b.type === "URL" && (
+                    <div className="space-y-1.5 pl-1">
+                      <div className="flex items-center gap-2">
+                        <select
+                          value={b.urlType ?? "STATIC"}
+                          onChange={(e) => updateButton(i, { urlType: e.target.value as "STATIC" | "DYNAMIC", urlExample: undefined })}
+                          className={cn(inputClass, "w-28 text-xs")}
+                        >
+                          <option value="STATIC">Static URL</option>
+                          <option value="DYNAMIC">Dynamic URL</option>
+                        </select>
+                        <input
+                          value={b.url ?? ""}
+                          onChange={(e) => updateButton(i, { url: e.target.value })}
+                          className={cn(inputClass, "flex-1")}
+                          placeholder={b.urlType === "DYNAMIC" ? "https://example.com/track/{{1}}" : "https://example.com"}
+                        />
+                      </div>
+                      {b.urlType === "DYNAMIC" && (
+                        <input
+                          value={b.urlExample ?? ""}
+                          onChange={(e) => updateButton(i, { urlExample: e.target.value })}
+                          className={inputClass}
+                          placeholder="Example URL — e.g. https://example.com/track/ABC123"
+                        />
+                      )}
                     </div>
-                    {b.urlType === "DYNAMIC" && (
+                  )}
+
+                  {(b.type === "PHONE_NUMBER" || b.type === "VOICE_CALL") && (
+                    <div className="space-y-1 pl-1">
                       <input
-                        value={b.urlExample ?? ""}
-                        onChange={(e) => updateButton(i, { urlExample: e.target.value })}
+                        value={b.phone ?? ""}
+                        onChange={(e) => updateButton(i, { phone: e.target.value })}
                         className={inputClass}
-                        placeholder="Example URL (e.g. https://example.com/track/ABC123)"
+                        placeholder="+919876543210"
                       />
-                    )}
-                  </div>
-                )}
+                      {b.type === "VOICE_CALL" && (
+                        <p className="text-[11px] text-slate-400">Tapping opens a WhatsApp voice call to this number.</p>
+                      )}
+                    </div>
+                  )}
 
-                {(b.type === "PHONE_NUMBER" || b.type === "VOICE_CALL") && (
-                  <div className="pl-1">
-                    <input
-                      value={b.phone ?? ""}
-                      onChange={(e) => updateButton(i, { phone: e.target.value })}
-                      className={inputClass}
-                      placeholder="+919876543210"
-                    />
-                    {b.type === "VOICE_CALL" && (
-                      <p className="mt-1 text-[11px] text-slate-400">Opens a WhatsApp call to this number.</p>
-                    )}
-                  </div>
-                )}
+                  {b.type === "COPY_CODE" && (
+                    <div className="space-y-1 pl-1">
+                      <input
+                        value={b.text}
+                        onChange={(e) => updateButton(i, { text: e.target.value })}
+                        className={inputClass}
+                        placeholder="Button label — e.g. Copy code"
+                        maxLength={25}
+                      />
+                      <input
+                        value={b.offerCode ?? ""}
+                        onChange={(e) => updateButton(i, { offerCode: e.target.value })}
+                        className={inputClass}
+                        placeholder="Offer code — e.g. SAVE20"
+                      />
+                      <p className="text-[11px] text-slate-400">Customer taps to copy the offer code to clipboard.</p>
+                    </div>
+                  )}
 
-                {b.type === "COPY_CODE" && (
-                  <div className="pl-1">
-                    <input
-                      value={b.offerCode ?? ""}
-                      onChange={(e) => updateButton(i, { offerCode: e.target.value })}
-                      className={inputClass}
-                      placeholder="Offer code — e.g. SAVE20"
-                    />
-                    <p className="mt-1 text-[11px] text-slate-400">Customer taps to copy this code to clipboard.</p>
-                  </div>
-                )}
-
-                {b.type === "OTP" && (
-                  <div className="pl-1">
-                    <p className="text-xs text-slate-500">
-                      Meta shows a "Copy Code" button for the OTP. Pass the code as body variable <code className="rounded bg-slate-100 px-1">{"{{1}}"}</code> — it goes to both body and button automatically.
+                  {b.type === "OTP" && (
+                    <p className="pl-1 text-xs text-slate-500">
+                      Meta shows a "Copy Code" button. Pass the OTP as body variable{" "}
+                      <code className="rounded bg-slate-100 px-1">{"{{1}}"}</code> — it fills both the body and the button automatically.
                     </p>
-                  </div>
-                )}
-              </div>
-            ))}
+                  )}
+                </div>
+              );
+            })}
           </div>
+
+          {/* Add button — dropdown shows only compatible types */}
+          {(() => {
+            const available = getAvailableButtonTypes(category, buttons);
+            if (buttons.length >= 10 || available.length === 0) return null;
+            return (
+              <div className="mt-2">
+                <select
+                  className={cn(inputClass, "text-sm text-emerald-700 font-medium")}
+                  value=""
+                  onChange={(e) => {
+                    const t = e.target.value as TemplateButton["type"];
+                    if (!t) return;
+                    setButtons((prev) => [
+                      ...prev,
+                      {
+                        type: t,
+                        text: "",
+                        ...(t === "OTP"  ? { otpType: "COPY_CODE" as const } : {}),
+                        ...(t === "URL"  ? { urlType: "STATIC"    as const } : {}),
+                      },
+                    ]);
+                    // Reset select to placeholder
+                    (e.target as HTMLSelectElement).value = "";
+                  }}
+                >
+                  <option value="">+ Add button…</option>
+                  {available.map((t) => (
+                    <option key={t.value} value={t.value}>{t.label}</option>
+                  ))}
+                </select>
+              </div>
+            );
+          })()}
         </div>
 
         {error && <p className="rounded-lg bg-rose-50 px-3 py-2 text-xs text-rose-700">{error}</p>}
