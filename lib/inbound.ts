@@ -349,23 +349,49 @@ async function resolveAutoReplyConfig(tenant: ResolvedTenant) {
 async function upsertContact(
   tenantId: string,
   businessId: string,
-  phone: string,
+  phone: string | null | undefined,
   name?: string,
   waId?: string
 ): Promise<Contact> {
   const profileName = name?.trim();
-
-  // Only update waId when Meta supplies one — never blank it out on subsequent messages.
   const updateFields: Record<string, unknown> = {};
   if (profileName) updateFields.name = profileName;
+  // Only update waId when Meta supplies one — never blank it out on subsequent messages.
   if (waId) updateFields.waId = waId;
 
+  // 1. BSUID-first lookup — stable even when phone is hidden.
+  //    Meta is migrating to BSUID as the primary identifier; phone is now conditionally absent.
+  if (waId) {
+    const byWaId = await prisma.contact.findFirst({
+      where: { tenantId, businessId, waId },
+    });
+    if (byWaId) {
+      // Backfill phone when it re-appears after being hidden on a previous message.
+      if (phone && !byWaId.phone) updateFields.phone = phone;
+      return Object.keys(updateFields).length
+        ? prisma.contact.update({ where: { id: byWaId.id }, data: updateFields })
+        : byWaId;
+    }
+  }
+
+  // 2. Phone-based upsert — classic path, still works when phone is available.
+  const effectivePhone = phone || waId;
+  if (!effectivePhone) {
+    throw new Error("[INBOUND] Cannot create contact: no phone number or BSUID available");
+  }
+
   return prisma.contact.upsert({
-    where: { phone_businessId: { phone, businessId } },
+    where: { phone_businessId: { phone: effectivePhone, businessId } },
     update: updateFields,
-    // A contact with no profile name is still addressable by number, so the phone
-    // doubles as the display name until an agent or a later payload supplies a better one.
-    create: { tenantId, businessId, phone, name: profileName || phone, ...(waId ? { waId } : {}) },
+    // When phone is absent, BSUID serves as the phone temporarily so the unique
+    // constraint is satisfied. It is replaced with the real number once it appears.
+    create: {
+      tenantId,
+      businessId,
+      phone: effectivePhone,
+      name: profileName || effectivePhone,
+      ...(waId ? { waId } : {}),
+    },
   });
 }
 
@@ -1508,10 +1534,17 @@ export async function processIncomingMessage(
   // watching look like it was wiped. A connected number (integration) is authoritative — it
   // belongs to exactly one business, and a reply must go out from that number — so there is
   // nothing to stick to.
+  // phone (message.from) is conditionally absent when the user has a WhatsApp username —
+  // in that case, fall back to BSUID (contactWaId) for legacy routing lookup.
+  const senderPhone = message.from || null;
   const priorContact = integrationId
     ? null
     : await prisma.contact.findFirst({
-        where: { tenantId: tenant.tenantId, phone: message.from },
+        where: senderPhone
+          ? { tenantId: tenant.tenantId, phone: senderPhone }
+          : contactWaId
+          ? { tenantId: tenant.tenantId, waId: contactWaId }
+          : { id: "impossible" }, // no identifier — skip legacy lookup
         orderBy: { updatedAt: "desc" },
         select: { id: true, businessId: true },
       });
@@ -1532,7 +1565,7 @@ export async function processIncomingMessage(
   const contact = await upsertContact(
     scopedTenant.tenantId,
     businessId,
-    message.from,
+    senderPhone,
     contactName,
     contactWaId
   );

@@ -306,7 +306,8 @@ export async function POST(req: NextRequest) {
         creds.apiKey,
         conversation.contact.phone,
         interactive as Record<string, unknown>,
-        contextWaMessageId
+        contextWaMessageId,
+        conversation.contact.waId ?? undefined
       );
       waMessageId = sent.messages?.[0]?.id ?? null;
       const interactiveBody = interactive.type === "button"
@@ -334,6 +335,7 @@ export async function POST(req: NextRequest) {
         to: conversation.contact.phone,
         phoneNumberId: creds.phoneNumberId,
       });
+      const bsuid = conversation.contact.waId ?? undefined;
       const sent = mediaId
         ? await sendMediaMessage(
             creds.phoneNumberId,
@@ -341,7 +343,8 @@ export async function POST(req: NextRequest) {
             conversation.contact.phone,
             waType,
             mediaId,
-            body || undefined
+            body || undefined,
+            bsuid
           )
         : await sendMediaByUrl(
             creds.phoneNumberId,
@@ -350,7 +353,8 @@ export async function POST(req: NextRequest) {
             waType,
             mediaUrl!,
             body || undefined,
-            waType === "document" ? mediaUrl!.split("/").pop()?.split("?")[0] : undefined
+            waType === "document" ? mediaUrl!.split("/").pop()?.split("?")[0] : undefined,
+            bsuid
           );
       waMessageId = sent.messages?.[0]?.id ?? null;
       console.log("[MESSAGES] Media send result — waMessageId:", waMessageId, "raw:", JSON.stringify(sent));
@@ -373,7 +377,8 @@ export async function POST(req: NextRequest) {
       creds.apiKey,
       conversation.contact.phone,
       body!,
-      contextWaMessageId
+      contextWaMessageId,
+      conversation.contact.waId ?? undefined
     );
     waMessageId = sent.messages?.[0]?.id ?? null;
 

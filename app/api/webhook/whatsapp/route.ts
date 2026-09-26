@@ -505,8 +505,12 @@ async function processChange(change: WAChange): Promise<void> {
     // Match each sender to their own profile entry. Meta can batch messages from several contacts
     // into one change, in which case taking contacts[0] would file every message under the first
     // sender's name — creating the second contact with the wrong person's name entirely.
-    const profile = contacts?.find((contact) => contact.wa_id === message.from);
-    // bsuid (businesses) or username (individuals) is the stable identifier Meta is moving to.
+    // As of 2026, message.from (phone) is conditionally absent when the user has a username;
+    // in that case, match by bsuid instead, or fall through to the single-contact case.
+    const profile = contacts?.find((c) => c.wa_id && c.wa_id === message.from)
+      ?? (contacts?.length === 1 ? contacts[0] : undefined);
+    // BSUID (businesses) or username (individuals) is the stable identifier Meta is moving to.
+    // Phone (wa_id) is the fallback for contacts who haven't enabled a username yet.
     const contactWaId = profile?.bsuid ?? profile?.username ?? profile?.wa_id;
 
     console.log("[WEBHOOK] Dispatching message", { waMessageId: message.id, from: message.from, type: message.type, skipQueue: process.env.SKIP_QUEUE === "true" });

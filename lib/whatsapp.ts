@@ -31,6 +31,29 @@ function normalizeWaTo(to: string): string {
 }
 
 /**
+ * Build the recipient address object for a Cloud API request body.
+ *
+ * Meta is migrating away from phone numbers as the primary identifier:
+ * - `to` (phone, E.164 digits) — used when the phone number is known; takes precedence.
+ * - `recipient` (BSUID, e.g. "US.13491208655302741918") — used when phone is absent.
+ *   BSUID contains letters and periods and must NOT be digit-stripped.
+ *
+ * Throws if neither identifier is available so the caller gets an actionable error.
+ */
+function resolveWaRecipient(
+  phone: string | null | undefined,
+  bsuid?: string | null
+): { to: string } | { recipient: string } {
+  const digits = phone ? phone.replace(/\D/g, "") : "";
+  if (digits) return { to: digits };
+  if (bsuid) return { recipient: bsuid };
+  throw new WASendError(
+    "Cannot send: this contact has no phone number or Business-Scoped User ID (BSUID). " +
+    "They may need to send you a message first."
+  );
+}
+
+/**
  * Strip characters that make Meta return opaque 400s while agent-typed messages still work.
  * Manual inbox sends are short plain text; model output often includes nulls, unpaired
  * surrogates, or markdown fences that Cloud API rejects.
@@ -121,14 +144,12 @@ function userFriendlyWASendError(code: number | undefined, status: number): stri
 export async function sendTextMessage(
   phoneNumberId: string,
   apiKey: string,
-  to: string,
+  to: string | null | undefined,
   body: string,
-  contextMessageId?: string
+  contextMessageId?: string,
+  bsuid?: string | null
 ) {
-  const recipient = normalizeWaTo(to);
-  if (!recipient) {
-    throw new Error(`WhatsApp send aborted — empty recipient (raw="${to}")`);
-  }
+  const addr = resolveWaRecipient(to, bsuid);
   if (!body.trim()) {
     throw new Error("WhatsApp send aborted — empty message body");
   }
@@ -147,7 +168,7 @@ export async function sendTextMessage(
     body: JSON.stringify({
       messaging_product: "whatsapp",
       recipient_type: "individual",
-      to: recipient,
+      ...addr,
       type: "text",
       text: { preview_url: false, body: text },
       ...(contextMessageId ? { context: { message_id: contextMessageId } } : {}),
@@ -161,14 +182,15 @@ export async function sendTextMessage(
     const err = await res.text();
     let errorCode: number | undefined;
     try { errorCode = (JSON.parse(err) as { error?: { code?: number } })?.error?.code; } catch { /* non-JSON */ }
+    const addrStr = "to" in addr ? addr.to : addr.recipient;
     console.error("[WA SEND] Meta rejected text message", {
       status: res.status,
       phoneNumberId,
-      to: recipient,
+      addr,
       bodyLength: text.length,
       bodyPreview: text.slice(0, 120),
       meta: err.slice(0, 800),
-      tech: formatMetaSendError(res.status, res.statusText, recipient, err),
+      tech: formatMetaSendError(res.status, res.statusText, addrStr, err),
     });
     throw new WASendError(userFriendlyWASendError(errorCode, res.status));
   }
@@ -208,15 +230,13 @@ export interface WASendMessageResponse {
 export async function sendTemplateMessage(
   phoneNumberId: string,
   apiKey: string,
-  to: string,
+  to: string | null | undefined,
   templateName: string,
   language: string,
-  components?: WATemplateComponent[]
+  components?: WATemplateComponent[],
+  bsuid?: string | null
 ): Promise<WASendMessageResponse> {
-  const recipient = normalizeWaTo(to);
-  if (!recipient) {
-    throw new Error(`WhatsApp template send aborted — empty recipient (raw="${to}")`);
-  }
+  const addr = resolveWaRecipient(to, bsuid);
 
   const res = await fetch(`${WA_BASE_URL}/${phoneNumberId}/messages`, {
     method: "POST",
@@ -227,7 +247,7 @@ export async function sendTemplateMessage(
     body: JSON.stringify({
       messaging_product: "whatsapp",
       recipient_type: "individual",
-      to: recipient,
+      ...addr,
       type: "template",
       template: {
         name: templateName,
@@ -244,20 +264,20 @@ export async function sendTemplateMessage(
     console.error("[WA SEND] Meta rejected template message", {
       status: res.status,
       phoneNumberId,
-      to: recipient,
+      addr,
       templateName,
       language,
       componentCount: components?.length ?? 0,
       meta: err.slice(0, 800),
     });
     throw new Error(
-      `WhatsApp API error (${res.status} ${res.statusText}) sending template "${templateName}" [${language}] to ${recipient}: ${err}`
+      `WhatsApp API error (${res.status} ${res.statusText}) sending template "${templateName}" [${language}] to ${JSON.stringify(addr)}: ${err}`
     );
   }
 
   console.log("[WA SEND] Template accepted", {
     phoneNumberId,
-    to: recipient,
+    addr,
     templateName,
     language,
   });
@@ -286,11 +306,13 @@ export type WAMediaType = "image" | "video" | "audio" | "document";
 export async function sendMediaMessage(
   phoneNumberId: string,
   apiKey: string,
-  to: string,
+  to: string | null | undefined,
   type: WAMediaType,
   mediaId: string,
-  caption?: string
+  caption?: string,
+  bsuid?: string | null
 ): Promise<WASendMessageResponse> {
+  const addr = resolveWaRecipient(to, bsuid);
   const res = await fetch(`${WA_BASE_URL}/${phoneNumberId}/messages`, {
     method: "POST",
     headers: {
@@ -300,7 +322,7 @@ export async function sendMediaMessage(
     body: JSON.stringify({
       messaging_product: "whatsapp",
       recipient_type: "individual",
-      to,
+      ...addr,
       type,
       // Meta keys the media object by the message type, e.g. { type: "image", image: {...} }.
       // Captions are valid on image/video/document only — Meta rejects them on audio.
@@ -316,7 +338,7 @@ export async function sendMediaMessage(
     // read as text so the error path never throws over the real error.
     const err = await res.text();
     throw new Error(
-      `WhatsApp API error (${res.status} ${res.statusText}) sending ${type} media "${mediaId}" to ${to}: ${err}`
+      `WhatsApp API error (${res.status} ${res.statusText}) sending ${type} media "${mediaId}" to ${JSON.stringify(addr)}: ${err}`
     );
   }
 
@@ -331,12 +353,14 @@ export async function sendMediaMessage(
 export async function sendMediaByUrl(
   phoneNumberId: string,
   apiKey: string,
-  to: string,
+  to: string | null | undefined,
   type: WAMediaType,
   link: string,
   caption?: string,
-  filename?: string
+  filename?: string,
+  bsuid?: string | null
 ): Promise<WASendMessageResponse> {
+  const addr = resolveWaRecipient(to, bsuid);
   const res = await fetch(`${WA_BASE_URL}/${phoneNumberId}/messages`, {
     method: "POST",
     headers: {
@@ -346,7 +370,7 @@ export async function sendMediaByUrl(
     body: JSON.stringify({
       messaging_product: "whatsapp",
       recipient_type: "individual",
-      to,
+      ...addr,
       type,
       [type]: {
         link,
@@ -538,10 +562,12 @@ export async function uploadMedia(
 export async function sendInteractiveMessage(
   phoneNumberId: string,
   apiKey: string,
-  to: string,
+  to: string | null | undefined,
   interactive: Record<string, unknown>,
-  contextMessageId?: string
+  contextMessageId?: string,
+  bsuid?: string | null
 ): Promise<WASendMessageResponse> {
+  const addr = resolveWaRecipient(to, bsuid);
   const res = await fetch(`${WA_BASE_URL}/${phoneNumberId}/messages`, {
     method: "POST",
     headers: {
@@ -551,7 +577,7 @@ export async function sendInteractiveMessage(
     body: JSON.stringify({
       messaging_product: "whatsapp",
       recipient_type: "individual",
-      to,
+      ...addr,
       type: "interactive",
       interactive,
       ...(contextMessageId ? { context: { message_id: contextMessageId } } : {}),
@@ -567,7 +593,7 @@ export async function sendInteractiveMessage(
     console.error("[WA SEND] Meta rejected interactive message", {
       status: res.status,
       phoneNumberId,
-      to,
+      addr,
       meta: err.slice(0, 800),
     });
     throw new WASendError(userFriendlyWASendError(errorCode, res.status));
