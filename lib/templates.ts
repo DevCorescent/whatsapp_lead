@@ -87,10 +87,43 @@ export function extractPlaceholders(text: string): number[] {
 }
 
 /**
+ * Detect whether a template body uses named ({{snake_case}}) or positional ({{1}}) params.
+ * Positional takes precedence when both patterns appear.
+ */
+export function detectParameterFormat(text: string): "POSITIONAL" | "NAMED" {
+  if (/\{\{\d+\}\}/.test(text)) return "POSITIONAL";
+  if (/\{\{[a-z_][a-z0-9_]*\}\}/.test(text)) return "NAMED";
+  return "POSITIONAL";
+}
+
+/** Extract named param identifiers from body text in order of appearance, deduped. */
+export function extractNamedParams(text: string): string[] {
+  const names: string[] = [];
+  const seen = new Set<string>();
+  const re = /\{\{([a-z_][a-z0-9_]*)\}\}/g;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(text)) !== null) {
+    if (!seen.has(m[1])) { seen.add(m[1]); names.push(m[1]); }
+  }
+  return names;
+}
+
+/**
  * Meta requires body placeholders to be numeric and contiguous starting at 1
- * ({{1}}, {{2}}, …). Returns an error string, or null when valid.
+ * ({{1}}, {{2}}, …) for positional, or lowercase snake_case for named.
+ * Returns an error string, or null when valid.
  */
 export function validatePlaceholders(body: string, variables: string[]): string | null {
+  const fmt = detectParameterFormat(body);
+  if (fmt === "NAMED") {
+    const names = extractNamedParams(body);
+    if (names.length === 0) return null;
+    if (variables.length < names.length) {
+      return `Provide an example value for each variable (${names.map((n) => `{{${n}}}`).join(", ")}).`;
+    }
+    return null;
+  }
+  // Positional
   const used = [...new Set(extractPlaceholders(body))].sort((a, b) => a - b);
   if (used.length === 0) return null;
   for (let i = 0; i < used.length; i++) {
@@ -142,11 +175,24 @@ export function buildComponents(t: MessageTemplate): WATemplateCreateComponent[]
   }
 
   // Body — with per-variable examples when the body uses placeholders.
-  const placeholders = [...new Set(extractPlaceholders(t.body))];
   const bodyComponent: WATemplateCreateComponent = { type: "BODY", text: t.body };
-  if (placeholders.length > 0) {
-    const examples = placeholders.map((_, i) => t.variables[i] || `sample${i + 1}`);
-    bodyComponent.example = { body_text: [examples] };
+  const fmt = detectParameterFormat(t.body);
+  if (fmt === "NAMED") {
+    const namedParams = extractNamedParams(t.body);
+    if (namedParams.length > 0) {
+      bodyComponent.example = {
+        body_text_named_params: namedParams.map((name, i) => ({
+          param_name: name,
+          example: t.variables[i] || `sample_${name}`,
+        })),
+      };
+    }
+  } else {
+    const placeholders = [...new Set(extractPlaceholders(t.body))];
+    if (placeholders.length > 0) {
+      const examples = placeholders.map((_, i) => t.variables[i] || `sample${i + 1}`);
+      bodyComponent.example = { body_text: [examples] };
+    }
   }
   components.push(bodyComponent);
 
@@ -243,6 +289,7 @@ export async function submitTemplate(id: string, businessId: string): Promise<Me
       language: template.language,
       category: template.category as "MARKETING" | "UTILITY" | "AUTHENTICATION",
       components: buildComponents(template),
+      parameter_format: detectParameterFormat(template.body) === "NAMED" ? "named" : "positional",
     });
 
     return await prisma.messageTemplate.update({
@@ -340,6 +387,13 @@ export async function importTemplatesFromMeta(
       where: { businessId, waTemplateId: mt.id },
     });
 
+    // Auto-detect example values for variables from the body text
+    const paramFmt = mt.parameter_format === "named" ? "NAMED"
+      : detectParameterFormat(body);
+    const importedVariables = paramFmt === "NAMED"
+      ? extractNamedParams(body).map((name) => `{{${name}}}`) // placeholder examples
+      : [];
+
     if (existing) {
       await prisma.messageTemplate.update({
         where: { id: existing.id },
@@ -347,6 +401,10 @@ export async function importTemplatesFromMeta(
           status,
           rejectionReason: status === "REJECTED" ? mt.rejection_reason ?? null : null,
           lastSyncedAt: new Date(),
+          // Refresh body and variables if they were empty (e.g. imported before this feature)
+          ...(existing.variables.length === 0 && importedVariables.length > 0
+            ? { variables: importedVariables }
+            : {}),
         },
       });
       updated++;
@@ -366,7 +424,7 @@ export async function importTemplatesFromMeta(
             body,
             status,
             waTemplateId: mt.id,
-            variables: [],
+            variables: importedVariables,
             rejectionReason: status === "REJECTED" ? mt.rejection_reason ?? null : null,
             lastSyncedAt: new Date(),
             ...(headerType ? { headerType } : {}),

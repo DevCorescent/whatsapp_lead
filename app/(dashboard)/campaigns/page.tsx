@@ -135,9 +135,26 @@ function useCampaignContacts(enabled: boolean, search: string) {
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
 function detectBodyVarSlots(body: string): number {
+  // Named params {{first_name}}: count unique names
+  if (/\{\{[a-z_][a-z0-9_]*\}\}/.test(body) && !/\{\{\d+\}\}/.test(body)) {
+    return [...new Set([...body.matchAll(/\{\{([a-z_][a-z0-9_]*)\}\}/g)].map((m) => m[1]))].length;
+  }
+  // Positional {{1}}, {{2}}: highest index
   const matches = [...body.matchAll(/\{\{(\d+)\}\}/g)];
   const nums = matches.map((m) => parseInt(m[1], 10));
   return nums.length > 0 ? Math.max(...nums) : 0;
+}
+
+function extractBodyVarNames(body: string): string[] {
+  if (/\{\{[a-z_][a-z0-9_]*\}\}/.test(body) && !/\{\{\d+\}\}/.test(body)) {
+    const names: string[] = [];
+    const seen = new Set<string>();
+    for (const m of body.matchAll(/\{\{([a-z_][a-z0-9_]*)\}\}/g)) {
+      if (!seen.has(m[1])) { seen.add(m[1]); names.push(m[1]); }
+    }
+    return names;
+  }
+  return [];
 }
 
 function RateBar({ value, total }: { value: number; total: number }) {
@@ -465,6 +482,7 @@ function CreateCampaignModal({ open, onClose }: { open: boolean; onClose: () => 
   // a regex scan, not work worth a memo.
   const selectedTemplateBody = selectedTemplate?.body ?? "";
   const varSlotCount = detectBodyVarSlots(selectedTemplateBody);
+  const namedVarLabels = extractBodyVarNames(selectedTemplateBody);
 
   // The mapping is the user's to edit, so it is state rather than a derived
   // value — but it must start over when a different template is picked, since
@@ -828,8 +846,10 @@ function CreateCampaignModal({ open, onClose }: { open: boolean; onClose: () => 
             <div className="space-y-2">
               {Array.from({ length: varSlotCount }, (_, i) => (
                 <div key={i} className="flex items-center gap-3">
-                  <span className="w-8 shrink-0 font-mono text-[11px] text-slate-500">
-                    {`{{${i + 1}}}`}
+                  <span className="w-24 shrink-0 font-mono text-[11px] text-slate-500">
+                    {namedVarLabels.length > 0
+                      ? `{{${namedVarLabels[i] ?? i + 1}}}`
+                      : `{{${i + 1}}}`}
                   </span>
                   <select
                     className={inputClass}

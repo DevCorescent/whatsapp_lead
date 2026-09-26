@@ -113,6 +113,11 @@ export interface CampaignSendJob {
   headerMediaId?: string;
   /** True when the template has an OTP COPY_CODE button — the OTP code (bodyParams[0]) is also sent as the button parameter. */
   hasOtpButton?: boolean;
+  /**
+   * The raw template body text. Carried so the worker can detect named vs positional parameters
+   * without an extra DB read. Required when the template uses named params ({{first_name}} style).
+   */
+  templateBody?: string;
 }
 
 // ─── Publishers ───────────────────────────────────────────────────────────────

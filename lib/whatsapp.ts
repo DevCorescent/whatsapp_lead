@@ -143,7 +143,7 @@ export async function sendTextMessage(
 // ─── Template message types (Meta Cloud API) ─────────────────────────────────
 
 export type WATemplateParameter =
-  | { type: "text"; text: string }
+  | { type: "text"; text: string; parameter_name?: string }
   | { type: "image"; image: { link: string } | { id: string } }
   | { type: "video"; video: { link: string } | { id: string } }
   | { type: "document"; document: { link: string; filename?: string } | { id: string } }
@@ -485,6 +485,7 @@ export interface WATemplateCreateComponent {
     header_handle?: string[];
     header_text?: string[];
     body_text?: string[][];
+    body_text_named_params?: Array<{ param_name: string; example: string }>;
   };
   buttons?: Array<{
     type: "QUICK_REPLY" | "URL" | "PHONE_NUMBER" | "OTP" | "COPY_CODE" | "VOICE_CALL";
@@ -510,6 +511,7 @@ export async function createMessageTemplate(
     language: string;
     category: string;
     components: WATemplateCreateComponent[];
+    parameter_format?: "named" | "positional";
   }
 ): Promise<WATemplateCreateResponse> {
   const res = await fetch(
@@ -535,6 +537,8 @@ export interface WATemplateListItem {
   category: string;
   language: string;
   rejection_reason?: string;
+  /** "named" when the template uses {{snake_case}} params, "positional" (default) for {{1}}, {{2}}. */
+  parameter_format?: "named" | "positional";
   components?: Array<{
     type: string;
     format?: string;
@@ -557,7 +561,7 @@ export async function listMessageTemplates(
   const GRAPH = `https://graph.facebook.com/${process.env.WHATSAPP_API_VERSION ?? "v19.0"}`;
   const results: WATemplateListItem[] = [];
   let url: string | null =
-    `${GRAPH}/${businessAccountId}/message_templates?fields=id,name,status,category,language,rejection_reason,components&limit=20`;
+    `${GRAPH}/${businessAccountId}/message_templates?fields=id,name,status,category,language,rejection_reason,parameter_format,components&limit=20`;
 
   while (url && results.length < limit) {
     const res = await fetch(url, { headers: { Authorization: `Bearer ${apiKey}` } });

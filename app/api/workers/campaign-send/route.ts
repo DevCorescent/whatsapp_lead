@@ -34,6 +34,7 @@ import { verifyQStashSignature } from "@/lib/qstash-verify";
 import { cachedBusinessCreds } from "@/lib/cache";
 import { resolveWhatsAppCreds } from "@/lib/business";
 import { sendTextMessage, sendTemplateMessage, type WATemplateComponent, type WATemplateParameter } from "@/lib/whatsapp";
+import { detectParameterFormat, extractNamedParams } from "@/lib/templates";
 import { prisma } from "@/lib/prisma";
 import type { CampaignSendJob } from "@/lib/queue";
 
@@ -226,10 +227,28 @@ export async function POST(req: NextRequest) {
         }
 
         if (job.bodyParams?.length) {
-          components.push({
-            type: "body",
-            parameters: job.bodyParams.map((text) => ({ type: "text" as const, text })),
-          });
+          // Named params ({{first_name}}) require parameter_name on each parameter.
+          // Positional ({{1}}) uses the ordered array as-is.
+          const isNamed = job.templateBody
+            ? detectParameterFormat(job.templateBody) === "NAMED"
+            : false;
+
+          if (isNamed && job.templateBody) {
+            const names = extractNamedParams(job.templateBody);
+            components.push({
+              type: "body",
+              parameters: names.map((name, i) => ({
+                type: "text" as const,
+                parameter_name: name,
+                text: job.bodyParams![i] ?? "",
+              })),
+            });
+          } else {
+            components.push({
+              type: "body",
+              parameters: job.bodyParams.map((text) => ({ type: "text" as const, text })),
+            });
+          }
         }
 
         // OTP button — the first body param (the OTP code) is also passed as the copy_code button parameter.

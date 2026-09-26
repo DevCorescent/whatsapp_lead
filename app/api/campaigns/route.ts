@@ -175,6 +175,7 @@ async function createCampaign(
   headerMediaId?: string | null,
   headerType?: string | null,
   hasOtpButton?: boolean,
+  templateBody?: string,
 ) {
   return prisma.$transaction(async (tx) => {
     const campaign = await tx.campaign.create({
@@ -186,7 +187,7 @@ async function createCampaign(
         status: scheduledAt ? CampaignStatus.SCHEDULED : CampaignStatus.RUNNING,
         ...(scheduledAt ? { scheduledAt } : { startedAt: new Date() }),
         totalCount: contacts.length,
-        metadata: { templateName, language, bodyVarMapping: input.bodyVarMapping, headerMediaUrl: headerMediaUrl ?? null, headerMediaId: headerMediaId ?? null, headerType: headerType ?? null, hasOtpButton: hasOtpButton ?? false },
+        metadata: { templateName, language, bodyVarMapping: input.bodyVarMapping, headerMediaUrl: headerMediaUrl ?? null, headerMediaId: headerMediaId ?? null, headerType: headerType ?? null, hasOtpButton: hasOtpButton ?? false, templateBody: templateBody ?? null },
       },
       select: { id: true },
     });
@@ -240,6 +241,7 @@ async function publishCampaign(
   contactsById: Map<string, CampaignRecipient>,
   scheduledAt?: Date | null,
   hasOtpButton?: boolean,
+  templateBody?: string,
 ): Promise<{ published: number; failed: number }> {
   let published = 0;
   let failed = 0;
@@ -284,6 +286,7 @@ async function publishCampaign(
           headerMediaId: headerMediaId ?? undefined,
           headerMediaUrl: headerMediaUrl ?? undefined,
           hasOtpButton: hasOtpButton ?? false,
+          templateBody: templateBody ?? undefined,
         },
         scheduledAt ?? undefined,
       );
@@ -428,7 +431,7 @@ export async function POST(req: NextRequest) {
     // Verify the template belongs to this tenant and is approved.
     const template = await prisma.messageTemplate.findFirst({
       where: { id: input.templateId, tenantId },
-      select: { id: true, name: true, language: true, status: true, headerType: true, buttons: true },
+      select: { id: true, name: true, language: true, status: true, headerType: true, buttons: true, body: true },
     });
     if (!template) {
       return NextResponse.json(
@@ -486,6 +489,7 @@ export async function POST(req: NextRequest) {
       input.headerMediaId,
       template.headerType,
       hasOtpButton,
+      template.body,
     );
 
     const contactsById = new Map(contacts.map((c) => [c.id, c]));
@@ -502,6 +506,7 @@ export async function POST(req: NextRequest) {
       contactsById,
       scheduledAt,
       hasOtpButton,
+      template.body,
     );
 
     if (published === 0 && recipients.length > 0) {

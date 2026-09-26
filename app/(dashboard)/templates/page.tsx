@@ -498,11 +498,27 @@ function TemplateModal({
   const [varExamples, setVarExamples] = useState<string[]>(editing?.variables ?? []);
   const [buttons, setButtons] = useState<TemplateButton[]>(editing?.buttons ?? []);
 
-  // Auto-detect how many {{n}} slots the body uses, keep varExamples in sync when count grows.
-  const bodyVarCount = (() => {
-    const indices = [...body.matchAll(/\{\{\s*(\d+)\s*\}\}/g)].map((m) => parseInt(m[1]));
-    return indices.length ? Math.max(...indices) : 0;
+  // Detect variable format from body text: named ({{first_name}}) or positional ({{1}})
+  const isNamedParams = /\{\{[a-z_][a-z0-9_]*\}\}/.test(body) && !/\{\{\d+\}\}/.test(body);
+  const namedParamNames: string[] = (() => {
+    if (!isNamedParams) return [];
+    const names: string[] = [];
+    const seen = new Set<string>();
+    const re = /\{\{([a-z_][a-z0-9_]*)\}\}/g;
+    let m: RegExpExecArray | null;
+    while ((m = re.exec(body)) !== null) {
+      if (!seen.has(m[1])) { seen.add(m[1]); names.push(m[1]); }
+    }
+    return names;
   })();
+
+  // Auto-detect how many {{n}} slots the body uses, keep varExamples in sync when count grows.
+  const bodyVarCount = isNamedParams
+    ? namedParamNames.length
+    : (() => {
+        const indices = [...body.matchAll(/\{\{\s*(\d+)\s*\}\}/g)].map((m) => parseInt(m[1]));
+        return indices.length ? Math.max(...indices) : 0;
+      })();
   if (varExamples.length < bodyVarCount) {
     setVarExamples((prev) => [...prev, ...Array(bodyVarCount - prev.length).fill("")]);
   }
@@ -769,6 +785,22 @@ function TemplateModal({
           )}
         </div>
 
+        {/* Variable type hint — chosen automatically by what's in the body */}
+        <div className="rounded-lg border border-slate-200 bg-slate-50 p-3 text-xs text-slate-600 space-y-1">
+          <p className="font-medium text-slate-700">Variable type</p>
+          <div className="flex gap-4">
+            <label className="flex items-center gap-1.5 cursor-pointer">
+              <input type="radio" name="paramFmt" checked={!isNamedParams} readOnly className="accent-emerald-600" />
+              <span><code className="rounded bg-slate-100 px-1">{"{{1}}"}</code>, <code className="rounded bg-slate-100 px-1">{"{{2}}"}</code>… — Number (positional)</span>
+            </label>
+            <label className="flex items-center gap-1.5 cursor-pointer">
+              <input type="radio" name="paramFmt" checked={isNamedParams} readOnly className="accent-emerald-600" />
+              <span><code className="rounded bg-slate-100 px-1">{"{{first_name}}"}</code>… — Name</span>
+            </label>
+          </div>
+          <p className="text-slate-400">Auto-detected from your body text. Use <code className="rounded bg-slate-100 px-1">{"{{1}}"}</code> for Number or <code className="rounded bg-slate-100 px-1">{"{{first_name}}"}</code> for Name format.</p>
+        </div>
+
         <Field label="Body" htmlFor="tpl-body" required>
           <textarea
             id="tpl-body"
@@ -776,10 +808,14 @@ function TemplateModal({
             onChange={(e) => setBody(e.target.value)}
             rows={5}
             className={cn(inputClass, "resize-y")}
-            placeholder={"Hi {{1}}, your order {{2}} has shipped."}
+            placeholder={isNamedParams
+              ? "Hi {{first_name}}, your order {{order_id}} has shipped."
+              : "Hi {{1}}, your order {{2}} has shipped."}
           />
           <p className="mt-1 text-xs text-slate-500">
-            Use numbered variables {"{{1}}"}, {"{{2}}"} in order. Provide an example for each below.
+            {isNamedParams
+              ? "Named variables: lowercase letters and underscores only, e.g. {{first_name}}, {{order_id}}."
+              : 'Numbered variables {{1}}, {{2}} in order. Provide an example for each below.'}
           </p>
         </Field>
 
@@ -792,8 +828,8 @@ function TemplateModal({
             <div className="space-y-2">
               {Array.from({ length: bodyVarCount }, (_, i) => (
                 <div key={i} className="flex items-center gap-2">
-                  <span className="w-14 shrink-0 rounded bg-slate-100 px-2 py-1.5 text-center font-mono text-xs text-slate-600">
-                    {`{{${i + 1}}}`}
+                  <span className="w-24 shrink-0 rounded bg-slate-100 px-2 py-1.5 text-center font-mono text-xs text-slate-600">
+                    {isNamedParams ? `{{${namedParamNames[i] ?? i + 1}}}` : `{{${i + 1}}}`}
                   </span>
                   <input
                     value={varExamples[i] ?? ""}
@@ -803,7 +839,9 @@ function TemplateModal({
                       setVarExamples(next);
                     }}
                     className={inputClass}
-                    placeholder={`Example value for {{${i + 1}}} — e.g. ${i === 0 ? "Aman" : i === 1 ? "#12345" : "sample"}`}
+                    placeholder={isNamedParams
+                      ? `Example for {{${namedParamNames[i] ?? i + 1}}} — e.g. ${i === 0 ? "Aman" : i === 1 ? "ORDER123" : "sample"}`
+                      : `Example for {{${i + 1}}} — e.g. ${i === 0 ? "Aman" : i === 1 ? "#12345" : "sample"}`}
                   />
                 </div>
               ))}
