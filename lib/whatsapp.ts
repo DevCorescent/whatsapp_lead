@@ -487,7 +487,7 @@ export interface WATemplateCreateComponent {
     body_text?: string[][];
   };
   buttons?: Array<{
-    type: "QUICK_REPLY" | "URL" | "PHONE_NUMBER" | "OTP";
+    type: "QUICK_REPLY" | "URL" | "PHONE_NUMBER" | "OTP" | "COPY_CODE" | "VOICE_CALL";
     text?: string;
     url?: string;
     phone_number?: string;

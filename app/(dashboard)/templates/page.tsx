@@ -443,8 +443,17 @@ function TemplateModal({
   );
   const [body, setBody] = useState(editing?.body ?? "");
   const [footer, setFooter] = useState(editing?.footer ?? "");
-  const [variables, setVariables] = useState((editing?.variables ?? []).join(", "));
+  const [varExamples, setVarExamples] = useState<string[]>(editing?.variables ?? []);
   const [buttons, setButtons] = useState<TemplateButton[]>(editing?.buttons ?? []);
+
+  // Auto-detect how many {{n}} slots the body uses, keep varExamples in sync when count grows.
+  const bodyVarCount = (() => {
+    const indices = [...body.matchAll(/\{\{\s*(\d+)\s*\}\}/g)].map((m) => parseInt(m[1]));
+    return indices.length ? Math.max(...indices) : 0;
+  })();
+  if (varExamples.length < bodyVarCount) {
+    setVarExamples((prev) => [...prev, ...Array(bodyVarCount - prev.length).fill("")]);
+  }
 
   const pending = create.isPending || update.isPending;
   const headerHasVar = headerType === "TEXT" && hasPlaceholder(headerContent);
@@ -473,7 +482,7 @@ function TemplateModal({
 
   const submit = () => {
     setError(null);
-    const varList = variables.split(",").map((v) => v.trim()).filter(Boolean);
+    const varList = varExamples.map((v) => v.trim()).filter(Boolean);
     const payload: TemplateInput = {
       name: name.trim(),
       category,
@@ -572,7 +581,7 @@ function TemplateModal({
           </Field>
 
           {headerType === "TEXT" && (
-            <>
+            <div className="space-y-1.5">
               <input
                 value={headerContent}
                 onChange={(e) => setHeaderContent(e.target.value)}
@@ -580,14 +589,19 @@ function TemplateModal({
                 placeholder="Your order is confirmed  (use {{1}} for a variable)"
               />
               {headerHasVar && (
-                <input
-                  value={headerVarExample}
-                  onChange={(e) => setHeaderVarExample(e.target.value)}
-                  className={inputClass}
-                  placeholder="Example value for {{1}} in header (e.g. Aman)"
-                />
+                <div>
+                  <p className="mb-1 text-xs font-medium text-slate-600">
+                    Example value for <code className="rounded bg-slate-100 px-1">{"{{1}}"}</code> in header
+                  </p>
+                  <input
+                    value={headerVarExample}
+                    onChange={(e) => setHeaderVarExample(e.target.value)}
+                    className={inputClass}
+                    placeholder="e.g. Aman"
+                  />
+                </div>
               )}
-            </>
+            </div>
           )}
 
           {(headerType === "IMAGE" || headerType === "VIDEO" || headerType === "DOCUMENT") && (
@@ -713,15 +727,36 @@ function TemplateModal({
           </p>
         </Field>
 
-        <Field label="Variable examples (comma-separated)" htmlFor="tpl-vars">
-          <input
-            id="tpl-vars"
-            value={variables}
-            onChange={(e) => setVariables(e.target.value)}
-            className={inputClass}
-            placeholder="Aman, #12345"
-          />
-        </Field>
+        {bodyVarCount > 0 && (
+          <div>
+            <p className="mb-2 text-sm font-medium text-slate-700">
+              Variable examples
+              <span className="ml-1.5 text-xs font-normal text-slate-400">(required for Meta review)</span>
+            </p>
+            <div className="space-y-2">
+              {Array.from({ length: bodyVarCount }, (_, i) => (
+                <div key={i} className="flex items-center gap-2">
+                  <span className="w-14 shrink-0 rounded bg-slate-100 px-2 py-1.5 text-center font-mono text-xs text-slate-600">
+                    {`{{${i + 1}}}`}
+                  </span>
+                  <input
+                    value={varExamples[i] ?? ""}
+                    onChange={(e) => {
+                      const next = [...varExamples];
+                      next[i] = e.target.value;
+                      setVarExamples(next);
+                    }}
+                    className={inputClass}
+                    placeholder={`Example value for {{${i + 1}}} — e.g. ${i === 0 ? "Aman" : i === 1 ? "#12345" : "sample"}`}
+                  />
+                </div>
+              ))}
+            </div>
+            <p className="mt-1.5 text-[11px] text-slate-400">
+              These examples are shown to Meta reviewers only — not sent to customers.
+            </p>
+          </div>
+        )}
 
         <Field label="Footer (optional)" htmlFor="tpl-footer">
           <input
@@ -749,12 +784,14 @@ function TemplateModal({
                 <div className="flex flex-wrap items-center gap-2">
                   <select
                     value={b.type}
-                    onChange={(e) => updateButton(i, { type: e.target.value as TemplateButton["type"], urlType: undefined, urlExample: undefined, otpType: e.target.value === "OTP" ? "COPY_CODE" : undefined })}
+                    onChange={(e) => updateButton(i, { type: e.target.value as TemplateButton["type"], urlType: undefined, urlExample: undefined, otpType: e.target.value === "OTP" ? "COPY_CODE" : undefined, offerCode: undefined })}
                     className={cn(inputClass, "w-36")}
                   >
                     <option value="QUICK_REPLY">Quick reply</option>
-                    <option value="URL">URL</option>
-                    <option value="PHONE_NUMBER">Phone</option>
+                    <option value="URL">Visit website</option>
+                    <option value="PHONE_NUMBER">Call phone number</option>
+                    <option value="VOICE_CALL">Call on WhatsApp</option>
+                    <option value="COPY_CODE">Copy offer code</option>
                     <option value="OTP">Copy Code (OTP)</option>
                   </select>
                   <input
@@ -797,21 +834,36 @@ function TemplateModal({
                   </div>
                 )}
 
-                {b.type === "PHONE_NUMBER" && (
+                {(b.type === "PHONE_NUMBER" || b.type === "VOICE_CALL") && (
                   <div className="pl-1">
                     <input
                       value={b.phone ?? ""}
                       onChange={(e) => updateButton(i, { phone: e.target.value })}
                       className={inputClass}
-                      placeholder="+15551234567"
+                      placeholder="+919876543210"
                     />
+                    {b.type === "VOICE_CALL" && (
+                      <p className="mt-1 text-[11px] text-slate-400">Opens a WhatsApp call to this number.</p>
+                    )}
+                  </div>
+                )}
+
+                {b.type === "COPY_CODE" && (
+                  <div className="pl-1">
+                    <input
+                      value={b.offerCode ?? ""}
+                      onChange={(e) => updateButton(i, { offerCode: e.target.value })}
+                      className={inputClass}
+                      placeholder="Offer code — e.g. SAVE20"
+                    />
+                    <p className="mt-1 text-[11px] text-slate-400">Customer taps to copy this code to clipboard.</p>
                   </div>
                 )}
 
                 {b.type === "OTP" && (
                   <div className="pl-1">
                     <p className="text-xs text-slate-500">
-                      Meta will show a "Copy Code" button. At send time, pass the OTP code as the first body variable — it will be injected into both the message body and this button automatically.
+                      Meta shows a "Copy Code" button for the OTP. Pass the code as body variable <code className="rounded bg-slate-100 px-1">{"{{1}}"}</code> — it goes to both body and button automatically.
                     </p>
                   </div>
                 )}

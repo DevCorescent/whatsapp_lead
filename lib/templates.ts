@@ -113,6 +113,7 @@ type TemplateButton = {
   phone?: string;
   urlType?: "STATIC" | "DYNAMIC";
   urlExample?: string;
+  offerCode?: string;
 };
 
 function parseButtons(buttons: MessageTemplate["buttons"]): TemplateButton[] {
@@ -166,6 +167,8 @@ export function buildComponents(t: MessageTemplate): WATemplateCreateComponent[]
         }
         if (b.type === "PHONE_NUMBER") return { type: "PHONE_NUMBER" as const, text: b.text, phone_number: b.phone ?? "" };
         if (b.type === "OTP") return { type: "OTP" as const, otp_type: "COPY_CODE" as const, text: b.text };
+        if (b.type === "COPY_CODE") return { type: "COPY_CODE" as const, example: [b.offerCode || "DISCOUNT20"] };
+        if (b.type === "VOICE_CALL") return { type: "VOICE_CALL" as const, text: b.text, phone_number: b.phone ?? "" };
         return { type: "QUICK_REPLY" as const, text: b.text };
       }),
     });
