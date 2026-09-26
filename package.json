@@ -29,6 +29,7 @@
     "@types/nodemailer": "^8.0.1",
     "@upstash/qstash": "^2.11.3",
     "@upstash/redis": "^1.38.0",
+    "@vercel/blob": "^2.8.0",
     "@xyflow/react": "^12.11.2",
     "bcryptjs": "^3.0.3",
     "cheerio": "^1.2.0",

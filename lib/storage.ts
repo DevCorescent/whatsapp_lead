@@ -1,16 +1,19 @@
 // ============================================================================
 // MODULE : Media storage (server-only)
 //
-// A thin, tenant-partitioned object store for inbox attachments backed by the
-// local filesystem. There is no existing storage layer in the codebase and no
-// cloud client installed, so uploads land on disk under a per-tenant directory;
-// swapping this file for an S3/GCS implementation later needs no change to its
-// callers, which only ever see the `save`/`read` contract.
+// Tenant-partitioned object store for inbox attachments.
 //
-// Tenant isolation is structural: every asset lives beneath `<base>/<tenantId>/`,
-// and both the writer and the reader validate the tenant and file segments against
-// strict patterns before they touch the filesystem, so a crafted id can never walk
-// out of its tenant's directory.
+// Production (Vercel Blob): when BLOB_READ_WRITE_TOKEN is present, files are
+// uploaded to Vercel's CDN and a permanent public URL is returned. The
+// /api/media/[...path] serve route is not involved — the blob URL is served
+// directly from Vercel's edge, so there is no auth gate and no ephemeral
+// filesystem problem.
+//
+// Local dev / fallback: without the token, files land on the local filesystem
+// under os.tmpdir()/whatscrm-uploads and are served through the authenticated
+// /api/media route. This path is not viable on serverless runtimes (the
+// filesystem is not shared between function instances), but is fine for local
+// development where a single process handles all requests.
 // ============================================================================
 
 import { randomUUID } from "node:crypto";
@@ -18,23 +21,12 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
-/**
- * Root of the media store.
- *
- * Configurable so a deployment can point it at a mounted volume; defaults to an
- * `uploads/` directory at the project root (gitignored). Kept outside `public/`
- * on purpose — assets are served through an authenticated route, never as static
- * files, so tenant scoping cannot be bypassed by guessing a path.
- */
-// On Vercel (and any read-only serverless runtime), process.cwd() is /var/task which
-// cannot be written to. Fall back to the OS temp directory so uploads do not hard-fail.
-// For a durable production setup set MEDIA_UPLOAD_DIR to a network-attached volume path.
+/** Public base URL — used to build absolute media URLs for local-dev fallback. */
+const APP_URL = (process.env.NEXT_PUBLIC_APP_URL ?? "https://whatsapp-lead-five.vercel.app").replace(/\/$/, "");
+
 const BASE_DIR = process.env.MEDIA_UPLOAD_DIR
   ? path.resolve(process.env.MEDIA_UPLOAD_DIR)
   : path.join(os.tmpdir(), "whatscrm-uploads");
-
-/** Public base URL — used to build absolute media URLs that Meta can fetch. */
-const APP_URL = (process.env.NEXT_PUBLIC_APP_URL ?? "https://whatsapp-lead-five.vercel.app").replace(/\/$/, "");
 
 /** cuid/uuid-shaped ids and simple extensions only — nothing that can traverse. */
 const SEGMENT_RE = /^[a-zA-Z0-9_-]+$/;
@@ -52,16 +44,20 @@ function assertSafe(tenantId: string, fileName: string): void {
 export interface StoredMedia {
   /** Opaque `<uuid>.<ext>` file name, unique within the tenant. */
   fileName: string;
-  /** Authenticated URL the browser fetches the asset from. */
+  /**
+   * URL to load the asset from.
+   * - With Vercel Blob: a permanent public CDN URL (blob.vercel-storage.com/…).
+   * - Without it: an authenticated /api/media/… URL (local dev only).
+   */
   url: string;
 }
 
 /**
- * Persist an uploaded asset under its tenant and return its handle.
+ * Persist an uploaded asset and return its handle.
  *
- * The file name is a fresh UUID rather than the user's original name: two agents
- * uploading `invoice.pdf` must not collide, and the original name is preserved as
- * message metadata for display, not as the storage key.
+ * Uses Vercel Blob when BLOB_READ_WRITE_TOKEN is set (production). Falls back
+ * to the local filesystem for local development. The returned URL is always
+ * absolute and loadable by the browser that owns a session.
  */
 export async function saveMedia(
   tenantId: string,
@@ -72,19 +68,28 @@ export async function saveMedia(
   const fileName = `${randomUUID()}.${ext}`;
   assertSafe(tenantId, fileName);
 
+  if (process.env.BLOB_READ_WRITE_TOKEN) {
+    // Vercel Blob: persistent CDN storage, public URL, no serve route needed.
+    const { put } = await import("@vercel/blob");
+    const blob = await put(`${tenantId}/${fileName}`, bytes, {
+      access: "public",
+      addRandomSuffix: false,
+    });
+    return { fileName, url: blob.url };
+  }
+
+  // Local filesystem fallback (local dev only — not shared between serverless instances).
   const dir = path.join(BASE_DIR, tenantId);
   await mkdir(dir, { recursive: true });
   await writeFile(path.join(dir, fileName), bytes);
-
   return { fileName, url: `${APP_URL}/api/media/${tenantId}/${fileName}` };
 }
 
 /**
  * Read a stored asset back, or null when it does not exist.
  *
- * The caller is responsible for having already checked that `tenantId` matches the
- * requesting session; this function only guards against path traversal, not against
- * cross-tenant access.
+ * Only used on the local-filesystem path; on Vercel Blob the browser loads the
+ * public CDN URL directly and never calls /api/media/[...path].
  */
 export async function readMedia(tenantId: string, fileName: string): Promise<Buffer | null> {
   assertSafe(tenantId, fileName);
