@@ -5,6 +5,8 @@ import {
   AlertCircle,
   AlertTriangle,
   CheckCircle2,
+  ChevronDown,
+  KeyRound,
   Link2Off,
   Loader2,
   Pencil,
@@ -17,6 +19,7 @@ import { useBusinesses, type BusinessDTO } from "@/hooks/useBusinesses";
 import {
   useConnectWhatsApp,
   useDisconnectWhatsApp,
+  useManualConnectWhatsApp,
   useTestWhatsAppConnection,
   useUpdateWhatsAppIntegration,
   useWhatsAppIntegrations,
@@ -330,6 +333,7 @@ export function WhatsAppConnectCard({ businessId }: { businessId?: string }) {
   } = useWhatsAppIntegrations(target?.id);
 
   const connect = useConnectWhatsApp();
+  const manualConnect = useManualConnectWhatsApp();
   const disconnect = useDisconnectWhatsApp();
   const test = useTestWhatsAppConnection();
   const updateIntegration = useUpdateWhatsAppIntegration();
@@ -339,6 +343,12 @@ export function WhatsAppConnectCard({ businessId }: { businessId?: string }) {
   const [warnings, setWarnings] = useState<string[]>([]);
   const [testOutcomes, setTestOutcomes] = useState<Record<string, TestOutcome>>({});
   const [confirmDisconnect, setConfirmDisconnect] = useState<WhatsAppIntegrationDTO | null>(null);
+
+  // Manual credential entry form
+  const [manualOpen, setManualOpen] = useState(false);
+  const [manualToken, setManualToken] = useState("");
+  const [manualPhoneId, setManualPhoneId] = useState("");
+  const [manualWabaId, setManualWabaId] = useState("");
   // The number being renamed, and the draft label. Only our own label is editable
   // here — Meta's identifiers and every credential are refused by the endpoint.
   const [renaming, setRenaming] = useState<WhatsAppIntegrationDTO | null>(null);
@@ -521,6 +531,38 @@ export function WhatsAppConnectCard({ businessId }: { businessId?: string }) {
     );
   };
 
+  const submitManual = () => {
+    const token = manualToken.trim();
+    const phoneId = manualPhoneId.trim();
+    const wabaId = manualWabaId.trim();
+    if (!token || !phoneId || !wabaId) return;
+    setError(null);
+    setNotice(null);
+    setWarnings([]);
+    manualConnect.mutate(
+      { accessToken: token, phoneNumberId: phoneId, wabaId, businessId: target?.id },
+      {
+        onSuccess: (result) => {
+          const number =
+            result.data.integration.phoneNumber ?? result.data.integration.displayName ?? "WhatsApp";
+          setWarnings(result.warnings ?? []);
+          setNotice(
+            result.data.created
+              ? `${number} is connected.`
+              : `${number} was already connected — its credentials were updated.`,
+          );
+          setManualToken("");
+          setManualPhoneId("");
+          setManualWabaId("");
+          setManualOpen(false);
+        },
+        onError: (err) => {
+          setError(err instanceof Error ? err.message : "Could not complete the connection");
+        },
+      },
+    );
+  };
+
   const runTest = (integration: WhatsAppIntegrationDTO) => {
     setTestOutcomes((prev) => withoutKey(prev, integration.id));
     test.mutate(integration.id, {
@@ -610,7 +652,7 @@ export function WhatsAppConnectCard({ businessId }: { businessId?: string }) {
     );
   }
 
-  const busy = connect.isPending;
+  const busy = connect.isPending || manualConnect.isPending;
   const sdkLoading = config?.enabled && !fbReady;
 
   return (
@@ -698,6 +740,110 @@ export function WhatsAppConnectCard({ businessId }: { businessId?: string }) {
             </p>
           </div>
         )}
+
+        {/* ── Manual credential entry ───────────────────────────────────────
+            Shown as an alternative when Embedded Signup is configured, or as the
+            only option when it is not. Users who already have a permanent system
+            user access token can use this instead of the Facebook flow.         */}
+        <div className="mt-4">
+          <button
+            type="button"
+            onClick={() => setManualOpen((v) => !v)}
+            className="flex items-center gap-1.5 text-sm text-slate-500 hover:text-slate-700 transition-colors"
+            aria-expanded={manualOpen}
+          >
+            <KeyRound className="h-3.5 w-3.5 shrink-0" aria-hidden />
+            {config?.enabled ? "Or enter credentials manually" : "Enter credentials manually"}
+            <ChevronDown
+              className={cn("h-3.5 w-3.5 shrink-0 transition-transform", manualOpen && "rotate-180")}
+              aria-hidden
+            />
+          </button>
+
+          {manualOpen && (
+            <form
+              onSubmit={(e) => { e.preventDefault(); submitManual(); }}
+              className="mt-3 space-y-3 rounded-xl border border-slate-200 bg-slate-50/60 p-4"
+            >
+              <p className="text-xs text-slate-500">
+                Get these from{" "}
+                <span className="font-medium text-slate-700">Meta Business Suite → WhatsApp Manager</span>{" "}
+                or a permanent system-user access token. The token is encrypted before it is stored.
+              </p>
+
+              <Field label="Access Token">
+                <input
+                  className={inputClass}
+                  type="password"
+                  value={manualToken}
+                  onChange={(e) => setManualToken(e.target.value)}
+                  placeholder="EAAx…"
+                  autoComplete="off"
+                  required
+                />
+              </Field>
+
+              <Field label="Phone Number ID">
+                <input
+                  className={inputClass}
+                  value={manualPhoneId}
+                  onChange={(e) => setManualPhoneId(e.target.value)}
+                  placeholder="1234567890"
+                  autoComplete="off"
+                  required
+                />
+              </Field>
+
+              <Field label="WhatsApp Business Account (WABA) ID">
+                <input
+                  className={inputClass}
+                  value={manualWabaId}
+                  onChange={(e) => setManualWabaId(e.target.value)}
+                  placeholder="0987654321"
+                  autoComplete="off"
+                  required
+                />
+              </Field>
+
+              <div className="flex justify-end gap-2">
+                <Button
+                  type="button"
+                  variant="secondary"
+                  size="sm"
+                  onClick={() => {
+                    setManualOpen(false);
+                    setManualToken("");
+                    setManualPhoneId("");
+                    setManualWabaId("");
+                  }}
+                  disabled={manualConnect.isPending}
+                >
+                  Cancel
+                </Button>
+                <Button
+                  type="submit"
+                  size="sm"
+                  disabled={
+                    manualConnect.isPending ||
+                    !manualToken.trim() ||
+                    !manualPhoneId.trim() ||
+                    !manualWabaId.trim() ||
+                    !target
+                  }
+                >
+                  {manualConnect.isPending ? (
+                    <>
+                      <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />
+                      Connecting…
+                    </>
+                  ) : (
+                    "Connect"
+                  )}
+                </Button>
+              </div>
+            </form>
+          )}
+        </div>
 
         {integrationsError && (
           <p className="mt-4 text-sm text-rose-600">

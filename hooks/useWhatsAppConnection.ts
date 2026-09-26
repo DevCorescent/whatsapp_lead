@@ -216,6 +216,35 @@ export function useUpdateWhatsAppIntegration() {
   });
 }
 
+export interface ManualConnectInput {
+  accessToken: string;
+  phoneNumberId: string;
+  wabaId: string;
+  businessId?: string;
+}
+
+export interface ManualConnectResult {
+  data: {
+    integration: Omit<WhatsAppIntegrationDTO, "businessId" | "createdAt" | "updatedAt">;
+    created: boolean;
+  };
+  warnings: string[];
+}
+
+/** Connect a WhatsApp number by entering credentials (access token, phone number ID, WABA ID) directly. */
+export function useManualConnectWhatsApp() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (input: ManualConnectInput) =>
+      postJson<ManualConnectResult>(
+        "/api/integrations/whatsapp/manual",
+        input,
+        "Could not complete the WhatsApp connection",
+      ),
+    onSuccess: () => invalidateConnectionState(queryClient),
+  });
+}
+
 /** Test ONE WhatsApp number against Meta. Refreshes that number's stored details. */
 export function useTestWhatsAppConnection() {
   const queryClient = useQueryClient();
