@@ -674,13 +674,12 @@ export async function getMessageTemplate(
   businessAccountId: string,
   apiKey: string,
   waTemplateId: string
-): Promise<{ id: string; name: string; status: string; rejection_reason?: string }> {
+): Promise<{ id: string; name: string; status: string; rejection_reason?: string } | null> {
   const res = await fetch(
     `https://graph.facebook.com/${process.env.WHATSAPP_API_VERSION ?? "v19.0"}/${waTemplateId}?fields=id,name,status,rejection_reason`,
-    {
-      headers: { Authorization: `Bearer ${apiKey}` },
-    }
+    { headers: { Authorization: `Bearer ${apiKey}` } }
   );
+  if (res.status === 404) return null; // template deleted from Meta
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));
     throw new Error((body as { error?: { message?: string } }).error?.message ?? "Failed to fetch template");

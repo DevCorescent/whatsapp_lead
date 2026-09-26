@@ -377,12 +377,26 @@ export async function submitTemplate(id: string, businessId: string): Promise<Me
 export async function refreshTemplate(id: string, businessId: string): Promise<MessageTemplate> {
   const template = await prisma.messageTemplate.findFirst({ where: { id, businessId } });
   if (!template) throw new TemplateCredsError("Template not found");
-  if (!template.waTemplateId) return template;
+  // No Meta ID — template was never actually submitted; reset to DRAFT so it can be resubmitted.
+  if (!template.waTemplateId) {
+    if (template.status === "SUBMITTED" || template.status === "PENDING") {
+      return prisma.messageTemplate.update({ where: { id }, data: { status: "DRAFT" } });
+    }
+    return template;
+  }
 
   const { wabaId, apiKey } = await getBusinessTemplateCreds(businessId);
   const meta = await getMessageTemplate(wabaId, apiKey, template.waTemplateId);
-  const status = mapMetaStatus(meta.status);
 
+  // Template was deleted from Meta — mark it disabled so the UI reflects reality.
+  if (!meta) {
+    return prisma.messageTemplate.update({
+      where: { id },
+      data: { status: "DISABLED", lastSyncedAt: new Date() },
+    });
+  }
+
+  const status = mapMetaStatus(meta.status);
   return prisma.messageTemplate.update({
     where: { id },
     data: {
@@ -521,7 +535,7 @@ export async function importTemplatesFromMeta(
 /** Sync every in-review template for one business (used by the manual "Sync all"). */
 export async function syncBusinessTemplates(businessId: string): Promise<{ synced: number }> {
   const pending = await prisma.messageTemplate.findMany({
-    where: { businessId, status: { in: ["SUBMITTED", "PENDING"] }, waTemplateId: { not: null } },
+    where: { businessId, status: { in: ["SUBMITTED", "PENDING"] } },
     select: { id: true },
   });
   let synced = 0;
@@ -539,7 +553,7 @@ export async function syncBusinessTemplates(businessId: string): Promise<{ synce
 /** Sync every in-review template across all businesses (used by the cron). */
 export async function syncAllTemplates(): Promise<{ total: number; synced: number }> {
   const pending = await prisma.messageTemplate.findMany({
-    where: { status: { in: ["SUBMITTED", "PENDING"] }, waTemplateId: { not: null } },
+    where: { status: { in: ["SUBMITTED", "PENDING"] } },
     select: { id: true, businessId: true },
     take: 500,
   });
