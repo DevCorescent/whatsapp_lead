@@ -667,6 +667,55 @@ export class MetaTemplateError extends Error {
   }
 }
 
+/**
+ * Upload a sample media file for a WhatsApp template header using Meta's Resumable Upload API.
+ * Returns the file handle (h) in the format "4::aW..." required by template creation as header_handle.
+ * This is DIFFERENT from the regular /{phone-number-id}/media endpoint which returns a numeric media_id
+ * that is NOT accepted as a header_handle.
+ */
+export async function uploadTemplateHeaderMedia(
+  apiKey: string,
+  file: Blob,
+  mimeType: string,
+  filename: string
+): Promise<string> {
+  const GRAPH = `https://graph.facebook.com/${process.env.WHATSAPP_API_VERSION ?? "v19.0"}`;
+  const bytes = await file.arrayBuffer();
+  const fileSize = bytes.byteLength;
+
+  // Step 1: Create an upload session
+  const sessionRes = await fetch(
+    `${GRAPH}/app/uploads?file_name=${encodeURIComponent(filename)}&file_length=${fileSize}&file_type=${encodeURIComponent(mimeType)}`,
+    { method: "POST", headers: { Authorization: `Bearer ${apiKey}` } }
+  );
+  if (!sessionRes.ok) {
+    const err = await sessionRes.json().catch(() => ({}));
+    throw new Error(
+      (err as { error?: { message?: string } }).error?.message ?? "Failed to create upload session"
+    );
+  }
+  const { id: uploadSessionId } = await sessionRes.json() as { id: string };
+
+  // Step 2: Upload the file binary
+  const uploadRes = await fetch(`${GRAPH}/${uploadSessionId}`, {
+    method: "POST",
+    headers: {
+      Authorization: `OAuth ${apiKey}`,
+      file_offset: "0",
+    },
+    body: bytes,
+  });
+  if (!uploadRes.ok) {
+    const err = await uploadRes.json().catch(() => ({}));
+    throw new Error(
+      (err as { error?: { message?: string } }).error?.message ?? "Failed to upload template media"
+    );
+  }
+  const { h } = await uploadRes.json() as { h: string };
+  if (!h) throw new Error("Upload succeeded but no file handle (h) returned by Meta");
+  return h;
+}
+
 export async function createMessageTemplate(
   businessAccountId: string,
   apiKey: string,

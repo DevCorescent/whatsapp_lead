@@ -16,8 +16,8 @@ export interface TemplateInput {
   category: "MARKETING" | "UTILITY" | "AUTHENTICATION";
   language?: string;
   body: string;
-  headerType?: "TEXT" | "IMAGE" | "VIDEO" | "DOCUMENT";
-  headerContent?: string;
+  headerType?: "TEXT" | "IMAGE" | "VIDEO" | "DOCUMENT" | null;
+  headerContent?: string | null;
   headerVariables?: string[];
   footer?: string;
   buttons?: TemplateButton[];

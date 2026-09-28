@@ -630,10 +630,10 @@ function TemplateModal({
     const form = new FormData();
     form.append("file", file);
     try {
-      const res = await fetch("/api/campaigns/upload-media", { method: "POST", body: form });
-      const json = await res.json() as { success: boolean; data?: { mediaId: string }; error?: string };
+      const res = await fetch("/api/templates/upload-media", { method: "POST", body: form });
+      const json = await res.json() as { success: boolean; data?: { handle: string }; error?: string };
       if (!res.ok || !json.success) throw new Error(json.error ?? "Upload failed");
-      setHeaderContent(json.data!.mediaId);
+      setHeaderContent(json.data!.handle);
       setHeaderUploadState("done");
     } catch (err) {
       setHeaderUploadState("error");
@@ -653,8 +653,9 @@ function TemplateModal({
       category,
       language,
       body,
-      headerType: headerType !== "NONE" ? (headerType as TemplateInput["headerType"]) : undefined,
-      headerContent: headerType !== "NONE" && headerContent.trim() ? headerContent.trim() : undefined,
+      // null explicitly clears the header when editing (undefined would leave old value in DB)
+      headerType: headerType !== "NONE" ? (headerType as TemplateInput["headerType"]) : null,
+      headerContent: headerType !== "NONE" && headerContent.trim() ? headerContent.trim() : null,
       headerVariables: headerHasVar && headerVarExample.trim() ? [headerVarExample.trim()] : [],
       footer: footer.trim() || undefined,
       buttons: buttons.length > 0 ? buttons : undefined,
