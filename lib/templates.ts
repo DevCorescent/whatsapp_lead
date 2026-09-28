@@ -199,8 +199,16 @@ export function buildComponents(t: MessageTemplate): WATemplateCreateComponent[]
     }
   }
 
-  // Body — trim trailing whitespace; Meta rejects bodies that end with \n or spaces (error 131009).
-  const bodyComponent: WATemplateCreateComponent = { type: "BODY", text: t.body.trimEnd() };
+  // Sanitise body before sending to Meta:
+  // trimEnd removes trailing newline/space that triggers 131009; hidden char strip removes invisible Unicode
+  const cleanBody = t.body
+    .trimEnd()
+    .replace(new RegExp(
+      [0x00A0,0x200B,0x200C,0x200D,0x00AD,0xFEFF,0x2028,0x2029]
+        .map(c => String.fromCharCode(c)).join("|"),
+      "g"
+    ), "");
+  const bodyComponent: WATemplateCreateComponent = { type: "BODY", text: cleanBody };
   const fmt = detectParameterFormat(t.body);
   if (fmt === "NAMED") {
     const namedParams = extractNamedParams(t.body);
@@ -286,6 +294,22 @@ export async function getBusinessTemplateCreds(businessId: string): Promise<{ wa
  * via the atomic status claim). On success stores the Meta template ID and moves
  * the local status to SUBMITTED.
  */
+function translateMetaSubmitError(error: unknown): string {
+  if (!(error instanceof MetaTemplateError)) {
+    return error instanceof Error ? error.message : "Submission failed";
+  }
+  switch (error.code) {
+    case 131009:
+      return "Meta rejected a value in the template (error 131009). Common causes: bold text starting with punctuation like an em dash (*— text* → fix to — *text*), hidden characters pasted from Word, tabs, or more than 2 blank lines in a row. Edit the template body and fix the formatting.";
+    case 132007:
+      return "Meta rejected this template for violating WhatsApp Business Policy (error 132007). Review the content for prohibited industries, misleading claims, or sensitive financial/personal data requests.";
+    case 132000:
+      return "Variable count mismatch (error 132000) — the number of example values doesn't match the number of {{placeholders}} in the body.";
+    default:
+      return error.details ? `${error.metaMessage} — ${error.details}` : error.metaMessage;
+  }
+}
+
 export async function submitTemplate(id: string, businessId: string): Promise<MessageTemplate> {
   const template = await prisma.messageTemplate.findFirst({ where: { id, businessId } });
   if (!template) throw new TemplateCredsError("Template not found");
@@ -351,10 +375,11 @@ export async function submitTemplate(id: string, businessId: string): Promise<Me
     });
   } catch (error) {
     // Roll the status back so the operator can fix and retry the submission.
-    const message = error instanceof Error ? error.message : "Submission failed";
+    const rawMessage = error instanceof Error ? error.message : "Submission failed";
+    const message = translateMetaSubmitError(error);
     await prisma.messageTemplate.update({
       where: { id },
-      data: { status: "DRAFT", rejectionReason: message.slice(0, 1000) },
+      data: { status: "DRAFT", rejectionReason: rawMessage.slice(0, 1000) },
     });
 
     // Attach full Meta error details to the debug payload so the UI can show them.

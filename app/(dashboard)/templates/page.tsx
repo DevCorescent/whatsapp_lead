@@ -560,6 +560,19 @@ function TemplateModal({
       return "Body cannot start with a variable — Meta requires at least one character before the first {{placeholder}} (error 2388299).";
     if (/\}\}\s*$/.test(body))
       return "Body cannot end with a variable — Meta requires at least one character after the last {{placeholder}} (error 2388299).";
+    // Bold span *— text* (em dash after asterisk) - Meta validator expects a word char after *
+    if (body[body.indexOf("*") + 1] === "\u2014" || body[body.indexOf("*") + 1] === "\u2013" ||
+        ([...body].some((c, i) => (c === "*") && i + 1 < body.length && [0x2014, 0x2013, 0x2022].includes(body.charCodeAt(i + 1)))))
+      return "A bold span starts with punctuation (e.g. *— text*). Move the punctuation outside the asterisks: — *text* instead of *— text* (error 131009).";
+    // Hidden characters pasted from word processors - invisible but fatal to Meta
+    if ([...body].some((c) => [0x00A0, 0x200B, 0x200C, 0x200D, 0x00AD, 0xFEFF, 0x2028, 0x2029].includes(c.charCodeAt(0))))
+      return "Body contains hidden characters (non-breaking space, zero-width joiner, etc.) - likely pasted from Word. Clear and retype the body, or paste into Notepad first to strip them (error 131009).";
+        // More than 2 consecutive blank lines
+    if (/\n{4,}/.test(body))
+      return "Body has more than 2 consecutive blank lines — Meta rejects excessive empty lines.";
+    // Tabs
+    if (/\t/.test(body))
+      return "Body contains tab characters — replace them with spaces (Meta rejects tabs in template text).";
     // Non-sequential numbered variables e.g. {{1}}, {{3}} skipping {{2}}
     const indices = [...body.matchAll(/\{\{\s*(\d+)\s*\}\}/g)].map((m) => parseInt(m[1]));
     const unique = [...new Set(indices)].sort((a, b) => a - b);
