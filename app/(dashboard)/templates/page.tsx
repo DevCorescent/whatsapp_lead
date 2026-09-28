@@ -545,21 +545,54 @@ function TemplateModal({
   const headerHasVar = headerType === "TEXT" && hasPlaceholder(headerContent);
 
   // ── Draft-time validation ─────────────────────────────────────────────────
-  // Catch Meta rejection causes before the user even saves — errors shown inline
-  // under each field so they can be fixed without a round-trip to Meta.
+  // Covers every known Meta rejection cause so errors surface before submission.
   const bodyError: string | null = (() => {
-    if (!body.trim()) return null; // empty body handled by required attr
-    if (body.length > 1024) return `Body is ${body.length} chars — Meta's limit is 1,024.`;
+    if (!body.trim()) return null;
+    if (body.length > 1024)
+      return `Body is ${body.length} chars — Meta's limit is 1,024.`;
     if (/\*\*[^*\n]+\*\*/.test(body))
       return "Use single *asterisks* for bold, not **double** — WhatsApp rejects double-asterisk formatting (error 131009).";
     if (/(?<![_])__[^_\n]+__/.test(body))
       return "Use single _underscores_ for italic, not __double__.";
+    if (/\s$/.test(body))
+      return "Remove the trailing space or newline at the end — Meta rejects bodies that end with whitespace (error 131009).";
+    if (/^\s*\{\{/.test(body))
+      return "Body cannot start with a variable — Meta requires at least one character before the first {{placeholder}} (error 2388299).";
+    if (/\}\}\s*$/.test(body))
+      return "Body cannot end with a variable — Meta requires at least one character after the last {{placeholder}} (error 2388299).";
+    // Non-sequential numbered variables e.g. {{1}}, {{3}} skipping {{2}}
+    const indices = [...body.matchAll(/\{\{\s*(\d+)\s*\}\}/g)].map((m) => parseInt(m[1]));
+    const unique = [...new Set(indices)].sort((a, b) => a - b);
+    if (unique.length > 0 && unique[0] !== 1)
+      return `Variables must start at {{1}} — found {{${unique[0]}}} as the first variable.`;
+    for (let i = 1; i < unique.length; i++) {
+      if (unique[i] !== unique[i - 1] + 1)
+        return `Variables must be sequential — {{${unique[i - 1]}}} jumps to {{${unique[i]}}}, missing {{${unique[i - 1] + 1}}}.`;
+    }
     return null;
   })();
 
+  const headerError: string | null = (() => {
+    if (headerType !== "TEXT" || !headerContent.trim()) return null;
+    if (headerContent.length > 60)
+      return `Header is ${headerContent.length} chars — Meta's limit is 60.`;
+    if (/[*_~`]/.test(headerContent))
+      return "Markdown (*bold*, _italic_, etc.) is not allowed in headers — use plain text only (error 2388047).";
+    return null;
+  })();
+
+  const varExampleErrors: (string | null)[] = varExamples.map((v) => {
+    if (!v.trim()) return null;
+    if (/^https?:\/\//i.test(v.trim()))
+      return "URLs are not allowed as variable examples — use a short text value instead (error 2388299).";
+    if (/[#$%]/.test(v))
+      return "Variable examples cannot contain #, $, or % — Meta rejects these special characters.";
+    return null;
+  });
+
   const buttonErrors: (string | null)[] = buttons.map((b) => {
     if ((b.type === "PHONE_NUMBER" || b.type === "VOICE_CALL") && b.phone !== undefined) {
-      if (b.phone && !/^\+\d{7,15}$/.test(b.phone.replace(/[\s\-()]/g, "")))
+      if (b.phone && !/^\+\d{7,15}$/.test(b.phone.replace(/[\s\-()\s]/g, "")))
         return "Must start with + and country code, e.g. +919876543210.";
     }
     if (b.type === "URL" && b.url) {
@@ -570,7 +603,8 @@ function TemplateModal({
       return "Button text is required.";
     return null;
   });
-  const hasDraftErrors = !!bodyError || buttonErrors.some(Boolean);
+
+  const hasDraftErrors = !!bodyError || !!headerError || varExampleErrors.some(Boolean) || buttonErrors.some(Boolean);
 
   const [headerInputMode, setHeaderInputMode] = useState<"upload" | "url">("url");
   const [headerUploadState, setHeaderUploadState] = useState<"idle" | "uploading" | "done" | "error">("idle");
@@ -707,9 +741,15 @@ function TemplateModal({
               <input
                 value={headerContent}
                 onChange={(e) => setHeaderContent(e.target.value)}
-                className={inputClass}
+                className={cn(inputClass, headerError && "border-rose-400 focus:ring-rose-400")}
                 placeholder="Your order is confirmed  (use {{1}} for a variable)"
               />
+              {headerError && (
+                <p className="flex items-start gap-1.5 rounded-md bg-rose-50 px-2.5 py-1.5 text-[11px] text-rose-700">
+                  <AlertCircle className="mt-0.5 h-3 w-3 shrink-0" aria-hidden />
+                  {headerError}
+                </p>
+              )}
               {headerHasVar && (
                 <div>
                   <p className="mb-1 text-xs font-medium text-slate-600">
@@ -927,18 +967,23 @@ function TemplateModal({
                           next[i] = e.target.value;
                           setVarExamples(next);
                         }}
-                        className={cn(inputClass, isUrl && "border-amber-400 focus:ring-amber-400")}
+                        className={cn(inputClass, varExampleErrors[i] ? "border-rose-400 focus:ring-rose-400" : isUrl && "border-amber-400 focus:ring-amber-400")}
                         placeholder={isNamedParams
                           ? `Example for {{${namedParamNames[i] ?? i + 1}}} — e.g. ${i === 0 ? "Aman" : i === 1 ? "ORDER123" : "sample"}`
                           : `Example for {{${i + 1}}} — e.g. ${i === 0 ? "Aman" : i === 1 ? "#12345" : "sample"}`}
                       />
                     </div>
-                    {isUrl && (
+                    {varExampleErrors[i] ? (
+                      <p className="flex items-start gap-1.5 rounded-md bg-rose-50 px-2.5 py-1.5 text-[11px] text-rose-700">
+                        <AlertCircle className="mt-0.5 h-3 w-3 shrink-0" aria-hidden />
+                        {varExampleErrors[i]}
+                      </p>
+                    ) : isUrl ? (
                       <p className="flex items-start gap-1.5 rounded-md bg-amber-50 px-2.5 py-1.5 text-[11px] text-amber-800">
                         <AlertCircle className="mt-0.5 h-3 w-3 shrink-0 text-amber-500" aria-hidden />
-                        URLs are not allowed as body variable examples (Meta error 2388299). Use a short text instead — e.g. <strong>TRACK123</strong>. To send a link, add a &ldquo;Visit website&rdquo; button with a Dynamic URL.
+                        URLs are not allowed as variable examples — use a short text instead, e.g. <strong>TRACK123</strong> (error 2388299).
                       </p>
-                    )}
+                    ) : null}
                   </div>
                 );
               })}

@@ -199,8 +199,8 @@ export function buildComponents(t: MessageTemplate): WATemplateCreateComponent[]
     }
   }
 
-  // Body — with per-variable examples when the body uses placeholders.
-  const bodyComponent: WATemplateCreateComponent = { type: "BODY", text: t.body };
+  // Body — trim trailing whitespace; Meta rejects bodies that end with \n or spaces (error 131009).
+  const bodyComponent: WATemplateCreateComponent = { type: "BODY", text: t.body.trimEnd() };
   const fmt = detectParameterFormat(t.body);
   if (fmt === "NAMED") {
     const namedParams = extractNamedParams(t.body);
