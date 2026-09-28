@@ -608,6 +608,34 @@ function TemplateModal({
   const pending = create.isPending || update.isPending;
   const headerHasVar = headerType === "TEXT" && hasPlaceholder(headerContent);
 
+  // ── Draft-time validation ─────────────────────────────────────────────────
+  // Catch Meta rejection causes before the user even saves — errors shown inline
+  // under each field so they can be fixed without a round-trip to Meta.
+  const bodyError: string | null = (() => {
+    if (!body.trim()) return null; // empty body handled by required attr
+    if (body.length > 1024) return `Body is ${body.length} chars — Meta's limit is 1,024.`;
+    if (/\*\*[^*\n]+\*\*/.test(body))
+      return "Use single *asterisks* for bold, not **double** — WhatsApp rejects double-asterisk formatting (error 131009).";
+    if (/(?<![_])__[^_\n]+__/.test(body))
+      return "Use single _underscores_ for italic, not __double__.";
+    return null;
+  })();
+
+  const buttonErrors: (string | null)[] = buttons.map((b) => {
+    if ((b.type === "PHONE_NUMBER" || b.type === "VOICE_CALL") && b.phone !== undefined) {
+      if (b.phone && !/^\+\d{7,15}$/.test(b.phone.replace(/[\s\-()]/g, "")))
+        return "Must start with + and country code, e.g. +919876543210.";
+    }
+    if (b.type === "URL" && b.url) {
+      if (!/^https:\/\//i.test(b.url))
+        return "URL must start with https://.";
+    }
+    if (b.type !== "OTP" && b.type !== "COPY_CODE" && !b.text.trim())
+      return "Button text is required.";
+    return null;
+  });
+  const hasDraftErrors = !!bodyError || buttonErrors.some(Boolean);
+
   const [headerInputMode, setHeaderInputMode] = useState<"upload" | "url">("url");
   const [headerUploadState, setHeaderUploadState] = useState<"idle" | "uploading" | "done" | "error">("idle");
   const [headerUploadFileName, setHeaderUploadFileName] = useState("");
@@ -631,6 +659,10 @@ function TemplateModal({
   }
 
   const submit = () => {
+    // Surface the first draft-time error rather than letting the save proceed
+    // and fail server-side or at Meta submission.
+    const firstDraftError = bodyError ?? buttonErrors.find(Boolean) ?? null;
+    if (firstDraftError) { setError(firstDraftError); return; }
     setError(null);
     const varList = varExamples.map((v) => v.trim()).filter(Boolean);
     const payload: TemplateInput = {
@@ -913,16 +945,27 @@ function TemplateModal({
             value={body}
             onChange={(e) => setBody(e.target.value)}
             rows={5}
-            className={cn(inputClass, "resize-y")}
+            className={cn(inputClass, "resize-y", bodyError && "border-rose-400 focus:ring-rose-400")}
             placeholder={isNamedParams
               ? "Hi {{first_name}}, your order {{order_id}} has shipped."
               : "Hi {{1}}, your order {{2}} has shipped."}
           />
-          <p className="mt-1 text-xs text-slate-500">
-            {isNamedParams
-              ? "Named variables: lowercase letters and underscores only, e.g. {{first_name}}, {{order_id}}."
-              : 'Numbered variables {{1}}, {{2}} in order. Provide an example for each below.'}
-          </p>
+          <div className="mt-1 flex items-start justify-between gap-2">
+            <p className="text-xs text-slate-500">
+              {isNamedParams
+                ? "Named variables: lowercase letters and underscores only, e.g. {{first_name}}, {{order_id}}."
+                : 'Numbered variables {{1}}, {{2}} in order. Provide an example for each below.'}
+            </p>
+            <span className={cn("shrink-0 text-[11px] tabular-nums", body.length > 1024 ? "text-rose-600 font-medium" : "text-slate-400")}>
+              {body.length}/1024
+            </span>
+          </div>
+          {bodyError && (
+            <p className="mt-1 flex items-start gap-1.5 rounded-md bg-rose-50 px-2.5 py-1.5 text-[11px] text-rose-700">
+              <AlertCircle className="mt-0.5 h-3 w-3 shrink-0" aria-hidden />
+              {bodyError}
+            </p>
+          )}
         </Field>
 
         {bodyVarCount > 0 && (
@@ -1062,10 +1105,15 @@ function TemplateModal({
                         <input
                           value={b.url ?? ""}
                           onChange={(e) => updateButton(i, { url: e.target.value })}
-                          className={cn(inputClass, "flex-1")}
+                          className={cn(inputClass, "flex-1", buttonErrors[i] && "border-rose-400 focus:ring-rose-400")}
                           placeholder={b.urlType === "DYNAMIC" ? "https://example.com/track/{{1}}" : "https://example.com"}
                         />
                       </div>
+                      {buttonErrors[i] && (
+                        <p className="flex items-center gap-1 text-[11px] text-rose-600">
+                          <AlertCircle className="h-3 w-3 shrink-0" aria-hidden />{buttonErrors[i]}
+                        </p>
+                      )}
                       {b.urlType === "DYNAMIC" && (
                         <input
                           value={b.urlExample ?? ""}
@@ -1082,10 +1130,15 @@ function TemplateModal({
                       <input
                         value={b.phone ?? ""}
                         onChange={(e) => updateButton(i, { phone: e.target.value })}
-                        className={inputClass}
+                        className={cn(inputClass, buttonErrors[i] && "border-rose-400 focus:ring-rose-400")}
                         placeholder="+919876543210"
                       />
-                      {b.type === "VOICE_CALL" && (
+                      {buttonErrors[i] && (
+                        <p className="flex items-center gap-1 text-[11px] text-rose-600">
+                          <AlertCircle className="h-3 w-3 shrink-0" aria-hidden />{buttonErrors[i]}
+                        </p>
+                      )}
+                      {b.type === "VOICE_CALL" && !buttonErrors[i] && (
                         <p className="text-[11px] text-slate-400">Tapping opens a WhatsApp voice call to this number.</p>
                       )}
                     </div>
@@ -1162,7 +1215,7 @@ function TemplateModal({
           <Button type="button" variant="secondary" onClick={onClose}>
             Cancel
           </Button>
-          <Button type="submit" disabled={!name.trim() || !body.trim() || pending}>
+          <Button type="submit" disabled={!name.trim() || !body.trim() || pending || hasDraftErrors}>
             {pending ? "Saving…" : editing ? "Save changes" : "Create draft"}
           </Button>
         </div>
