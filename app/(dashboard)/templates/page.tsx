@@ -90,8 +90,6 @@ export default function TemplatesPage() {
   const [rejection, setRejection] = useState<TemplateDTO | null>(null);
   const [syncError, setSyncError] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
-  const [actionDebug, setActionDebug] = useState<Record<string, unknown> | null>(null);
-  const [showDebug, setShowDebug] = useState(false);
   const [confirmDeleteTemplate, setConfirmDeleteTemplate] = useState<TemplateDTO | null>(null);
   const [deleteError, setDeleteError] = useState<string | null>(null);
 
@@ -132,13 +130,10 @@ export default function TemplatesPage() {
 
   const handleAction = async (p: Promise<unknown>) => {
     setActionError(null);
-    setActionDebug(null);
-    setShowDebug(false);
     try { await p; }
     catch (e) {
       const err = e as Error & { debug?: Record<string, unknown> | null };
       setActionError(err.message);
-      if (err.debug) setActionDebug(err.debug);
     }
   };
 
@@ -185,76 +180,17 @@ export default function TemplatesPage() {
         <div className="mb-3 rounded-lg bg-rose-50 px-3 py-2 text-sm text-rose-700">{syncError}</div>
       )}
       {actionError && (
-        <div className="mb-3 rounded-lg border border-rose-200 bg-rose-50 text-sm text-rose-800">
-          <div className="flex items-start gap-3 px-4 py-3">
-            <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-rose-500" aria-hidden />
-            <div className="flex-1 min-w-0">
-              {actionError.includes(" — ")
-                ? (() => {
-                    const [headline, ...rest] = actionError.split(" — ");
-                    return (
-                      <>
-                        <p className="font-semibold">{headline}</p>
-                        <p className="mt-0.5 text-rose-700">{rest.join(" — ")}</p>
-                      </>
-                    );
-                  })()
-                : <p>{actionError}</p>
-              }
-              {actionDebug && (
-                <button
-                  type="button"
-                  onClick={() => setShowDebug((v) => !v)}
-                  className="mt-1.5 text-xs text-rose-500 underline hover:text-rose-700"
-                >
-                  {showDebug ? "Hide" : "Show"} payload sent to Meta ▾
-                </button>
-              )}
-            </div>
-            <button
-              type="button"
-              onClick={() => { setActionError(null); setActionDebug(null); setShowDebug(false); }}
-              className="shrink-0 text-rose-400 hover:text-rose-600 text-xs"
-            >
-              ✕
-            </button>
-          </div>
-          {showDebug && actionDebug && (
-            <div className="divide-y divide-rose-200 border-t border-rose-200">
-              {Boolean(actionDebug.metaError) && (
-                <div className="bg-rose-100/80 px-4 py-3">
-                  <p className="mb-1.5 text-xs font-semibold text-rose-700">Meta error response</p>
-                  <table className="w-full text-[11px]">
-                    <tbody className="divide-y divide-rose-200">
-                      {Object.entries(actionDebug.metaError as Record<string, unknown>)
-                        .filter(([, v]) => v !== undefined && v !== null)
-                        .map(([k, v]) => (
-                          <tr key={k}>
-                            <td className="py-0.5 pr-3 font-mono font-semibold text-rose-700 align-top w-32">{k}</td>
-                            <td className="py-0.5 font-mono text-slate-700 break-all">{String(v as string | number)}</td>
-                          </tr>
-                        ))}
-                    </tbody>
-                  </table>
-                </div>
-              )}
-              <div className="bg-rose-100/60 px-4 py-3">
-                <div className="mb-1.5 flex items-center justify-between">
-                  <p className="text-xs font-semibold text-rose-700">Payload sent to Meta</p>
-                  <button
-                    type="button"
-                    onClick={() => navigator.clipboard?.writeText(JSON.stringify(actionDebug.metaPayload ?? actionDebug, null, 2))}
-                    className="text-[11px] text-rose-500 underline hover:text-rose-700"
-                  >
-                    Copy JSON
-                  </button>
-                </div>
-                <pre className="scrollbar-slim max-h-64 overflow-auto rounded bg-white/70 p-2 text-[11px] leading-relaxed text-slate-700">
-                  {JSON.stringify(actionDebug.metaPayload ?? actionDebug, null, 2)}
-                </pre>
-              </div>
-            </div>
-          )}
+        <div className="mb-3 flex items-start gap-3 rounded-lg border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-800">
+          <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-rose-500" aria-hidden />
+          <p className="flex-1">{actionError}</p>
+          <button
+            type="button"
+            onClick={() => setActionError(null)}
+            className="shrink-0 text-rose-400 hover:text-rose-600 text-xs"
+            aria-label="Dismiss"
+          >
+            ✕
+          </button>
         </div>
       )}
 
