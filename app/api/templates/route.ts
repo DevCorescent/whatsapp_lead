@@ -9,8 +9,8 @@ const createTemplateSchema = z.object({
   category: z.enum(["MARKETING", "UTILITY", "AUTHENTICATION"]),
   language: z.string().default("en"),
   body: z.string().min(1, "Body is required"),
-  headerType: z.enum(["TEXT", "IMAGE", "VIDEO", "DOCUMENT"]).optional(),
-  headerContent: z.string().optional(),
+  headerType: z.enum(["TEXT", "IMAGE", "VIDEO", "DOCUMENT"]).nullable().optional(),
+  headerContent: z.string().nullable().optional(),
   headerVariables: z.array(z.string()).default([]),
   footer: z.string().optional(),
   buttons: z.array(z.object({

@@ -34,9 +34,9 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ success: false, error: `File type "${mimeType}" is not supported for template headers.` }, { status: 400 });
   }
 
-  const MAX_BYTES = 5 * 1024 * 1024;
+  const MAX_BYTES = 4 * 1024 * 1024;
   if (file.size > MAX_BYTES) {
-    return NextResponse.json({ success: false, error: "File is too large — maximum 5 MB for template header samples." }, { status: 400 });
+    return NextResponse.json({ success: false, error: "File is too large — maximum 4 MB for template header samples." }, { status: 400 });
   }
 
   try {
