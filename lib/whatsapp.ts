@@ -679,41 +679,41 @@ export async function uploadTemplateHeaderMedia(
   mimeType: string,
   filename: string
 ): Promise<string> {
-  const GRAPH = `https://graph.facebook.com/${process.env.WHATSAPP_API_VERSION ?? "v19.0"}`;
+  const GRAPH_VERSIONED = `https://graph.facebook.com/${process.env.WHATSAPP_API_VERSION ?? "v19.0"}`;
+  // Step 2 uses the un-versioned base — Meta upload session IDs are hit directly
+  // at graph.facebook.com without a version prefix.
+  const GRAPH_BASE = "https://graph.facebook.com";
   const bytes = await file.arrayBuffer();
   const fileSize = bytes.byteLength;
 
   // Step 1: Create an upload session
   const sessionRes = await fetch(
-    `${GRAPH}/app/uploads?file_name=${encodeURIComponent(filename)}&file_length=${fileSize}&file_type=${encodeURIComponent(mimeType)}`,
+    `${GRAPH_VERSIONED}/app/uploads?file_name=${encodeURIComponent(filename)}&file_length=${fileSize}&file_type=${encodeURIComponent(mimeType)}`,
     { method: "POST", headers: { Authorization: `Bearer ${apiKey}` } }
   );
-  if (!sessionRes.ok) {
-    const err = await sessionRes.json().catch(() => ({}));
-    throw new Error(
-      (err as { error?: { message?: string } }).error?.message ?? "Failed to create upload session"
-    );
+  const sessionJson = await sessionRes.json().catch(() => ({})) as { id?: string; error?: { message?: string } };
+  console.log("[TEMPLATE UPLOAD] session response:", JSON.stringify(sessionJson));
+  if (!sessionRes.ok || !sessionJson.id) {
+    throw new Error(sessionJson.error?.message ?? "Failed to create upload session");
   }
-  const { id: uploadSessionId } = await sessionRes.json() as { id: string };
+  const uploadSessionId = sessionJson.id;
 
-  // Step 2: Upload the file binary
-  const uploadRes = await fetch(`${GRAPH}/${uploadSessionId}`, {
+  // Step 2: Upload the file binary — no version in URL, Content-Type required
+  const uploadRes = await fetch(`${GRAPH_BASE}/${uploadSessionId}`, {
     method: "POST",
     headers: {
       Authorization: `OAuth ${apiKey}`,
-      file_offset: "0",
+      "file_offset": "0",
+      "Content-Type": mimeType,
     },
     body: bytes,
   });
-  if (!uploadRes.ok) {
-    const err = await uploadRes.json().catch(() => ({}));
-    throw new Error(
-      (err as { error?: { message?: string } }).error?.message ?? "Failed to upload template media"
-    );
+  const uploadJson = await uploadRes.json().catch(() => ({})) as { h?: string; error?: { message?: string } };
+  console.log("[TEMPLATE UPLOAD] binary upload response:", JSON.stringify(uploadJson));
+  if (!uploadRes.ok || !uploadJson.h) {
+    throw new Error(uploadJson.error?.message ?? "Upload succeeded but no file handle returned by Meta");
   }
-  const { h } = await uploadRes.json() as { h: string };
-  if (!h) throw new Error("Upload succeeded but no file handle (h) returned by Meta");
-  return h;
+  return uploadJson.h;
 }
 
 export async function createMessageTemplate(
