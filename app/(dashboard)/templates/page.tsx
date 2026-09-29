@@ -500,7 +500,16 @@ function TemplateModal({
   const [headerType, setHeaderType] = useState<HeaderTypeOption>(
     (editing?.headerType as HeaderTypeOption) ?? "NONE",
   );
-  const [headerContent, setHeaderContent] = useState(editing?.headerContent ?? "");
+  // For media headers: only restore if it's a valid Resumable Upload handle (4::…).
+  // Old numeric IDs from the previous upload endpoint are invalid — clear them so
+  // the user must re-upload rather than accidentally re-submitting bad data.
+  const initialHeaderContent = (() => {
+    const c = editing?.headerContent ?? "";
+    const isMediaHeader = editing?.headerType && editing.headerType !== "TEXT";
+    if (isMediaHeader && c && !c.startsWith("4::")) return "";
+    return c;
+  })();
+  const [headerContent, setHeaderContent] = useState(initialHeaderContent);
   const [headerVarExample, setHeaderVarExample] = useState(
     (editing?.headerVariables ?? [])[0] ?? "",
   );
@@ -619,9 +628,18 @@ function TemplateModal({
 
   const hasDraftErrors = !!bodyError || !!headerError || varExampleErrors.some(Boolean) || buttonErrors.some(Boolean);
 
-  const [headerInputMode, setHeaderInputMode] = useState<"upload" | "url">("url");
-  const [headerUploadState, setHeaderUploadState] = useState<"idle" | "uploading" | "done" | "error">("idle");
-  const [headerUploadFileName, setHeaderUploadFileName] = useState("");
+  // If the saved headerContent is a Resumable Upload handle (4::…), restore the
+  // "upload done" state so the client sees their previous upload instead of a raw handle.
+  const savedHandle = editing?.headerContent?.startsWith("4::") ? editing.headerContent : null;
+  const [headerInputMode, setHeaderInputMode] = useState<"upload" | "url">(
+    savedHandle || (editing?.headerType && editing.headerType !== "TEXT") ? "upload" : "url",
+  );
+  const [headerUploadState, setHeaderUploadState] = useState<"idle" | "uploading" | "done" | "error">(
+    savedHandle ? "done" : "idle",
+  );
+  const [headerUploadFileName, setHeaderUploadFileName] = useState(
+    savedHandle ? "Previously uploaded file" : "",
+  );
 
   async function handleHeaderFileUpload(file: File) {
     setHeaderUploadState("uploading");
