@@ -13,8 +13,11 @@ const geistMono = Geist_Mono({
   subsets: ["latin"],
 });
 
+// Static on purpose: reading the request host here would make every page — the
+// marketing site included — render dynamically. Brand-by-domain lives in the
+// (auth) layout (login/sign-up on a white-label domain) and the dashboard layout.
 export const metadata: Metadata = {
-  title: "WhatsCRM — AI-Powered WhatsApp CRM & Lead Management",
+  title: `${process.env.NEXT_PUBLIC_BRAND_NAME ?? "WhatsCRM"} — AI-Powered WhatsApp CRM & Lead Management`,
   description:
     "Shared WhatsApp inbox, AI lead qualification, campaigns and analytics for sales teams.",
 };

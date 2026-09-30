@@ -23,6 +23,7 @@ import { z } from "zod";
 import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { getBusinessScope } from "@/lib/business";
+import { requirePermission } from "@/lib/permissions";
 import {
   IMPORT_MAX_ROWS,
   isValidEmail,
@@ -78,6 +79,8 @@ export async function POST(req: NextRequest) {
   if (!scope) {
     return NextResponse.json({ success: false, error: "Unauthorized" }, { status: 401 });
   }
+  const denied = await requirePermission(scope, "contacts.import");
+  if (denied) return denied;
   const { tenantId, businessId, userId } = scope;
 
   let body: unknown;
@@ -133,9 +136,12 @@ export async function POST(req: NextRequest) {
     const phones = clean.map((c) => c.phone);
 
     // One indexed query resolves the whole batch's new-vs-existing split (tenant-scoped).
+    // Business-scoped, matching the (phone, businessId) unique key: a number saved in another
+    // business of the same account is new here, not a duplicate. Deleted (hidden) contacts don't
+    // count as existing either — importing their number restores them (see the upsert below).
     const existingRows = phones.length
       ? await prisma.contact.findMany({
-          where: { tenantId, phone: { in: phones } },
+          where: { tenantId, businessId, isBlocked: false, phone: { in: phones } },
           select: { phone: true },
         })
       : [];
@@ -203,6 +209,7 @@ export async function POST(req: NextRequest) {
                 ...(c.notes && { notes: c.notes }),
               },
               update: {
+                isBlocked: false,
                 name: c.name,
                 ...(c.email && { email: c.email }),
                 ...(c.company && { company: c.company }),

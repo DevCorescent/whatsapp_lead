@@ -22,6 +22,46 @@ enum UserRole {
   MARKETING_USER
 }
 
+/// What an account is in the platform hierarchy.
+///   PLATFORM — the super admin's own account (runs the platform).
+///   RESELLER — sells the platform to clients; manages accounts, never messages.
+///   CLIENT   — a business that owns contacts, campaigns and chats. Directly under the
+///              platform (parentId null) or under a reseller.
+enum AccountType {
+  PLATFORM
+  RESELLER
+  CLIENT
+}
+
+/// NORMAL uses the platform's branding; WHITE_LABEL shows its own (WhiteLabelConfig)
+/// to every client under it.
+enum ResellerType {
+  NORMAL
+  WHITE_LABEL
+}
+
+/// What a WhatsApp template message is priced as (MessageRate).
+enum RateCategory {
+  WA_MARKETING
+  WA_UTILITY
+  WA_AUTHENTICATION
+}
+
+enum WalletTxnType {
+  TOPUP
+  DEBIT
+  REFUND
+  ADJUSTMENT
+  TRANSFER_IN
+  TRANSFER_OUT
+}
+
+enum CommissionStatus {
+  PENDING
+  PAID
+  CANCELLED
+}
+
 enum ConversationStatus {
   OPEN
   ASSIGNED
@@ -136,9 +176,39 @@ model Tenant {
   isActive       Boolean  @default(true)
   /// Invite code of the user who referred this workspace at signup, if any.
   referredByCode String?
+  /// What kind of business this account is (IT, Education, …). Admin-editable list.
+  categoryId     String?
+
+  // ── Hierarchy ──
+  accountType    AccountType   @default(CLIENT)
+  /// Only for RESELLER accounts.
+  resellerType   ResellerType?
+  /// The reseller that manages this client. Null for direct clients, resellers and the platform.
+  parentId       String?
+  /// The reseller credited with bringing this client in (commission). Usually equals parentId;
+  /// kept separately so a client moved to another reseller keeps its referral history.
+  referredById   String?
+  /// Percentage of a referred client's payments owed to this reseller (0 to 100). Resellers only.
+  commissionRate Float?
+
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
 
+  category             BusinessCategory?     @relation(fields: [categoryId], references: [id], onDelete: SetNull)
+  parent               Tenant?               @relation("AccountHierarchy", fields: [parentId], references: [id], onDelete: SetNull)
+  children             Tenant[]              @relation("AccountHierarchy")
+  referredBy           Tenant?               @relation("AccountReferrals", fields: [referredById], references: [id], onDelete: SetNull)
+  referrals            Tenant[]              @relation("AccountReferrals")
+  whiteLabel           WhiteLabelConfig?
+  resellerPlans        Plan[]                @relation("ResellerPlans")
+  payments             Payment[]
+  commissionsEarned    ResellerCommission[]  @relation("CommissionReseller")
+  commissionsGenerated ResellerCommission[]  @relation("CommissionClient")
+  wallet               Wallet?
+  walletTransactions   WalletTransaction[]
+  resellerRates        MessageRate[]
+  segments             Segment[]
+  blacklistEntries     BlacklistEntry[]
   users                User[]
   businesses           Business[]
   contacts             Contact[]
@@ -161,6 +231,8 @@ model Tenant {
   quickReplies         QuickReply[]
   whatsAppIntegrations WhatsAppIntegration[]
 
+  @@index([parentId])
+  @@index([referredById])
   @@map("tenants")
 }
 
@@ -353,6 +425,7 @@ model User {
   assignedTickets Ticket[]             @relation("AssignedTicketAgent")
   auditLogs       AuditLog[]
   resetTokens     PasswordResetToken[]
+  blacklistAdded  BlacklistEntry[]     @relation("BlacklistCreatedBy")
 
   @@unique([email, tenantId])
   @@map("users")
@@ -664,6 +737,9 @@ model Campaign {
   tenantId       String
   name           String
   templateId     String?
+  /// Wallet cost estimated at launch, and what has actually been charged so far (paise).
+  estimatedCostMinor Int?
+  costMinor      Int            @default(0)
   status         CampaignStatus @default(DRAFT)
   scheduledAt    DateTime?
   startedAt      DateTime?
@@ -703,6 +779,11 @@ model CampaignContact {
   // is the only thing that can correlate a `statuses[]` callback back to the campaign recipient it
   // belongs to. Nullable: historical rows predate it, and a send that never reached Meta has none.
   waMessageId  String?   @unique
+  // When a send worker claimed this row (status SENDING). Makes a send exactly-once even if
+  // two queue jobs for the same recipient overlap; a stale claim can be retaken after a crash.
+  claimedAt    DateTime?
+  /// What was charged to the wallet for this message (paise).
+  costMinor    Int?
   sentAt       DateTime?
   deliveredAt  DateTime?
   readAt       DateTime?
@@ -714,6 +795,264 @@ model CampaignContact {
 
   @@index([campaignId, status])
   @@map("campaign_contacts")
+}
+
+// ─── BLACKLIST ────────────────────────────────────────────────────────────────
+//
+// Numbers that must never be messaged. Enforced in lib/whatsapp.ts on every outbound send
+// (campaigns, broadcasts, inbox, AI/chatbot replies, FAQ sends) and excluded up front when a
+// campaign is created. `tenantId` null means platform-wide — set by a super admin, applies to
+// every account. Adds and removals are recorded in AuditLog (BLACKLIST_ADDED / _REMOVED).
+//
+// A partial unique index (raw SQL in the migration) keeps platform-wide phones unique, since
+// Postgres treats NULL tenantIds as distinct in the compound key below.
+
+model BlacklistEntry {
+  id          String   @id @default(cuid())
+  tenantId    String?
+  /// Digits-only E.164, normalised exactly like Contact.phone.
+  phone       String
+  reason      String?
+  createdById String?
+  createdAt   DateTime @default(now())
+
+  tenant    Tenant? @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  createdBy User?   @relation("BlacklistCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+
+  @@unique([tenantId, phone])
+  @@index([phone])
+  @@map("blacklist_entries")
+}
+
+// ─── WHITE-LABEL ──────────────────────────────────────────────────────────────
+//
+// A WHITE_LABEL reseller's brand. Shown on its custom domain (login, sign-up, page
+// titles) and inside the app to the reseller and every client under it, in place of
+// the platform's branding. Resolved by lib/branding.ts.
+
+model WhiteLabelConfig {
+  id            String   @id @default(cuid())
+  tenantId      String   @unique
+  brandName     String
+  logoUrl       String?
+  faviconUrl    String?
+  /// Hex colours, e.g. "#0f766e".
+  primaryColor  String   @default("#059669")
+  accentColor   String?
+  /// Lower-case host without scheme or port, e.g. "crm.acme.com". Unique across the platform.
+  domain        String?  @unique
+  supportEmail  String?
+  supportPhone  String?
+  website       String?
+  address       String?
+  loginHeadline String?
+  loginSubtext  String?
+  /// Free address on the platform's domain: "<subdomain>.<PLATFORM_ROOT_DOMAIN>".
+  subdomain     String?  @unique
+  /// The public landing page on the brand's domain (off = straight to login).
+  landingEnabled  Boolean @default(true)
+  landingTitle    String?
+  landingSubtitle String?
+  /// The brand's own legal text; empty = a standard template in the brand's name.
+  termsContent    String?
+  privacyContent  String?
+  /// Monthly white-label fee for this reseller (paise); null = the platform default.
+  feeOverrideMinor Int?
+  /// When the current month's fee first failed to charge; cleared when paid.
+  feeDueSince      DateTime?
+  /// Set when the brand is switched off by the platform (e.g. unpaid fee). A suspended
+  /// brand falls back to the platform's; the reseller can't lift it by toggling isActive.
+  suspendedAt      DateTime?
+  suspendedReason  String?
+  isActive      Boolean  @default(true)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@map("white_label_configs")
+}
+
+/// Platform-wide settings the super admin edits (single row, id "platform").
+model PlatformConfig {
+  id                  String   @id @default("platform")
+  /// Monthly fee for white-label resellers, taken from their wallet (paise). 0 = free.
+  whiteLabelFeeMinor  Int      @default(0)
+  /// Days an unpaid fee is tolerated before the brand is suspended.
+  whiteLabelGraceDays Int      @default(7)
+  updatedAt           DateTime @updatedAt
+
+  @@map("platform_config")
+}
+
+// ─── PAYMENTS & COMMISSION ────────────────────────────────────────────────────
+//
+// Every confirmed payment, from Razorpay or Stripe. `providerPaymentId` is unique, so a
+// payment can only ever be applied (and commissioned) once: the verify endpoint, the
+// webhook and a replayed request all converge on one row.
+
+model Payment {
+  id                String   @id @default(cuid())
+  tenantId          String
+  provider          String
+  providerPaymentId String   @unique
+  orderId           String?
+  amountMinor       Int
+  currency          String   @default("inr")
+  /// "subscription" | "plan_change" | "renewal"
+  purpose           String
+  planId            String?
+  createdAt         DateTime @default(now())
+
+  tenant     Tenant              @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  commission ResellerCommission?
+
+  @@index([tenantId, createdAt])
+  @@map("payments")
+}
+
+/// What a reseller earned from one payment by a client it referred.
+model ResellerCommission {
+  id          String           @id @default(cuid())
+  resellerId  String
+  clientId    String
+  paymentId   String           @unique
+  /// Payment amount the commission was computed on, and the result, in minor units.
+  baseMinor   Int
+  amountMinor Int
+  rate        Float
+  currency    String           @default("inr")
+  status      CommissionStatus @default(PENDING)
+  paidAt      DateTime?
+  note        String?
+  createdAt   DateTime         @default(now())
+  updatedAt   DateTime         @updatedAt
+
+  reseller Tenant  @relation("CommissionReseller", fields: [resellerId], references: [id], onDelete: Cascade)
+  client   Tenant  @relation("CommissionClient", fields: [clientId], references: [id], onDelete: Cascade)
+  payment  Payment @relation(fields: [paymentId], references: [id], onDelete: Cascade)
+
+  @@index([resellerId, status])
+  @@map("reseller_commissions")
+}
+
+// ─── ROLE PERMISSIONS ─────────────────────────────────────────────────────────
+//
+// Super-admin overrides of the default role -> permission matrix in lib/permissions.ts,
+// per account type. A row can grant or revoke a permission for (accountType, role), but
+// never beyond the account type's ceiling: no row can give a RESELLER account
+// "messages.send" or "conversations.view". That ceiling is code, not data.
+
+model RolePermission {
+  id          String      @id @default(cuid())
+  accountType AccountType
+  role        UserRole
+  permission  String
+  allowed     Boolean
+  updatedAt   DateTime    @updatedAt
+
+  @@unique([accountType, role, permission])
+  @@map("role_permissions")
+}
+
+// ─── WALLET ───────────────────────────────────────────────────────────────────
+//
+// Prepaid message credit, in paise. The plan pays for the software; the wallet
+// pays for messages (lib/wallet.ts). Every change is a WalletTransaction, and a
+// debit is keyed so a retried send can never be charged twice.
+
+model Wallet {
+  id                       String    @id @default(cuid())
+  tenantId                 String    @unique
+  balanceMinor             Int       @default(0)
+  currency                 String    @default("inr")
+  lowBalanceThresholdMinor Int       @default(10000)
+  lowBalanceNotifiedAt     DateTime?
+  createdAt                DateTime  @default(now())
+  updatedAt                DateTime  @updatedAt
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@map("wallets")
+}
+
+model WalletTransaction {
+  id                String        @id @default(cuid())
+  tenantId          String
+  type              WalletTxnType
+  /// Signed: positive credits, negative debits.
+  amountMinor       Int
+  balanceAfterMinor Int
+  description       String?
+  referenceType     String?
+  referenceId       String?
+  /// Makes a charge or credit happen at most once (e.g. "debit:<recipientId>").
+  idempotencyKey    String?       @unique
+  createdById       String?
+  createdAt         DateTime      @default(now())
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId, createdAt])
+  @@map("wallet_transactions")
+}
+
+/// Price per message unit in paise. `resellerId` null = platform rate; a reseller's
+/// row prices that reseller's clients (never below the platform rate).
+model MessageRate {
+  id         String       @id @default(cuid())
+  category   RateCategory
+  resellerId String?
+  priceMinor Int
+  updatedAt  DateTime     @updatedAt
+
+  reseller Tenant? @relation(fields: [resellerId], references: [id], onDelete: Cascade)
+
+  @@unique([category, resellerId])
+  @@map("message_rates")
+}
+
+// ─── CUSTOMER SEGMENTS ────────────────────────────────────────────────────────
+//
+// A saved set of contact filters ("City is Delhi AND Tag is Student"). Live: the
+// matching contacts are worked out each time it's used; a campaign freezes the list
+// at launch. Rules are validated and turned into queries by lib/segments.ts.
+
+model Segment {
+  id          String   @id @default(cuid())
+  tenantId    String
+  businessId  String
+  name        String
+  description String?
+  /// { rules: SegmentRule[] } — see lib/segments.ts.
+  filters     Json
+  createdById String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId, businessId])
+  @@map("segments")
+}
+
+// ─── BUSINESS CATEGORY ────────────────────────────────────────────────────────
+//
+// The industry an account belongs to (IT, Real Estate, Education, …). Super admins edit the
+// list; each account picks one in Settings. Deactivating a category hides it from the picker
+// without detaching accounts that already use it.
+
+model BusinessCategory {
+  id        String   @id @default(cuid())
+  name      String   @unique
+  isActive  Boolean  @default(true)
+  sortOrder Int      @default(0)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  tenants Tenant[]
+
+  @@map("business_categories")
 }
 
 // ─── CHATBOT FLOW ─────────────────────────────────────────────────────────────
@@ -1011,6 +1350,13 @@ model Plan {
   ownerTenantId String?
   ownerTenant   Tenant? @relation("CustomPlans", fields: [ownerTenantId], references: [id], onDelete: SetNull)
 
+  /// A reseller's own plan, offered to that reseller's clients instead of the platform's
+  /// public plans. Its limits are copied from `basePlanId` (a platform plan) and can't be
+  /// raised; the reseller sets the name and price (never below the base plan's price).
+  resellerId  String?
+  reseller    Tenant? @relation("ResellerPlans", fields: [resellerId], references: [id], onDelete: Cascade)
+  basePlanId  String?
+
   stripePriceId String?
   aiEnabled     Boolean  @default(false)
   ragEnabled    Boolean  @default(false)
@@ -1026,6 +1372,7 @@ model Plan {
 
   @@index([visibility])
   @@index([ownerTenantId])
+  @@index([resellerId])
   @@map("plans")
 }
 

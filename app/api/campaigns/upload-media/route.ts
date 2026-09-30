@@ -11,6 +11,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getBusinessScope, resolveWhatsAppCreds } from "@/lib/business";
 import { uploadMedia } from "@/lib/whatsapp";
+import { requirePermission } from "@/lib/permissions";
 
 /** MIME types Meta accepts for WhatsApp template headers. */
 const ALLOWED_TYPES = new Set([
@@ -36,6 +37,8 @@ export async function POST(req: NextRequest) {
   if (!scope) {
     return NextResponse.json({ success: false, error: "Unauthorized" }, { status: 401 });
   }
+  const denied = await requirePermission(scope, "campaigns.send");
+  if (denied) return denied;
 
   const formData = await req.formData().catch(() => null);
   if (!formData) {

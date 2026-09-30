@@ -23,11 +23,21 @@ const updateTenantSchema = z
     name: z.string().trim().min(1, "Workspace name cannot be empty").max(120).optional(),
     /** Suspends or restores the workspace. Every member is locked out while false. */
     isActive: z.boolean().optional(),
+    /** The account's business category; null clears it. */
+    categoryId: z.string().min(1).nullable().optional(),
+    // ── Hierarchy ──
+    accountType: z.enum(["CLIENT", "RESELLER"]).optional(),
+    resellerType: z.enum(["NORMAL", "WHITE_LABEL"]).optional(),
+    /** For a client: the reseller that manages it; null makes it a direct client. */
+    parentId: z.string().min(1).nullable().optional(),
+    /** For a client: the reseller credited with it (commission); null clears it. */
+    referredById: z.string().min(1).nullable().optional(),
+    commissionRate: z.number().min(0).max(100).optional(),
     /** Accepted only to return a clear error; see below. */
     planId: z.string().optional(),
   })
   .strict()
-  .refine((v) => v.name !== undefined || v.isActive !== undefined || v.planId !== undefined, {
+  .refine((v) => Object.values(v).some((x) => x !== undefined), {
     message: "Nothing to update",
   });
 
@@ -41,9 +51,13 @@ export async function GET(req: NextRequest, { params }: Params) {
   const tenant = await prisma.tenant.findUnique({
     where: { id },
     include: {
+      category: { select: { id: true, name: true } },
+      parent: { select: { id: true, name: true, resellerType: true } },
+      referredBy: { select: { id: true, name: true } },
+      whiteLabel: { select: { brandName: true, domain: true, isActive: true } },
       subscription: { include: { plan: { include: { ownerTenant: { select: { id: true, name: true } } } } } },
       settings: true,
-      _count: { select: { users: true, contacts: true, leads: true, conversations: true } },
+      _count: { select: { users: true, contacts: true, leads: true, conversations: true, children: true } },
       users: {
         select: { id: true, name: true, email: true, phone: true, role: true, isActive: true, lastLoginAt: true, createdAt: true },
         orderBy: { createdAt: "asc" },
@@ -89,7 +103,45 @@ export async function PATCH(req: NextRequest, { params }: Params) {
       { status: 400 },
     );
   }
-  const { isActive, name, planId } = parsed.data;
+  const { isActive, name, planId, categoryId, accountType, resellerType, parentId, referredById, commissionRate } = parsed.data;
+
+  // ── Hierarchy rules ──
+  if (tenant.accountType === "PLATFORM" && (accountType || parentId || resellerType)) {
+    return NextResponse.json({ success: false, error: "The platform account's type can't be changed" }, { status: 400 });
+  }
+  const nextType = accountType ?? tenant.accountType;
+  if (nextType === "CLIENT" && tenant.accountType === "RESELLER") {
+    const children = await prisma.tenant.count({ where: { parentId: tenant.id } });
+    if (children > 0) {
+      return NextResponse.json(
+        { success: false, error: `This reseller still manages ${children} client(s) — move them first` },
+        { status: 409 },
+      );
+    }
+  }
+  if (nextType === "RESELLER") {
+    if (parentId) return NextResponse.json({ success: false, error: "A reseller can't sit under another reseller" }, { status: 400 });
+    if (!resellerType && !tenant.resellerType) {
+      return NextResponse.json({ success: false, error: "Choose NORMAL or WHITE_LABEL for a reseller" }, { status: 400 });
+    }
+  }
+  for (const ref of [parentId, referredById]) {
+    if (!ref) continue;
+    if (nextType !== "CLIENT") {
+      return NextResponse.json({ success: false, error: "Only client accounts can belong to a reseller" }, { status: 400 });
+    }
+    if (ref === tenant.id) return NextResponse.json({ success: false, error: "An account can't be its own reseller" }, { status: 400 });
+    const reseller = await prisma.tenant.findFirst({ where: { id: ref, accountType: "RESELLER" }, select: { id: true } });
+    if (!reseller) return NextResponse.json({ success: false, error: "Reseller not found" }, { status: 400 });
+  }
+  if (commissionRate !== undefined && nextType !== "RESELLER") {
+    return NextResponse.json({ success: false, error: "Only resellers earn commission" }, { status: 400 });
+  }
+
+  if (categoryId) {
+    const exists = await prisma.businessCategory.findUnique({ where: { id: categoryId }, select: { id: true } });
+    if (!exists) return NextResponse.json({ success: false, error: "Category not found" }, { status: 400 });
+  }
 
   // Plan changes moved to PUT ./subscription. They were only ever half-done here
   // — the upsert hardcoded ACTIVE and a thirty-day window, so assigning a plan
@@ -108,6 +160,28 @@ export async function PATCH(req: NextRequest, { params }: Params) {
     data: {
       ...(name !== undefined && { name }),
       ...(isActive !== undefined && { isActive }),
+      ...(categoryId !== undefined && { categoryId }),
+      ...(accountType !== undefined && { accountType }),
+      // Hierarchy fields follow the account type: a reseller has no parent; a client has no
+      // reseller type or commission rate.
+      ...(nextType === "RESELLER"
+        ? {
+            parentId: null,
+            referredById: null,
+            ...(resellerType !== undefined && { resellerType }),
+            ...(commissionRate !== undefined && { commissionRate }),
+          }
+        : {
+            resellerType: null,
+            commissionRate: null,
+            ...(parentId !== undefined && { parentId }),
+            // Moving a client under a reseller credits that reseller unless told otherwise.
+            ...(referredById !== undefined
+              ? { referredById }
+              : parentId && !tenant.referredById
+                ? { referredById: parentId }
+                : {}),
+          }),
     },
   });
 
@@ -123,6 +197,11 @@ export async function PATCH(req: NextRequest, { params }: Params) {
       metadata: {
         ...(name !== undefined && { name: { from: tenant.name, to: updated.name } }),
         ...(isActive !== undefined && { isActive: { from: tenant.isActive, to: updated.isActive } }),
+        ...(updated.accountType !== tenant.accountType && { accountType: { from: tenant.accountType, to: updated.accountType } }),
+        ...(updated.resellerType !== tenant.resellerType && { resellerType: { from: tenant.resellerType, to: updated.resellerType } }),
+        ...(updated.parentId !== tenant.parentId && { parentId: { from: tenant.parentId, to: updated.parentId } }),
+        ...(updated.referredById !== tenant.referredById && { referredById: { from: tenant.referredById, to: updated.referredById } }),
+        ...(updated.commissionRate !== tenant.commissionRate && { commissionRate: { from: tenant.commissionRate, to: updated.commissionRate } }),
       },
     },
   });

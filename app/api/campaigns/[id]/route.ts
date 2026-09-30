@@ -33,6 +33,8 @@ import { CampaignStatus, Prisma } from "@prisma/client";
 import { z } from "zod";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
+import { queuePendingRecipients } from "@/lib/campaigns/jobs";
+import { requirePermission } from "@/lib/permissions";
 
 /**
  * The per-recipient delivery record.
@@ -205,11 +207,13 @@ export async function GET(
   }
 
 
+  const denied = await requirePermission(session.user, "campaigns.view");
+  if (denied) return denied;
+
   const { tenantId } = session.user;
 
   try {
     const { id } = await params;
-
 
     const campaign = await loadCampaign(tenantId, id);
     if (!campaign) {
@@ -257,6 +261,9 @@ export async function PATCH(
       { status: 401 }
     );
   }
+
+  const denied = await requirePermission(session.user, "campaigns.send");
+  if (denied) return denied;
 
   const { tenantId } = session.user;
 
@@ -306,6 +313,14 @@ export async function PATCH(
 
     const updated = await updateCampaign(campaign.id, parsed.data);
 
+    // Jobs that fired during the pause were acknowledged without sending (see the worker), so
+    // resuming re-queues everyone still PENDING. Recipients already sent are not touched, and a
+    // recipient with an older job still queued can't be sent twice — the worker claims first.
+    if (campaign.status === CampaignStatus.PAUSED && parsed.data.status === "RUNNING") {
+      const { published, failed } = await queuePendingRecipients(campaign.id);
+      console.log("[CAMPAIGNS] Resumed", { campaignId: campaign.id, published, failed });
+    }
+
     return NextResponse.json({ success: true, data: updated });
   } catch (error) {
     console.error("[CAMPAIGNS]", error);
@@ -335,6 +350,9 @@ export async function DELETE(
       { status: 401 }
     );
   }
+
+  const denied = await requirePermission(session.user, "campaigns.send");
+  if (denied) return denied;
 
   const { tenantId } = session.user;
 

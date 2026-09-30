@@ -18,9 +18,24 @@ import { guardFeature } from "@/lib/billing/guard";
 import { getBusinessScope } from "@/lib/business";
 import { prisma } from "@/lib/prisma";
 import { toCsv, type CsvColumn } from "@/lib/csv";
+import { requirePermission, type Permission } from "@/lib/permissions";
 
 const RESOURCES = ["contacts", "leads", "campaigns", "analytics", "faq-interest", "ivr-responses"] as const;
 type Resource = (typeof RESOURCES)[number];
+
+/**
+ * What each export needs. A bulk download of customer phone numbers is the most
+ * valuable thing in the CRM to walk off with, so it is gated like the import, not
+ * like the list page every agent can see.
+ */
+const EXPORT_PERMISSION: Record<Resource, Permission> = {
+  contacts: "contacts.export",
+  leads: "contacts.export",
+  "faq-interest": "contacts.export",
+  "ivr-responses": "contacts.export",
+  campaigns: "reports.view",
+  analytics: "reports.view",
+};
 
 /** Package a CSV string as a browser download with a dated filename. */
 function csvResponse(csv: string, resource: string): NextResponse {
@@ -52,6 +67,8 @@ export async function GET(req: NextRequest) {
       { status: 400 },
     );
   }
+  const forbidden = await requirePermission(scope, EXPORT_PERMISSION[resource]);
+  if (forbidden) return forbidden;
 
   try {
     if (resource === "contacts") {

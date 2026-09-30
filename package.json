@@ -4,15 +4,19 @@
   "private": true,
   "scripts": {
     "dev": "next dev",
+    "dev:queue": "npx --yes @upstash/qstash-cli@latest dev",
     "build": "prisma generate && next build",
     "postinstall": "prisma generate",
     "start": "next start",
     "lint": "eslint",
     "db:push": "prisma db push",
     "db:seed": "tsx prisma/seed.ts",
+    "seed": "tsx prisma/seed.ts",
+    "seed:demo": "tsx scripts/seed-test-accounts.ts",
     "db:studio": "prisma studio",
     "db:generate": "prisma generate",
     "db:backfill-whatsapp": "tsx scripts/backfill-whatsapp-integrations.ts",
+    "db:dedupe-contacts": "tsx scripts/dedupe-contacts.ts",
     "test:rag": "tsx scripts/test-rag.ts"
   },
   "prisma": {

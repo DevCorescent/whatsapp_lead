@@ -22,6 +22,7 @@ import {
 } from "lucide-react";
 import { Button, Field, inputClass, selectClass } from "@/components/ui";
 import { cn } from "@/lib/utils";
+import { useBrand } from "@/components/BrandProvider";
 import { useOnboarding, useCompleteOnboarding, type OnboardingState } from "@/hooks/useOnboarding";
 import { useTestWhatsApp } from "@/hooks/useSettings";
 import { useInviteMember } from "@/hooks/useTeam";
@@ -59,6 +60,7 @@ export function OnboardingGate() {
 }
 
 function OnboardingWizard({ data, onDismiss }: { data: OnboardingState; onDismiss: () => void }) {
+  const { name: brandName } = useBrand();
   const router = useRouter();
   const queryClient = useQueryClient();
   const complete = useCompleteOnboarding();
@@ -97,7 +99,7 @@ function OnboardingWizard({ data, onDismiss }: { data: OnboardingState; onDismis
         <div className="border-b border-slate-100 bg-gradient-to-br from-emerald-50 to-white px-6 pb-5 pt-6">
           <div className="flex items-center gap-2 text-emerald-700">
             <Sparkles className="h-5 w-5" />
-            <span className="text-sm font-semibold">Welcome to WhatsCRM</span>
+            <span className="text-sm font-semibold">Welcome to {brandName}</span>
           </div>
           <h2 className="mt-2 text-xl font-bold tracking-tight text-slate-900">
             Let&apos;s set up your workspace

@@ -8,6 +8,12 @@ declare module "next-auth" {
       tenantId: string;
       tenantSlug: string;
       tenantName: string;
+      /** PLATFORM | RESELLER | CLIENT — see prisma AccountType. */
+      accountType: string;
+      /** NORMAL | WHITE_LABEL for resellers, else null. */
+      resellerType: string | null;
+      /** The reseller account this client belongs to, if any. */
+      parentTenantId: string | null;
       avatar?: string;
     } & DefaultSession["user"];
   }
@@ -17,6 +23,9 @@ declare module "next-auth" {
     tenantId: string;
     tenantSlug: string;
     tenantName: string;
+    accountType: string;
+    resellerType: string | null;
+    parentTenantId: string | null;
     avatar?: string;
   }
 }
@@ -33,6 +42,11 @@ declare module "@auth/core/jwt" {
     tenantId: string;
     tenantSlug: string;
     tenantName: string;
+    accountType?: string;
+    resellerType?: string | null;
+    parentTenantId?: string | null;
     avatar?: string;
+    /** When the claims above were last read from the database (ms). */
+    claimsAt?: number;
   }
 }

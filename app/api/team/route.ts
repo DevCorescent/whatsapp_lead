@@ -5,6 +5,8 @@ import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import bcrypt from "bcryptjs";
 import { sendInviteEmail } from "@/lib/email";
+import { getBrandForTenant } from "@/lib/branding";
+import { canAssignRole, generateTempPassword } from "@/lib/roles";
 
 const inviteSchema = z.object({
   name: z.string().min(1, "Name is required"),
@@ -55,7 +57,7 @@ export async function POST(req: NextRequest) {
   if (!session?.user) return NextResponse.json({ success: false, error: "Unauthorized" }, { status: 401 });
   const { tenantId, role: callerRole } = session.user;
 
-  // Only TENANT_OWNER, ADMIN, MANAGER can invite
+  // Managers could always invite (below their own rank); the permission table decides now.
   if (!["SUPER_ADMIN", "TENANT_OWNER", "ADMIN", "MANAGER"].includes(callerRole)) {
     return NextResponse.json({ success: false, error: "Forbidden" }, { status: 403 });
   }
@@ -69,12 +71,17 @@ export async function POST(req: NextRequest) {
 
     const { name, email, role, phone } = parsed.data;
 
+    // Never SUPER_ADMIN, and never a role at or above the inviter's own (lib/roles.ts).
+    if (!canAssignRole(callerRole, role)) {
+      return NextResponse.json({ success: false, error: "You can't give that role" }, { status: 403 });
+    }
+
     // Check for duplicate email in tenant
     const existing = await prisma.user.findUnique({ where: { email_tenantId: { email, tenantId } } });
     if (existing) return NextResponse.json({ success: false, error: "User with this email already exists" }, { status: 409 });
 
-    // Generate a temporary password
-    const tempPassword = Math.random().toString(36).slice(-10) + "A1!";
+    // Generate a temporary password (CSPRNG — Math.random output is predictable).
+    const tempPassword = generateTempPassword();
     const hashedPassword = await bcrypt.hash(tempPassword, 10);
 
     const user = await prisma.user.create({
@@ -102,7 +109,9 @@ export async function POST(req: NextRequest) {
     // the owner must copy the one-time password from the modal.
     const tenant = await prisma.tenant.findUnique({ where: { id: tenantId }, select: { name: true } });
     const inviterName = session.user.name ?? "Your administrator";
-    const loginUrl = `${process.env.NEXT_PUBLIC_APP_URL ?? "http://localhost:3000"}/login`;
+    // A white-label account's members log in on (and hear from) the reseller's brand.
+    const brand = await getBrandForTenant(tenantId);
+    const loginUrl = `${brand.baseUrl}/login`;
 
     let emailSent = false;
     let emailError: string | null = null;
@@ -114,6 +123,7 @@ export async function POST(req: NextRequest) {
         tenantName: tenant?.name ?? "your workspace",
         tempPassword,
         loginUrl,
+        brand: { name: brand.name, color: brand.primaryColor, replyTo: brand.supportEmail },
       });
       emailSent = true;
     } catch (err) {

@@ -3,6 +3,12 @@ import { z } from "zod";
 import { UserRole } from "@prisma/client";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
+import { canAssignRole, canManageMember } from "@/lib/roles";
+
+/** Active owners left in an account if `excludingId` stopped being one. */
+async function otherActiveOwners(tenantId: string, excludingId: string) {
+  return prisma.user.count({ where: { tenantId, role: "TENANT_OWNER", isActive: true, id: { not: excludingId } } });
+}
 
 const updateSchema = z.object({
   role: z.nativeEnum(UserRole).optional(),
@@ -39,6 +45,22 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
 
     const member = await prisma.user.findFirst({ where: { id, tenantId } });
     if (!member) return NextResponse.json({ success: false, error: "Team member not found" }, { status: 404 });
+
+    // Only members ranked below the caller (owners manage everyone), and only to roles
+    // below the caller — never SUPER_ADMIN. See lib/roles.ts.
+    if (!canManageMember(callerRole, member.role)) {
+      return NextResponse.json({ success: false, error: "You can't change this member" }, { status: 403 });
+    }
+    if (parsed.data.role !== undefined && parsed.data.role !== member.role && !canAssignRole(callerRole, parsed.data.role)) {
+      return NextResponse.json({ success: false, error: "You can't give that role" }, { status: 403 });
+    }
+    // An account must keep at least one active owner.
+    const losingOwner =
+      member.role === "TENANT_OWNER" &&
+      ((parsed.data.role !== undefined && parsed.data.role !== "TENANT_OWNER") || parsed.data.isActive === false);
+    if (losingOwner && (await otherActiveOwners(tenantId, member.id)) === 0) {
+      return NextResponse.json({ success: false, error: "The account needs at least one active owner" }, { status: 409 });
+    }
 
     const updated = await prisma.user.update({
       where: { id },
@@ -80,6 +102,12 @@ export async function DELETE(req: NextRequest, { params }: { params: Promise<{ i
 
     const member = await prisma.user.findFirst({ where: { id, tenantId } });
     if (!member) return NextResponse.json({ success: false, error: "Team member not found" }, { status: 404 });
+    if (!canManageMember(callerRole, member.role)) {
+      return NextResponse.json({ success: false, error: "You can't remove this member" }, { status: 403 });
+    }
+    if (member.role === "TENANT_OWNER" && (await otherActiveOwners(tenantId, member.id)) === 0) {
+      return NextResponse.json({ success: false, error: "The account needs at least one active owner" }, { status: 409 });
+    }
 
     // Soft delete — deactivate
     await prisma.user.update({ where: { id }, data: { isActive: false } });

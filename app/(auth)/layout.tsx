@@ -1,6 +1,34 @@
-﻿import type { ReactNode } from "react";
+import type { ReactNode } from "react";
+import type { Metadata } from "next";
 import Link from "next/link";
-import { Check, MessageSquare } from "lucide-react";
+import { Check, Mail, MessageSquare, Phone } from "lucide-react";
+import { brandStyle, getRequestBrand } from "@/lib/branding";
+
+/**
+ * Login and sign-up take the brand of the domain they're served on: a white-label
+ * reseller's domain shows its name, logo, colours, headline and contact details,
+ * with no trace of the platform.
+ */
+export async function generateMetadata(): Promise<Metadata> {
+  const brand = await getRequestBrand();
+  return {
+    title: brand.isWhiteLabel ? brand.name : `${brand.name} — AI-Powered WhatsApp CRM & Lead Management`,
+    description: brand.loginSubtext,
+    ...(brand.faviconUrl && { icons: { icon: brand.faviconUrl } }),
+  };
+}
+
+function BrandMark({ logoUrl, className }: { logoUrl: string | null; className: string }) {
+  if (logoUrl) {
+    // eslint-disable-next-line @next/next/no-img-element -- a reseller's logo on its own host
+    return <img src={logoUrl} alt="" className={`${className} object-contain`} />;
+  }
+  return (
+    <span className={`${className} flex items-center justify-center`}>
+      <MessageSquare className="h-1/2 w-1/2 text-white" />
+    </span>
+  );
+}
 
 const FEATURES = [
   "Shared WhatsApp inbox",
@@ -9,9 +37,12 @@ const FEATURES = [
   "Real-time analytics",
 ];
 
-export default function AuthLayout({ children }: { children: ReactNode }) {
+export default async function AuthLayout({ children }: { children: ReactNode }) {
+  const brand = await getRequestBrand();
+  const year = new Date().getFullYear();
+
   return (
-    <div className="min-h-screen bg-white lg:grid lg:grid-cols-2">
+    <div className="min-h-screen bg-white lg:grid lg:grid-cols-2" style={brandStyle(brand)}>
       {/* ─── Left branding panel ─────────────────────────────────────────── */}
       <div className="relative hidden flex-col justify-between overflow-hidden bg-gradient-to-br from-emerald-600 to-emerald-800 p-12 text-white lg:flex">
         {/* Decorative blurred circles */}
@@ -33,21 +64,17 @@ export default function AuthLayout({ children }: { children: ReactNode }) {
           href="/"
           className="relative z-10 inline-flex w-fit items-center gap-3 rounded-lg focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-white"
         >
-          <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-white/15 ring-1 ring-inset ring-white/25 backdrop-blur-sm">
-            <MessageSquare className="h-5 w-5 text-white" />
-          </span>
-          <span className="text-xl font-bold tracking-tight">WhatsCRM</span>
+          <BrandMark
+            logoUrl={brand.logoUrl}
+            className="h-10 w-10 rounded-xl bg-white/15 ring-1 ring-inset ring-white/25 backdrop-blur-sm"
+          />
+          <span className="text-xl font-bold tracking-tight">{brand.name}</span>
         </Link>
 
         {/* Headline + features */}
         <div className="relative z-10 max-w-md">
-          <h2 className="text-4xl font-bold leading-tight tracking-tight">
-            Turn every WhatsApp chat into a qualified lead.
-          </h2>
-          <p className="mt-4 text-base leading-relaxed text-emerald-50/90">
-            One workspace for your team to talk to customers, score leads with AI and close
-            faster — all on the channel your customers already use.
-          </p>
+          <h2 className="text-4xl font-bold leading-tight tracking-tight">{brand.loginHeadline}</h2>
+          <p className="mt-4 text-base leading-relaxed text-emerald-50/90">{brand.loginSubtext}</p>
 
           <ul className="mt-8 space-y-3">
             {FEATURES.map((feature) => (
@@ -60,10 +87,23 @@ export default function AuthLayout({ children }: { children: ReactNode }) {
             ))}
           </ul>
 
-          {/* Testimonial */}
+          {/* White-label: the reseller's contact details. Platform: the testimonial. */}
+          {brand.isWhiteLabel ? (
+            (brand.supportEmail || brand.supportPhone || brand.address) && (
+              <div className="mt-10 space-y-2 rounded-2xl bg-white/10 p-6 text-sm ring-1 ring-inset ring-white/15 backdrop-blur-sm">
+                {brand.supportEmail && (
+                  <p className="flex items-center gap-2"><Mail className="h-4 w-4 shrink-0" /> {brand.supportEmail}</p>
+                )}
+                {brand.supportPhone && (
+                  <p className="flex items-center gap-2"><Phone className="h-4 w-4 shrink-0" /> {brand.supportPhone}</p>
+                )}
+                {brand.address && <p className="text-emerald-50/80">{brand.address}</p>}
+              </div>
+            )
+          ) : (
           <figure className="mt-10 rounded-2xl bg-white/10 p-6 ring-1 ring-inset ring-white/15 backdrop-blur-sm">
             <blockquote className="text-sm leading-relaxed text-white">
-              &ldquo;WhatsCRM helped us qualify 3x more leads without adding a single agent.&rdquo;
+              &ldquo;{brand.name} helped us qualify 3x more leads without adding a single agent.&rdquo;
             </blockquote>
             <figcaption className="mt-4 flex items-center gap-3">
               <span className="flex h-9 w-9 items-center justify-center rounded-full bg-white/20 text-xs font-semibold text-white">
@@ -75,10 +115,11 @@ export default function AuthLayout({ children }: { children: ReactNode }) {
               </span>
             </figcaption>
           </figure>
+          )}
         </div>
 
         <p className="relative z-10 text-xs text-emerald-100/70">
-          © 2026 Corescent Technologies Pvt Ltd
+          © {year} {brand.legalName}
         </p>
       </div>
 
@@ -87,10 +128,8 @@ export default function AuthLayout({ children }: { children: ReactNode }) {
         {/* Mobile logo */}
         <div className="flex items-center justify-center px-6 pt-10 lg:hidden">
           <Link href="/" className="inline-flex items-center gap-2.5">
-            <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-emerald-600">
-              <MessageSquare className="h-4.5 w-4.5 text-white" />
-            </span>
-            <span className="text-lg font-bold tracking-tight text-slate-900">WhatsCRM</span>
+            <BrandMark logoUrl={brand.logoUrl} className="h-9 w-9 rounded-xl bg-emerald-600" />
+            <span className="text-lg font-bold tracking-tight text-slate-900">{brand.name}</span>
           </Link>
         </div>
 
@@ -99,7 +138,7 @@ export default function AuthLayout({ children }: { children: ReactNode }) {
         </div>
 
         <p className="px-6 pb-8 text-center text-xs text-slate-400 lg:hidden">
-          © 2026 Corescent Technologies Pvt Ltd
+          © {year} {brand.legalName}
         </p>
       </div>
     </div>

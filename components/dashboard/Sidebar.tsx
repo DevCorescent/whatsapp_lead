@@ -20,6 +20,15 @@ import {
   Menu,
   X,
   FileText,
+  Send,
+  Ban,
+  LayoutDashboard,
+  Building2,
+  CreditCard,
+  IndianRupee,
+  Palette,
+  Wallet,
+  Filter,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Avatar } from "@/components/ui";
@@ -39,6 +48,8 @@ const NAV = [
     section: "Automate",
     items: [
       { href: "/campaigns", label: "Campaigns", icon: Megaphone, roles: ["SUPER_ADMIN", "TENANT_OWNER", "ADMIN", "MANAGER", "MARKETING_USER"] },
+      { href: "/segments", label: "Segments", icon: Filter, roles: ["SUPER_ADMIN", "TENANT_OWNER", "ADMIN", "MANAGER", "MARKETING_USER"] },
+      { href: "/broadcast", label: "Bulk Broadcast", icon: Send, roles: ["SUPER_ADMIN", "TENANT_OWNER", "ADMIN", "MANAGER", "MARKETING_USER"] },
       { href: "/templates", label: "Templates", icon: FileText, roles: ["SUPER_ADMIN", "TENANT_OWNER", "ADMIN", "MANAGER", "MARKETING_USER"] },
       { href: "/chatbot", label: "Chatbot", icon: Bot, roles: ["SUPER_ADMIN", "TENANT_OWNER", "ADMIN", "MANAGER"] },
       { href: "/ai-settings", label: "AI Settings", icon: Sparkles, roles: ["SUPER_ADMIN", "TENANT_OWNER", "ADMIN", "MANAGER"] },
@@ -50,8 +61,35 @@ const NAV = [
     items: [
       { href: "/tickets", label: "Tickets", icon: Ticket, roles: null },
       { href: "/analytics", label: "Analytics", icon: BarChart2, roles: ["SUPER_ADMIN", "TENANT_OWNER", "ADMIN", "MANAGER", "MARKETING_USER"] },
+      { href: "/blacklist", label: "Blacklist", icon: Ban, roles: ["SUPER_ADMIN", "TENANT_OWNER", "ADMIN", "MANAGER", "MARKETING_USER"] },
+      { href: "/wallet", label: "Wallet", icon: Wallet, roles: ["SUPER_ADMIN", "TENANT_OWNER", "ADMIN", "MANAGER", "MARKETING_USER"] },
       { href: "/team", label: "Team", icon: UserCog, roles: ["SUPER_ADMIN", "TENANT_OWNER", "ADMIN", "MANAGER"] },
       { href: "/settings", label: "Settings", icon: Settings, roles: ["SUPER_ADMIN", "TENANT_OWNER", "ADMIN", "MANAGER"] },
+    ],
+  },
+];
+
+/**
+ * A reseller account manages client accounts and never works inside one, so it
+ * gets its own menu — no inbox, contacts or campaigns (the API refuses those too).
+ */
+const RESELLER_NAV = [
+  {
+    section: null,
+    items: [
+      { href: "/reseller", label: "Overview", icon: LayoutDashboard, roles: null },
+      { href: "/reseller/clients", label: "Clients", icon: Building2, roles: null },
+      { href: "/reseller/plans", label: "Plans", icon: CreditCard, roles: ["TENANT_OWNER", "ADMIN"] },
+      { href: "/reseller/commissions", label: "Commissions", icon: IndianRupee, roles: ["TENANT_OWNER", "ADMIN", "MANAGER"] },
+      { href: "/wallet", label: "Wallet", icon: Wallet, roles: ["TENANT_OWNER", "ADMIN"] },
+      { href: "/reseller/branding", label: "Branding", icon: Palette, roles: ["TENANT_OWNER", "ADMIN"], whiteLabelOnly: true },
+    ],
+  },
+  {
+    section: "Manage",
+    items: [
+      { href: "/team", label: "Team", icon: UserCog, roles: ["TENANT_OWNER", "ADMIN", "MANAGER"] },
+      { href: "/settings", label: "Settings", icon: Settings, roles: ["TENANT_OWNER", "ADMIN"] },
     ],
   },
 ];
@@ -68,6 +106,14 @@ export interface SidebarUser {
   avatar?: string | null;
   tenantName?: string | null;
   plan?: string | null;
+  accountType?: string | null;
+  resellerType?: string | null;
+}
+
+/** The brand shown in the sidebar — the platform's, or a white-label reseller's. */
+export interface SidebarBrand {
+  name: string;
+  logoUrl: string | null;
 }
 
 function prettyRole(role?: string | null) {
@@ -79,17 +125,29 @@ function prettyRole(role?: string | null) {
     .join(" ");
 }
 
-export function Sidebar({ user }: { user: SidebarUser }) {
+export function Sidebar({ user, brand }: { user: SidebarUser; brand: SidebarBrand }) {
   const pathname = usePathname();
   const [mobileOpen, setMobileOpen] = useState(false);
+  const isReseller = user.accountType === "RESELLER";
+  const groups = isReseller
+    ? RESELLER_NAV.map((g) => ({
+        ...g,
+        items: g.items.filter((i) => !("whiteLabelOnly" in i && i.whiteLabelOnly) || user.resellerType === "WHITE_LABEL"),
+      }))
+    : NAV;
 
   const nav = (
     <>
       <div className="flex h-16 shrink-0 items-center gap-2.5 px-5">
-        <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-emerald-600 shadow-sm shadow-emerald-600/30">
-          <MessageSquare className="h-4 w-4 text-white" />
-        </span>
-        <span className="text-[15px] font-semibold tracking-tight text-slate-900">WhatsCRM</span>
+        {brand.logoUrl ? (
+          // eslint-disable-next-line @next/next/no-img-element -- a reseller's logo on its own host
+          <img src={brand.logoUrl} alt="" className="h-8 w-8 rounded-lg object-contain" />
+        ) : (
+          <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-emerald-600 shadow-sm shadow-emerald-600/30">
+            <MessageSquare className="h-4 w-4 text-white" />
+          </span>
+        )}
+        <span className="truncate text-[15px] font-semibold tracking-tight text-slate-900">{brand.name}</span>
         <button
           onClick={() => setMobileOpen(false)}
           className="ml-auto rounded-lg p-1 text-slate-400 hover:bg-slate-100 lg:hidden"
@@ -100,7 +158,7 @@ export function Sidebar({ user }: { user: SidebarUser }) {
       </div>
 
       <nav className="scrollbar-slim flex-1 overflow-y-auto px-3 pb-3">
-        {NAV.map((group, gi) => {
+        {groups.map((group, gi) => {
           const items = group.items.filter((item) => canSeeNavItem(user.role, item.roles));
           if (items.length === 0) return null;
           return (
@@ -165,9 +223,12 @@ export function Sidebar({ user }: { user: SidebarUser }) {
           </button>
         </div>
 
-        <div className="mt-2.5">
-          <BusinessSwitcher />
-        </div>
+        {/* Businesses are client workspaces; a reseller account has none. */}
+        {!isReseller && (
+          <div className="mt-2.5">
+            <BusinessSwitcher />
+          </div>
+        )}
       </div>
     </>
   );

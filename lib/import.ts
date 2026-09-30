@@ -25,15 +25,48 @@ export interface ImportField {
 export type ColumnMapping = Record<string, string | null>;
 export type RawRow = Record<string, unknown>;
 
+/** Country code assumed for numbers written without one (a bare "9876543210"). */
+export const DEFAULT_COUNTRY_CODE = "91";
+
 /**
- * Normalise a phone to digits-only (E.164 without the leading "+").
- *
- * Matches how the WhatsApp webhook stores numbers, so an imported record dedupes
- * correctly against one created from an inbound message — both resolve to the same
- * `(phone, tenantId)` key.
+ * Length of a national number (after any trunk "0") for common country codes, so a
+ * national number can be told apart from one that already carries a code. Codes not
+ * listed fall back to "10 digits or fewer is national".
  */
-export function normalizePhone(raw: unknown): string {
-  return String(raw ?? "").replace(/\D/g, "");
+const NATIONAL_LENGTH: Record<string, number> = {
+  "1": 10, "44": 10, "61": 9, "65": 8, "91": 10, "92": 10, "94": 9,
+  "880": 10, "966": 9, "971": 9, "977": 10,
+};
+
+/**
+ * Normalise a phone to digits-only E.164 without the leading "+".
+ *
+ * This is the one normaliser for every way a number enters the system — manual
+ * add/edit, spreadsheet import, bulk broadcast and blacklist — and it matches how
+ * the WhatsApp webhook stores numbers (Meta's `from`, already international). So
+ * "+91 98765 43210", "09876543210" and "9876543210" all become "919876543210" and
+ * dedupe against each other and against a contact created by an inbound message.
+ *
+ * A number written internationally ("+…" or "00…") keeps its own country code.
+ * Otherwise a national trunk "0" is dropped and `countryCode` is prepended when
+ * what remains is exactly a national-length number. The result may still be
+ * invalid; check it with `isValidPhone`.
+ */
+export function normalizePhone(raw: unknown, countryCode: string = DEFAULT_COUNTRY_CODE): string {
+  const text = String(raw ?? "").trim();
+  let digits = text.replace(/\D/g, "");
+  if (!digits) return "";
+
+  const international = text.startsWith("+") || digits.startsWith("00");
+  if (digits.startsWith("00")) digits = digits.slice(2);
+
+  const cc = countryCode.replace(/\D/g, "");
+  if (!international && cc) {
+    const national = digits.replace(/^0+/, "");
+    const expected = NATIONAL_LENGTH[cc];
+    if (expected ? national.length === expected : national.length <= 10) digits = cc + national;
+  }
+  return digits;
 }
 
 const emailSchema = z.string().email();

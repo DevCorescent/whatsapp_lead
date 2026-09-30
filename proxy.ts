@@ -1,6 +1,7 @@
 import NextAuth from "next-auth";
 import { NextResponse } from "next/server";
 import { authConfig } from "@/lib/auth.config";
+import { isPlatformHost } from "@/lib/hosts";
 
 // Built from the edge-safe config, NOT from lib/auth.ts — importing that here
 // drags Prisma and the pg driver into the Edge bundle, which cannot load them.
@@ -56,6 +57,10 @@ const AGENT_BLOCKED_PREFIXES = [
   "/team",
   "/settings",
   "/campaigns",
+  "/segments",
+  "/broadcast",
+  "/blacklist",
+  "/wallet",
   "/chatbot",
   "/ai-settings",
   "/knowledge-base",
@@ -64,28 +69,86 @@ const AGENT_BLOCKED_PREFIXES = [
   "/businesses",
 ];
 
+/**
+ * What a RESELLER account's users may reach. Fail-closed allowlists: a reseller
+ * manages client accounts and never acts inside one, so every client feature —
+ * inbox, contacts, campaigns, templates, chatbot, analytics, search, media — is
+ * off-limits, including ones added later that nobody remembers to list here.
+ *
+ * This is the first of several layers: getBusinessScope() refuses reseller
+ * accounts from the database, and requirePermission() caps them by account type.
+ * The session's accountType is refreshed from the database every few minutes.
+ */
+const RESELLER_PAGE_PREFIXES = ["/reseller", "/team", "/settings", "/billing", "/wallet"];
+const RESELLER_API_PREFIXES = ["/api/reseller", "/api/team", "/api/settings", "/api/billing", "/api/wallet", "/api/account", "/api/auth"];
+/** Client-only corners inside otherwise-allowed API areas. */
+const RESELLER_API_BLOCKED = ["/api/settings/whatsapp"];
+
+const matches = (pathname: string, prefixes: string[]) =>
+  prefixes.some((p) => pathname === p || pathname.startsWith(`${p}/`) || pathname.startsWith(`${p}-`));
+
+/** Where a signed-in user lands. */
+function homeFor(user: { role?: string; accountType?: string } | undefined): string {
+  if (user?.role === "SUPER_ADMIN") return "/dashboard";
+  if (user?.accountType === "RESELLER") return "/reseller";
+  return "/inbox";
+}
+
 export default auth((req) => {
   const { nextUrl } = req;
   const session = req.auth;
   const pathname = nextUrl.pathname;
   const isLoggedIn = !!session?.user;
+  const isReseller = session?.user?.accountType === "RESELLER" && session.user.role !== "SUPER_ADMIN";
 
-  if (pathname.startsWith("/api/") || pathname.startsWith("/_next") || pathname.startsWith("/favicon")) {
+  if (pathname.startsWith("/_next") || pathname.startsWith("/favicon")) {
+    return NextResponse.next();
+  }
+
+  if (pathname.startsWith("/api/")) {
+    if (isReseller && (!matches(pathname, RESELLER_API_PREFIXES) || matches(pathname, RESELLER_API_BLOCKED))) {
+      return NextResponse.json(
+        { success: false, error: "Reseller accounts can't access client data or send messages" },
+        { status: 403 },
+      );
+    }
     return NextResponse.next();
   }
 
   if (pathname.startsWith(ADMIN_ROUTE_PREFIX)) {
     if (!isLoggedIn) return NextResponse.redirect(new URL("/login", nextUrl));
-    if (session?.user?.role !== "SUPER_ADMIN") return NextResponse.redirect(new URL("/inbox", nextUrl));
+    if (session?.user?.role !== "SUPER_ADMIN") return NextResponse.redirect(new URL(homeFor(session?.user), nextUrl));
     return NextResponse.next();
   }
 
   if (AUTH_ROUTES.some((r) => pathname.startsWith(r))) {
-    if (isLoggedIn) return NextResponse.redirect(new URL("/inbox", nextUrl));
+    if (isLoggedIn) return NextResponse.redirect(new URL(homeFor(session?.user), nextUrl));
     return NextResponse.next();
   }
 
+  const whiteLabelHost = !isPlatformHost(req.headers.get("host") ?? "");
+
+  // The brand site (landing + legal pages) exists only on white-label hosts, where it is
+  // reached through the rewrites below. On the platform's own host it doesn't exist.
+  if (pathname === "/site" || pathname.startsWith("/site/")) {
+    return whiteLabelHost ? NextResponse.next() : NextResponse.redirect(new URL("/", nextUrl));
+  }
+
   if (PUBLIC_ROUTES.some((r) => pathname === r || pathname.startsWith(r + "/"))) {
+    // Any host that isn't the platform's is a white-label reseller's domain or subdomain:
+    // it serves that brand's own site (app/(brand)/site, branded by lib/branding.ts)
+    // instead of the platform's marketing pages.
+    if (whiteLabelHost) {
+      if (pathname === "/") {
+        if (isLoggedIn) return NextResponse.redirect(new URL(homeFor(session?.user), nextUrl));
+        return NextResponse.rewrite(new URL("/site", nextUrl));
+      }
+      if (pathname === "/terms") return NextResponse.rewrite(new URL("/site/terms", nextUrl));
+      if (pathname === "/privacy-policy") return NextResponse.rewrite(new URL("/site/privacy", nextUrl));
+      const home = new URL("/", nextUrl);
+      if (pathname === "/pricing") home.hash = "pricing";
+      return NextResponse.redirect(home);
+    }
     return NextResponse.next();
   }
 
@@ -93,6 +156,14 @@ export default auth((req) => {
     const loginUrl = new URL("/login", nextUrl);
     loginUrl.searchParams.set("callbackUrl", pathname);
     return NextResponse.redirect(loginUrl);
+  }
+
+  if (isReseller && !matches(pathname, RESELLER_PAGE_PREFIXES)) {
+    return NextResponse.redirect(new URL("/reseller", nextUrl));
+  }
+  // The reseller panel is for reseller accounts only (its APIs refuse everyone else too).
+  if (!isReseller && matches(pathname, ["/reseller"])) {
+    return NextResponse.redirect(new URL(homeFor(session?.user), nextUrl));
   }
 
   if (session?.user?.role === "AGENT") {

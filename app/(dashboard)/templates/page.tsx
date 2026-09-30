@@ -1178,7 +1178,7 @@ function TemplateModal({
 
                   {b.type === "OTP" && (
                     <p className="pl-1 text-xs text-slate-500">
-                      Meta shows a "Copy Code" button. Pass the OTP as body variable{" "}
+                      Meta shows a &ldquo;Copy Code&rdquo; button. Pass the OTP as body variable{" "}
                       <code className="rounded bg-slate-100 px-1">{"{{1}}"}</code> — it fills both the body and the button automatically.
                     </p>
                   )}

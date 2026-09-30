@@ -1,9 +1,42 @@
+// ============================================================================
+// ROUTE : /api/admin/tenants   (SUPER_ADMIN only)
+//
+// GET  - Every account, with its type (reseller / client), reseller type, parent
+//        reseller, category, plan and usage. Filters: search, isActive, planId,
+//        accountType, parentId.
+// POST - Create an account: a direct client, a client under a reseller, or a
+//        reseller (NORMAL or WHITE_LABEL, with a commission rate). The owner login
+//        is a TENANT_OWNER with a CSPRNG temporary password (lib/provisioning.ts).
+// ============================================================================
+
 import { NextRequest, NextResponse } from "next/server";
-import bcrypt from "bcryptjs";
+import { z } from "zod";
+import type { AccountType, Prisma } from "@prisma/client";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { sendInviteEmail } from "@/lib/email";
+import { getBrandForTenant, PLATFORM_BRAND } from "@/lib/branding";
 import { FREE_TIER_LIMITS, planLimits } from "@/lib/billing/tiers";
+import { provisionAccount, ProvisioningError } from "@/lib/provisioning";
+
+const ACCOUNT_TYPES: AccountType[] = ["PLATFORM", "RESELLER", "CLIENT"];
+
+const createSchema = z.object({
+  name: z.string().trim().min(1, "name is required").max(120),
+  slug: z.string().trim().max(60).optional(),
+  ownerEmail: z.string().trim().email("ownerEmail must be a valid email"),
+  ownerName: z.string().trim().max(120).optional(),
+  accountType: z.enum(["CLIENT", "RESELLER"]).default("CLIENT"),
+  resellerType: z.enum(["NORMAL", "WHITE_LABEL"]).optional(),
+  /** For a client: the reseller it belongs to. */
+  resellerId: z.string().min(1).nullable().optional(),
+  commissionRate: z.number().min(0).max(100).optional(),
+  categoryId: z.string().min(1).nullable().optional(),
+  /** Plan by machine name (legacy) or id. Resellers get none unless one is given. */
+  plan: z.string().optional(),
+  planId: z.string().optional(),
+  trialDays: z.number().int().min(0).max(90).optional(),
+});
 
 export async function GET(req: NextRequest) {
   const session = await auth();
@@ -11,13 +44,16 @@ export async function GET(req: NextRequest) {
   if (session.user.role !== "SUPER_ADMIN") return NextResponse.json({ success: false, error: "Forbidden" }, { status: 403 });
 
   const { searchParams } = new URL(req.url);
-  const page = Math.max(1, parseInt(searchParams.get("page") ?? "1"));
-  const limit = Math.min(100, parseInt(searchParams.get("limit") ?? "20"));
+  const page = Math.max(1, parseInt(searchParams.get("page") ?? "1") || 1);
+  const limit = Math.min(100, Math.max(1, parseInt(searchParams.get("limit") ?? "20") || 20));
   const search = searchParams.get("search") ?? "";
   const isActiveParam = searchParams.get("isActive");
   const planFilter = searchParams.get("planId") ?? "";
+  const typeParam = searchParams.get("accountType");
+  const accountType = typeParam && ACCOUNT_TYPES.includes(typeParam as AccountType) ? (typeParam as AccountType) : null;
+  const parentId = searchParams.get("parentId");
 
-  const where = {
+  const where: Prisma.TenantWhereInput = {
     ...(search && {
       OR: [
         { name: { contains: search, mode: "insensitive" as const } },
@@ -26,6 +62,8 @@ export async function GET(req: NextRequest) {
     }),
     ...(isActiveParam !== null && isActiveParam !== "" && { isActive: isActiveParam === "true" }),
     ...(planFilter && { subscription: { plan: { name: { equals: planFilter.toUpperCase() } } } }),
+    ...(accountType && { accountType }),
+    ...(parentId && { parentId }),
   };
 
   const [total, tenants] = await Promise.all([
@@ -33,11 +71,13 @@ export async function GET(req: NextRequest) {
     prisma.tenant.findMany({
       where,
       include: {
-        _count: { select: { users: true, contacts: true, leads: true } },
+        _count: { select: { users: true, contacts: true, leads: true, children: true } },
         // The whole plan row, because planLimits() maps it onto the limit shape the
         // rest of the app enforces. Only the display name and the message limit are
         // put on the response below — no plan internals reach the client.
         subscription: { include: { plan: true } },
+        parent: { select: { id: true, name: true } },
+        category: { select: { name: true } },
       },
       orderBy: { createdAt: "desc" },
       skip: (page - 1) * limit,
@@ -46,8 +86,6 @@ export async function GET(req: NextRequest) {
   ]);
 
   // Messages each workspace has sent this calendar month — the usage column's numerator.
-  // Same definition the analytics export uses for "Messages This Month" (app/api/export),
-  // so the two never disagree. One grouped query for the page rather than one per row.
   const startOfMonth = new Date();
   startOfMonth.setDate(1);
   startOfMonth.setHours(0, 0, 0, 0);
@@ -69,6 +107,12 @@ export async function GET(req: NextRequest) {
     logo: t.logo,
     isActive: t.isActive,
     createdAt: t.createdAt.toISOString(),
+    accountType: t.accountType,
+    resellerType: t.resellerType,
+    commissionRate: t.commissionRate,
+    parent: t.parent,
+    clients: t._count.children,
+    category: t.category?.name ?? null,
     plan: t.subscription?.plan?.displayName ?? null,
     users: t._count.users,
     contacts: t._count.contacts,
@@ -89,114 +133,86 @@ export async function POST(req: NextRequest) {
   if (!session?.user) return NextResponse.json({ success: false, error: "Unauthorized" }, { status: 401 });
   if (session.user.role !== "SUPER_ADMIN") return NextResponse.json({ success: false, error: "Forbidden" }, { status: 403 });
 
-  let body: unknown;
+  const parsed = createSchema.safeParse(await req.json().catch(() => null));
+  if (!parsed.success) {
+    return NextResponse.json({ success: false, error: parsed.error.issues[0].message }, { status: 400 });
+  }
+  const input = parsed.data;
+
+  if (input.accountType === "RESELLER" && !input.resellerType) {
+    return NextResponse.json({ success: false, error: "Choose NORMAL or WHITE_LABEL for a reseller" }, { status: 400 });
+  }
+
+  // Plan: explicit id, else by machine name, else STARTER for clients. Resellers don't
+  // message, so they get a plan only when one is asked for.
+  let planId: string | null = null;
+  if (input.planId) {
+    planId = (await prisma.plan.findUnique({ where: { id: input.planId }, select: { id: true } }))?.id ?? null;
+    if (!planId) return NextResponse.json({ success: false, error: "Plan not found" }, { status: 400 });
+  } else if (input.plan || input.accountType === "CLIENT") {
+    planId =
+      (await prisma.plan.findFirst({ where: { name: (input.plan ?? "STARTER").toUpperCase() }, select: { id: true } }))?.id ??
+      (await prisma.plan.findFirst({ where: { name: "STARTER" }, select: { id: true } }))?.id ??
+      null;
+    if (!planId && input.accountType === "CLIENT") {
+      return NextResponse.json({ success: false, error: "No plans found in the database — run the seed first" }, { status: 500 });
+    }
+  }
+
   try {
-    body = await req.json();
-  } catch {
-    return NextResponse.json({ success: false, error: "Invalid JSON body" }, { status: 400 });
-  }
-
-  const { name, slug, ownerEmail, plan: planName, trialDays } = body as {
-    name: string;
-    slug: string;
-    ownerEmail?: string;
-    plan?: string;
-    trialDays?: number;
-  };
-
-  if (!name || !slug) {
-    return NextResponse.json({ success: false, error: "name and slug are required" }, { status: 400 });
-  }
-  if (!ownerEmail) {
-    return NextResponse.json({ success: false, error: "ownerEmail is required" }, { status: 400 });
-  }
-
-  const existing = await prisma.tenant.findUnique({ where: { slug } });
-  if (existing) return NextResponse.json({ success: false, error: "Slug already taken" }, { status: 409 });
-
-  const existingUser = await prisma.user.findFirst({ where: { email: ownerEmail } });
-  if (existingUser) return NextResponse.json({ success: false, error: "A user with that email already exists" }, { status: 409 });
-
-  // Resolve plan by name
-  let resolvedPlan: { id: string; displayName: string } | null = null;
-  if (planName) {
-    resolvedPlan = await prisma.plan.findFirst({
-      where: { name: planName.toUpperCase() },
-      select: { id: true, displayName: true },
-    });
-  }
-  if (!resolvedPlan) {
-    resolvedPlan = await prisma.plan.findFirst({
-      where: { name: "STARTER" },
-      select: { id: true, displayName: true },
-    });
-  }
-  if (!resolvedPlan) {
-    return NextResponse.json({ success: false, error: "No plans found in the database — run the seed first" }, { status: 500 });
-  }
-
-  const days = Math.max(0, Math.min(90, Number(trialDays ?? 14)));
-  const now = new Date();
-  const periodEnd = new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000);
-  const trialEnd = days > 0 ? new Date(now.getTime() + days * 24 * 60 * 60 * 1000) : null;
-  const subStatus = days > 0 ? "TRIALING" : "ACTIVE";
-
-  // Generate temp password
-  const tempPassword = Math.random().toString(36).slice(-8) + "A1!";
-  const hashedPassword = await bcrypt.hash(tempPassword, 10);
-
-  const ownerName = ownerEmail.split("@")[0].replace(/[._-]/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
-
-  const { tenant, user } = await prisma.$transaction(async (tx) => {
-    const t = await tx.tenant.create({
-      data: { name, slug, settings: { create: {} } },
+    const { tenant, user, tempPassword } = await provisionAccount({
+      name: input.name,
+      slug: input.slug,
+      ownerName: input.ownerName,
+      ownerEmail: input.ownerEmail,
+      accountType: input.accountType,
+      resellerType: input.accountType === "RESELLER" ? input.resellerType : null,
+      resellerId: input.accountType === "CLIENT" ? input.resellerId ?? null : null,
+      commissionRate: input.commissionRate,
+      categoryId: input.categoryId ?? null,
+      planId,
+      trialDays: input.trialDays ?? (input.accountType === "CLIENT" ? 14 : 0),
     });
 
-    await tx.subscription.create({
+    await prisma.auditLog.create({
       data: {
-        tenantId: t.id,
-        planId: resolvedPlan!.id,
-        status: subStatus,
-        billingCycle: "MONTHLY",
-        currentPeriodStart: now,
-        currentPeriodEnd: periodEnd,
-        ...(trialEnd && { trialEndsAt: trialEnd }),
+        tenantId: session.user.tenantId,
+        userId: session.user.id,
+        action: "ACCOUNT_CREATED",
+        resource: "tenant",
+        resourceId: tenant.id,
+        metadata: { accountType: input.accountType, resellerType: input.resellerType ?? null, resellerId: input.resellerId ?? null },
       },
     });
 
-    const u = await tx.user.create({
-      data: {
-        tenantId: t.id,
-        name: ownerName,
-        email: ownerEmail,
-        password: hashedPassword,
-        role: "ADMIN",
-      },
-    });
-
-    return { tenant: t, user: u };
-  });
-
-  console.log("[admin/tenants] provisioned tenant:", tenant.id, "owner:", user.email, "plan:", resolvedPlan.displayName);
-
-  // Send invite email non-blocking
-  const loginUrl = `${process.env.NEXTAUTH_URL ?? "https://whatsapp-lead-five.vercel.app"}/login`;
-  sendInviteEmail({
-    to: ownerEmail,
-    name: ownerName,
-    inviterName: "Corescent Admin",
-    tenantName: name,
-    tempPassword,
-    loginUrl,
-  }).catch((err) => console.error("[admin/tenants] invite email failed:", err));
-
-  return NextResponse.json({
-    success: true,
-    data: {
-      tenant: { id: tenant.id, name: tenant.name, slug: tenant.slug },
-      user: { id: user.id, email: user.email, name: user.name },
-      plan: resolvedPlan.displayName,
+    // Invite email, branded for clients of a white-label reseller.
+    const brand = tenant.parentId ? await getBrandForTenant(tenant.id) : PLATFORM_BRAND;
+    sendInviteEmail({
+      to: user.email,
+      name: user.name,
+      inviterName: `${brand.name} team`,
+      tenantName: tenant.name,
       tempPassword,
-    },
-  }, { status: 201 });
+      loginUrl: `${brand.baseUrl}/login`,
+      brand: { name: brand.name, color: brand.primaryColor, replyTo: brand.supportEmail },
+    }).catch((err) => console.error("[admin/tenants] invite email failed:", err));
+
+    return NextResponse.json(
+      {
+        success: true,
+        data: {
+          tenant: { id: tenant.id, name: tenant.name, slug: tenant.slug, accountType: tenant.accountType },
+          user: { id: user.id, email: user.email, name: user.name },
+          tempPassword,
+        },
+      },
+      { status: 201 },
+    );
+  } catch (error) {
+    if (error instanceof ProvisioningError) {
+      return NextResponse.json({ success: false, error: error.message }, { status: error.status });
+    }
+    console.error("[admin/tenants POST]", error);
+    return NextResponse.json({ success: false, error: "Failed to create the account" }, { status: 500 });
+  }
 }

@@ -32,6 +32,9 @@ type TabKey = (typeof TABS)[number]["key"];
 export default function SettingsPage() {
   const { data: session } = useSession();
   const role = session?.user?.role ?? "";
+  // A reseller account has no leads, WhatsApp number or quick replies — those tabs
+  // are client features (and their APIs refuse reseller accounts).
+  const isReseller = session?.user?.accountType === "RESELLER";
   const isStageAdmin = STAGE_ADMIN_ROLES.includes(role);
   const canSeeBilling = BILLING_ROLES.includes(role);
 
@@ -40,6 +43,7 @@ export default function SettingsPage() {
   // The stage manager / billing tabs are hidden from non-admins on the frontend
   // (APIs enforce separately), and selecting via stale state falls back to General.
   const visibleTabs = TABS.filter((t) => {
+    if (isReseller && ["pipeline", "whatsapp", "quick-replies", "notifications"].includes(t.key)) return false;
     if ("billingOnly" in t && t.billingOnly) return canSeeBilling;
     if ("adminOnly" in t && t.adminOnly) return isStageAdmin;
     return true;

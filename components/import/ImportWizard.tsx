@@ -414,9 +414,16 @@ function ImportFlow<T>({ onClose, config }: { onClose: () => void; config: Impor
           <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
             <ReportTile label="Created" value={result.created} tone="emerald" />
             <ReportTile label="Updated" value={result.updated} tone="sky" />
-            <ReportTile label="Skipped" value={result.skipped} tone="slate" />
+            <ReportTile label="Skipped (already saved)" value={result.skipped} tone="slate" />
             <ReportTile label="Failed" value={result.failed} tone="rose" />
           </div>
+
+          {(validation?.duplicateInFile ?? 0) > 0 && (
+            <p className="text-center text-xs text-amber-700">
+              {validation!.duplicateInFile} duplicate row{validation!.duplicateInFile === 1 ? "" : "s"} in the
+              file {validation!.duplicateInFile === 1 ? "was" : "were"} skipped — each number is imported once.
+            </p>
+          )}
 
           {result.errors.length > 0 && (
             <div className="rounded-lg border border-slate-200">

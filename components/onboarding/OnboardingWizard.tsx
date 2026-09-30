@@ -61,7 +61,7 @@ type Step = "welcome" | "whatsapp" | "ai" | "done";
 const STEPS: Step[] = ["welcome", "whatsapp", "ai", "done"];
 
 const STEP_INFO: Record<Step, { icon: React.ComponentType<{className?: string}>; title: string; description: string }> = {
-  welcome: { icon: Rocket, title: "Welcome to WhatsCRM!", description: "Let's get your workspace set up in 3 quick steps." },
+  welcome: { icon: Rocket, title: "Welcome!", description: "Let's get your workspace set up in 3 quick steps." },
   whatsapp: { icon: MessageSquare, title: "Connect WhatsApp", description: "Sign in with Meta to start sending and receiving messages." },
   ai: { icon: Bot, title: "Set up AI assistant", description: "Configure how the AI should respond to your customers." },
   done: { icon: CheckCircle2, title: "You're all set!", description: "Your workspace is ready. You can change any of these settings later." },

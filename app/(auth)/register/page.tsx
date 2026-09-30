@@ -8,7 +8,7 @@
 
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { signIn } from "next-auth/react";
 import Link from "next/link";
@@ -76,6 +76,7 @@ export default function RegisterPage() {
     register,
     handleSubmit,
     control,
+    setValue,
     formState: { errors, isSubmitting },
   } = useForm<RegisterFormValues>({
     resolver: zodResolver(registerFormSchema),
@@ -89,6 +90,13 @@ export default function RegisterPage() {
       terms: false,
     },
   });
+
+  // Resellers share sign-up links as /register?ref=CODE — the code credits them (and
+  // places the new account under them), so fill it in rather than asking for it.
+  useEffect(() => {
+    const ref = new URLSearchParams(window.location.search).get("ref");
+    if (ref) setValue("inviteCode", ref.trim().toUpperCase());
+  }, [setValue]);
 
   const password = useWatch({ control, name: "password" }) ?? "";
   const passed = PASSWORD_RULES.filter((rule) => rule.test(password)).length;

@@ -1,6 +1,8 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { Suspense, useMemo, useState } from "react";
+import Link from "next/link";
+import { useSearchParams } from "next/navigation";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Megaphone,
@@ -15,6 +17,8 @@ import {
   Info,
   AlertCircle,
   Eye,
+  Send,
+  Filter,
 } from "lucide-react";
 import type { Campaign, CampaignStatus } from "@prisma/client";
 import {
@@ -29,7 +33,18 @@ import {
   inputClass,
 } from "@/components/ui";
 import { ExportButton } from "@/components/ExportButton";
+import { HeaderMediaInput, type MediaHeaderType } from "@/components/campaigns/HeaderMediaInput";
+import {
+  ExcludedSummary,
+  RecipientReview,
+  type ExclusionReport,
+} from "@/components/campaigns/RecipientReview";
 import { cn, formatCompact, formatDate } from "@/lib/utils";
+import {
+  detectBodyVarSlots,
+  extractBodyVarNames,
+  unsupportedTemplateReason,
+} from "@/lib/campaigns/templateVars";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -44,6 +59,7 @@ interface TemplateRow {
   variables: string[];
   headerType?: "TEXT" | "IMAGE" | "VIDEO" | "DOCUMENT" | null;
   headerContent?: string | null;
+  buttons?: unknown;
 }
 
 // ─── Constants ────────────────────────────────────────────────────────────────
@@ -77,6 +93,20 @@ const CONTACT_FIELD_OPTIONS = [
   { value: "phone", label: "Contact Phone" },
   { value: "company", label: "Contact Company" },
 ];
+
+/** What the Create Campaign modal sends to POST /api/campaigns. */
+interface CampaignPayload {
+  name: string;
+  templateId?: string;
+  segmentId?: string;
+  bodyVarMapping: string[];
+  all?: boolean;
+  contactIds?: string[];
+  excludeContactIds?: string[];
+  scheduledAt?: string;
+  headerMediaId?: string;
+  headerMediaUrl?: string;
+}
 
 interface PickerContact {
   id: string;
@@ -134,28 +164,8 @@ function useCampaignContacts(enabled: boolean, search: string) {
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
-function detectBodyVarSlots(body: string): number {
-  // Named params {{first_name}}: count unique names
-  if (/\{\{[a-z_][a-z0-9_]*\}\}/.test(body) && !/\{\{\d+\}\}/.test(body)) {
-    return [...new Set([...body.matchAll(/\{\{([a-z_][a-z0-9_]*)\}\}/g)].map((m) => m[1]))].length;
-  }
-  // Positional {{1}}, {{2}}: highest index
-  const matches = [...body.matchAll(/\{\{(\d+)\}\}/g)];
-  const nums = matches.map((m) => parseInt(m[1], 10));
-  return nums.length > 0 ? Math.max(...nums) : 0;
-}
-
-function extractBodyVarNames(body: string): string[] {
-  if (/\{\{[a-z_][a-z0-9_]*\}\}/.test(body) && !/\{\{\d+\}\}/.test(body)) {
-    const names: string[] = [];
-    const seen = new Set<string>();
-    for (const m of body.matchAll(/\{\{([a-z_][a-z0-9_]*)\}\}/g)) {
-      if (!seen.has(m[1])) { seen.add(m[1]); names.push(m[1]); }
-    }
-    return names;
-  }
-  return [];
-}
+const formatInr = (minor: number) =>
+  new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR" }).format(minor / 100);
 
 function RateBar({ value, total }: { value: number; total: number }) {
   const pct = total > 0 ? Math.round((value / total) * 100) : 0;
@@ -181,9 +191,20 @@ function RateBar({ value, total }: { value: number; total: number }) {
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
 export default function CampaignsPage() {
+  return (
+    <Suspense>
+      <CampaignsPageInner />
+    </Suspense>
+  );
+}
+
+function CampaignsPageInner() {
   const queryClient = useQueryClient();
+  // Arriving from Segments → "Create campaign" (/campaigns?segment=<id>) opens the
+  // create dialog with that segment as the audience.
+  const initialSegmentId = useSearchParams().get("segment");
   const [tab, setTab] = useState<"ALL" | CampaignStatus>("ALL");
-  const [open, setOpen] = useState(false);
+  const [open, setOpen] = useState(Boolean(initialSegmentId));
   const [deletingId, setDeletingId] = useState<string | null>(null);
 
   const { data, isLoading, isError } = useCampaigns(tab);
@@ -248,6 +269,13 @@ export default function CampaignsPage() {
         action={
           <div className="flex items-center gap-2">
             <ExportButton resource="campaigns" />
+            <Link
+              href="/broadcast"
+              className="inline-flex h-9 items-center gap-2 rounded-lg bg-white px-3.5 text-sm font-medium text-slate-700 shadow-sm ring-1 ring-inset ring-slate-200 transition hover:bg-slate-50 hover:text-slate-900"
+            >
+              <Send className="h-4 w-4" />
+              Bulk Broadcast
+            </Link>
             <Button onClick={() => setOpen(true)}>
               <Plus className="h-4 w-4" />
               Create Campaign
@@ -319,7 +347,9 @@ export default function CampaignsPage() {
                   return (
                     <tr key={c.id} className="hover:bg-slate-50">
                       <td className="px-4 py-3">
-                        <p className="font-medium text-slate-900">{c.name}</p>
+                        <p className="flex items-center gap-1.5 font-medium text-slate-900">
+                          {c.name}
+                        </p>
                         {c.scheduledAt && (
                           <p className="mt-0.5 flex items-center gap-1 text-xs text-slate-500">
                             <CalendarClock className="h-3 w-3" />
@@ -402,7 +432,7 @@ export default function CampaignsPage() {
         )}
       </Card>
 
-      <CreateCampaignModal open={open} onClose={() => setOpen(false)} />
+      <CreateCampaignModal open={open} onClose={() => setOpen(false)} initialSegmentId={initialSegmentId} />
 
       {/* Delete confirmation — proper modal, not browser confirm() */}
       <Modal
@@ -447,22 +477,28 @@ export default function CampaignsPage() {
 
 // ─── Create Campaign Modal ─────────────────────────────────────────────────────
 
-function CreateCampaignModal({ open, onClose }: { open: boolean; onClose: () => void }) {
+function CreateCampaignModal({
+  open,
+  onClose,
+  initialSegmentId,
+}: {
+  open: boolean;
+  onClose: () => void;
+  initialSegmentId?: string | null;
+}) {
   const queryClient = useQueryClient();
 
   const [name, setName] = useState("");
   const [templateId, setTemplateId] = useState("");
   const [bodyVarMapping, setBodyVarMapping] = useState<string[]>([]);
-  const [audienceMode, setAudienceMode] = useState<"all" | "selected">("all");
+  const [audienceMode, setAudienceMode] = useState<"all" | "selected" | "segment">(initialSegmentId ? "segment" : "all");
+  const [segmentId, setSegmentId] = useState(initialSegmentId ?? "");
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [contactSearch, setContactSearch] = useState("");
   const [schedule, setSchedule] = useState("");
   const [showPreview, setShowPreview] = useState(false);
   const [headerMediaUrl, setHeaderMediaUrl] = useState("");
   const [headerMediaId, setHeaderMediaId] = useState("");
-  const [headerInputMode, setHeaderInputMode] = useState<"upload" | "url">("upload");
-  const [uploadState, setUploadState] = useState<"idle" | "uploading" | "done" | "error">("idle");
-  const [uploadFileName, setUploadFileName] = useState("");
   const [error, setError] = useState<string | null>(null);
 
   const { data: templatesData, isLoading: tplLoading } = useTemplates(open);
@@ -480,6 +516,18 @@ function CreateCampaignModal({ open, onClose }: { open: boolean; onClose: () => 
   // cannot prove a template row is never mutated, so the dependency is
   // unverifiable however it is spelled. Counting `{{n}}` slots in one string is
   // a regex scan, not work worth a memo.
+  const { data: segmentsData, isLoading: segmentsLoading } = useQuery<{ id: string; name: string; count: number }[]>({
+    queryKey: ["segments"],
+    queryFn: async () => {
+      const res = await fetch("/api/segments");
+      if (!res.ok) return [];
+      return (await res.json()).data ?? [];
+    },
+    enabled: open && audienceMode === "segment",
+  });
+  const segments = segmentsData ?? [];
+  const chosenSegment = segments.find((s) => s.id === segmentId) ?? null;
+
   const selectedTemplateBody = selectedTemplate?.body ?? "";
   const varSlotCount = detectBodyVarSlots(selectedTemplateBody);
   const namedVarLabels = extractBodyVarNames(selectedTemplateBody);
@@ -496,19 +544,39 @@ function CreateCampaignModal({ open, onClose }: { open: boolean; onClose: () => 
     setBodyVarMapping(Array.from({ length: varSlotCount }, () => "name"));
     setHeaderMediaUrl("");
     setHeaderMediaId("");
-    setUploadState("idle");
-    setUploadFileName("");
   }
 
+  // Step 2: the server-resolved audience, reviewed before anything is created.
+  const [reviewData, setReviewData] = useState<
+    | (ExclusionReport & {
+        total: number;
+        recipients: { contactId: string; phone: string; name: string | null }[];
+        cost?: { units: number; unitPriceMinor: number; estimatedCostMinor: number; balanceMinor: number };
+      })
+    | null
+  >(null);
+  const [reviewRemoved, setReviewRemoved] = useState<Set<string>>(new Set());
+
+  const review = useMutation({
+    mutationFn: async (data: CampaignPayload) => {
+      const res = await fetch("/api/campaigns", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ...data, dryRun: true, includeRecipients: true }),
+      });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error ?? "Could not check the recipients");
+      return json.data;
+    },
+    onSuccess: (data) => {
+      setReviewRemoved(new Set());
+      setReviewData(data);
+    },
+    onError: (err: Error) => setError(err.message),
+  });
+
   const create = useMutation({
-    mutationFn: async (data: {
-      name: string;
-      templateId: string;
-      bodyVarMapping: string[];
-      all?: boolean;
-      contactIds?: string[];
-      scheduledAt?: string;
-    }) => {
+    mutationFn: async (data: CampaignPayload) => {
       const res = await fetch("/api/campaigns", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -523,47 +591,28 @@ function CreateCampaignModal({ open, onClose }: { open: boolean; onClose: () => 
       resetForm();
       onClose();
     },
-    onError: (err: Error) => setError(err.message),
+    onError: (err: Error) => { setReviewData(null); setError(err.message); },
   });
-
-  async function handleFileUpload(file: File) {
-    setUploadState("uploading");
-    setUploadFileName(file.name);
-    setHeaderMediaId("");
-    setHeaderMediaUrl("");
-    const form = new FormData();
-    form.append("file", file);
-    try {
-      const res = await fetch("/api/campaigns/upload-media", { method: "POST", body: form });
-      const json = await res.json();
-      if (!res.ok || !json.success) throw new Error(json.error ?? "Upload failed");
-      setHeaderMediaId((json.data as { mediaId: string }).mediaId);
-      setUploadState("done");
-    } catch (err) {
-      setUploadState("error");
-      setError(err instanceof Error ? err.message : "File upload failed");
-    }
-  }
 
   function resetForm() {
     setName("");
     setTemplateId("");
     setBodyVarMapping([]);
     setAudienceMode("all");
+    setSegmentId("");
     setSelectedIds([]);
     setContactSearch("");
     setSchedule("");
     setShowPreview(false);
     setHeaderMediaUrl("");
     setHeaderMediaId("");
-    setHeaderInputMode("upload");
-    setUploadState("idle");
-    setUploadFileName("");
     setError(null);
+    setReviewData(null);
+    setReviewRemoved(new Set());
   }
 
   function handleClose() {
-    if (create.isPending) return;
+    if (create.isPending || review.isPending) return;
     resetForm();
     onClose();
   }
@@ -592,20 +641,43 @@ function CreateCampaignModal({ open, onClose }: { open: boolean; onClose: () => 
       setError("Select at least one contact, or choose Select all.");
       return;
     }
+    if (audienceMode === "segment" && !segmentId) {
+      setError("Choose a segment.");
+      return;
+    }
 
+    review.mutate(basePayload());
+  }
+
+  function basePayload(): CampaignPayload {
     const when = schedule ? new Date(schedule) : null;
-    create.mutate({
+    return {
       name,
       templateId,
       bodyVarMapping,
       ...(audienceMode === "all"
         ? { all: true }
-        : { contactIds: selectedIds }),
+        : audienceMode === "segment"
+          ? { segmentId }
+          : { contactIds: selectedIds }),
       ...(when && !Number.isNaN(when.getTime()) && { scheduledAt: when.toISOString() }),
       ...(headerMediaId && { headerMediaId }),
       ...(headerMediaUrl.trim() && !headerMediaId && { headerMediaUrl: headerMediaUrl.trim() }),
-    });
+    };
   }
+
+  /** Create with the reviewed audience: everyone minus the people removed on the review list. */
+  function confirmCreate() {
+    const removedIds = [...reviewRemoved];
+    const base = basePayload();
+    create.mutate(
+      base.all || base.segmentId
+        ? { ...base, ...(removedIds.length && { excludeContactIds: removedIds }) }
+        : { ...base, contactIds: (base.contactIds ?? []).filter((id) => !reviewRemoved.has(id)) },
+    );
+  }
+
+  const finalCount = reviewData ? reviewData.recipients.filter((r) => !reviewRemoved.has(r.contactId)).length : 0;
 
   const needsMediaUrl =
     selectedTemplate?.headerType === "IMAGE" ||
@@ -616,18 +688,19 @@ function CreateCampaignModal({ open, onClose }: { open: boolean; onClose: () => 
     name.trim() &&
     templateId &&
     !create.isPending &&
-    (audienceMode === "all" || selectedIds.length > 0) &&
+    (audienceMode === "all" || (audienceMode === "segment" ? Boolean(segmentId) : selectedIds.length > 0)) &&
     (!needsMediaUrl || headerMediaId || headerMediaUrl.trim());
 
   const allVisibleSelected =
     contacts.length > 0 && contacts.every((c) => selectedIds.includes(c.id));
 
   return (
+    <>
     <Modal
-      open={open}
+      open={open && !reviewData}
       onClose={handleClose}
       title="Create Campaign"
-      description="Pick an approved WhatsApp template, map contact fields to its variables, then schedule or send immediately."
+      description="Pick an approved WhatsApp template, choose who gets it — everyone, a segment or selected contacts — then review and send."
     >
       <form className="space-y-4" onSubmit={submit}>
         {/* Campaign name */}
@@ -670,11 +743,14 @@ function CreateCampaignModal({ open, onClose }: { open: boolean; onClose: () => 
               className={inputClass}
             >
               <option value="">— Select a template —</option>
-              {approvedTemplates.map((t) => (
-                <option key={t.id} value={t.id}>
-                  [{t.category}] {t.name} ({t.language})
-                </option>
-              ))}
+              {approvedTemplates.map((t) => {
+                const unsupported = unsupportedTemplateReason(t);
+                return (
+                  <option key={t.id} value={t.id} disabled={!!unsupported} title={unsupported ?? undefined}>
+                    [{t.category}] {t.name} ({t.language}){unsupported ? " — not supported" : ""}
+                  </option>
+                );
+              })}
             </select>
           )}
         </div>
@@ -728,113 +804,14 @@ function CreateCampaignModal({ open, onClose }: { open: boolean; onClose: () => 
         )}
 
         {/* Media header — required when the template has an image/video/document header */}
-        {needsMediaUrl && (
-          <div>
-            <p className="mb-1.5 text-sm font-medium text-slate-700">
-              {selectedTemplate?.headerType === "IMAGE" ? "Image" : selectedTemplate?.headerType === "VIDEO" ? "Video" : "Document"}{" "}
-              <span className="text-rose-500">*</span>
-            </p>
-
-            {/* Upload / URL toggle */}
-            <div className="mb-3 flex rounded-lg border border-slate-200 bg-slate-50 p-0.5">
-              {(["upload", "url"] as const).map((mode) => (
-                <button
-                  key={mode}
-                  type="button"
-                  onClick={() => { setHeaderInputMode(mode); setHeaderMediaId(""); setHeaderMediaUrl(""); setUploadState("idle"); setUploadFileName(""); }}
-                  className={cn(
-                    "flex-1 rounded-md px-3 py-1.5 text-xs font-medium transition",
-                    headerInputMode === mode
-                      ? "bg-white text-slate-800 shadow-sm"
-                      : "text-slate-500 hover:text-slate-700",
-                  )}
-                >
-                  {mode === "upload" ? "📎 Upload file" : "🔗 Enter URL"}
-                </button>
-              ))}
-            </div>
-
-            {headerInputMode === "upload" ? (
-              <div>
-                <label
-                  className={cn(
-                    "flex cursor-pointer flex-col items-center justify-center gap-2 rounded-xl border-2 border-dashed px-4 py-6 text-center transition",
-                    uploadState === "done"
-                      ? "border-emerald-300 bg-emerald-50"
-                      : uploadState === "error"
-                        ? "border-rose-300 bg-rose-50"
-                        : "border-slate-200 bg-slate-50 hover:border-slate-300 hover:bg-slate-100",
-                  )}
-                >
-                  {uploadState === "uploading" ? (
-                    <>
-                      <Loader2 className="h-6 w-6 animate-spin text-slate-400" />
-                      <span className="text-xs text-slate-500">Uploading to Meta…</span>
-                    </>
-                  ) : uploadState === "done" ? (
-                    <>
-                      <span className="text-2xl">✅</span>
-                      <span className="text-xs font-medium text-emerald-700">{uploadFileName}</span>
-                      <span className="text-[11px] text-emerald-600">Uploaded — click to replace</span>
-                    </>
-                  ) : uploadState === "error" ? (
-                    <>
-                      <span className="text-2xl">❌</span>
-                      <span className="text-xs text-rose-600">Upload failed — click to retry</span>
-                    </>
-                  ) : (
-                    <>
-                      <span className="text-2xl">
-                        {selectedTemplate?.headerType === "IMAGE" ? "🖼️" : selectedTemplate?.headerType === "VIDEO" ? "🎬" : "📄"}
-                      </span>
-                      <span className="text-xs text-slate-600">
-                        Click to select{" "}
-                        {selectedTemplate?.headerType === "IMAGE"
-                          ? "an image (JPEG, PNG, WebP — max 5 MB)"
-                          : selectedTemplate?.headerType === "VIDEO"
-                            ? "a video (MP4, 3GPP — max 16 MB)"
-                            : "a document (PDF, Word, Excel — max 16 MB)"}
-                      </span>
-                    </>
-                  )}
-                  <input
-                    type="file"
-                    className="sr-only"
-                    accept={
-                      selectedTemplate?.headerType === "IMAGE"
-                        ? "image/jpeg,image/png,image/webp"
-                        : selectedTemplate?.headerType === "VIDEO"
-                          ? "video/mp4,video/3gpp"
-                          : "application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-                    }
-                    onChange={(e) => {
-                      const f = e.target.files?.[0];
-                      if (f) handleFileUpload(f);
-                      e.target.value = "";
-                    }}
-                  />
-                </label>
-                <p className="mt-1.5 flex items-center gap-1 text-[11px] text-slate-400">
-                  <Info className="h-3 w-3 shrink-0" />
-                  File is uploaded directly to Meta and sent to every recipient.
-                </p>
-              </div>
-            ) : (
-              <div>
-                <input
-                  type="url"
-                  value={headerMediaUrl}
-                  onChange={(e) => setHeaderMediaUrl(e.target.value)}
-                  className={inputClass}
-                  placeholder="https://example.com/banner.jpg"
-                />
-                <p className="mt-1.5 flex items-center gap-1 text-[11px] text-slate-400">
-                  <Info className="h-3 w-3 shrink-0" />
-                  Must be a publicly accessible URL — no login or redirect.
-                </p>
-              </div>
-            )}
-          </div>
+        {needsMediaUrl && selectedTemplate?.headerType && (
+          <HeaderMediaInput
+            key={selectedTemplate.id}
+            headerType={selectedTemplate.headerType as MediaHeaderType}
+            value={{ mediaId: headerMediaId, mediaUrl: headerMediaUrl }}
+            onChange={(v) => { setHeaderMediaId(v.mediaId); setHeaderMediaUrl(v.mediaUrl); }}
+            onError={setError}
+          />
         )}
 
         {/* Variable mapping */}
@@ -886,7 +863,7 @@ function CreateCampaignModal({ open, onClose }: { open: boolean; onClose: () => 
               type="button"
               onClick={() => setAudienceMode("all")}
               className={cn(
-                "flex flex-1 items-center justify-center gap-2 rounded-lg border px-3 py-2.5 text-sm font-medium transition",
+                "flex min-w-0 flex-1 items-center justify-center gap-2 whitespace-nowrap rounded-lg border px-2 py-2.5 text-sm font-medium transition",
                 audienceMode === "all"
                   ? "border-emerald-600 bg-emerald-50 text-emerald-800"
                   : "border-slate-200 bg-white text-slate-600 hover:bg-slate-50",
@@ -899,7 +876,7 @@ function CreateCampaignModal({ open, onClose }: { open: boolean; onClose: () => 
               type="button"
               onClick={() => setAudienceMode("selected")}
               className={cn(
-                "flex flex-1 items-center justify-center gap-2 rounded-lg border px-3 py-2.5 text-sm font-medium transition",
+                "flex min-w-0 flex-1 items-center justify-center gap-2 whitespace-nowrap rounded-lg border px-2 py-2.5 text-sm font-medium transition",
                 audienceMode === "selected"
                   ? "border-emerald-600 bg-emerald-50 text-emerald-800"
                   : "border-slate-200 bg-white text-slate-600 hover:bg-slate-50",
@@ -908,9 +885,43 @@ function CreateCampaignModal({ open, onClose }: { open: boolean; onClose: () => 
               <Users className="h-4 w-4" />
               Select persons
             </button>
+            <button
+              type="button"
+              onClick={() => setAudienceMode("segment")}
+              className={cn(
+                "flex min-w-0 flex-1 items-center justify-center gap-2 whitespace-nowrap rounded-lg border px-2 py-2.5 text-sm font-medium transition",
+                audienceMode === "segment"
+                  ? "border-emerald-600 bg-emerald-50 text-emerald-800"
+                  : "border-slate-200 bg-white text-slate-600 hover:bg-slate-50",
+              )}
+            >
+              <Filter className="h-4 w-4" />
+              Segment
+            </button>
           </div>
 
-          {audienceMode === "all" ? (
+          {audienceMode === "segment" ? (
+            <div className="mt-2 space-y-2">
+              <select
+                value={segmentId}
+                onChange={(e) => setSegmentId(e.target.value)}
+                className={inputClass}
+                aria-label="Segment"
+              >
+                <option value="">{segmentsLoading ? "Loading segments…" : "— Choose a segment —"}</option>
+                {segments.map((s) => (
+                  <option key={s.id} value={s.id}>{s.name} · {s.count.toLocaleString()} contacts</option>
+                ))}
+              </select>
+              <p className="flex items-center gap-1.5 text-xs text-slate-500">
+                <Info className="h-3.5 w-3.5 shrink-0" />
+                {chosenSegment
+                  ? `Sends to the ${chosenSegment.count.toLocaleString()} contacts matching "${chosenSegment.name}" when you launch.`
+                  : "Filter contacts by city, tags, status and more."}{" "}
+                <Link href="/segments" className="font-medium text-emerald-700 hover:text-emerald-900">Manage segments →</Link>
+              </p>
+            </div>
+          ) : audienceMode === "all" ? (
             <p className="mt-2 flex items-center gap-1.5 text-xs text-slate-500">
               <Info className="h-3.5 w-3.5 shrink-0" />
               Sends the template to every contact in this business.
@@ -997,22 +1008,69 @@ function CreateCampaignModal({ open, onClose }: { open: boolean; onClose: () => 
             type="button"
             variant="secondary"
             onClick={handleClose}
-            disabled={create.isPending}
+            disabled={review.isPending}
           >
             Cancel
           </Button>
-          <Button type="submit" disabled={!canSubmit}>
-            {create.isPending ? (
+          <Button type="submit" disabled={!canSubmit || review.isPending}>
+            {review.isPending ? (
               <>
                 <Loader2 className="h-4 w-4 animate-spin" />
-                Creating…
+                Checking recipients…
               </>
             ) : (
-              "Create Campaign"
+              <>
+                <Users className="h-4 w-4" />
+                Review recipients
+              </>
             )}
           </Button>
         </div>
       </form>
     </Modal>
+
+    {/* Step 2 — final recipient list, checked by the server, before anything is created. */}
+    <Modal
+      open={open && !!reviewData}
+      onClose={() => !create.isPending && setReviewData(null)}
+      title="Review recipients"
+      description="Check who gets this campaign and the cost before sending."
+      className="max-w-2xl"
+    >
+      {reviewData && (
+        <div className="space-y-4">
+          {reviewData.cost && reviewData.cost.estimatedCostMinor > 0 && (
+            <p className="flex items-center justify-between gap-3 rounded-lg bg-slate-50 px-3 py-2 text-sm">
+              <span className="text-slate-600">
+                Estimated cost · {reviewData.cost.units.toLocaleString()} messages
+              </span>
+              <span className="font-semibold tabular-nums text-slate-900">
+                {formatInr(reviewData.cost.estimatedCostMinor)}
+                <span className="ml-2 text-xs font-normal text-slate-500">balance {formatInr(reviewData.cost.balanceMinor)}</span>
+              </span>
+            </p>
+          )}
+          <ExcludedSummary report={reviewData} />
+          <RecipientReview
+            items={reviewData.recipients.map((r) => ({ key: r.contactId, phone: r.phone, name: r.name }))}
+            removed={reviewRemoved}
+            onRemovedChange={setReviewRemoved}
+          />
+          <div className="flex justify-end gap-2 border-t border-slate-100 pt-4">
+            <Button variant="secondary" onClick={() => setReviewData(null)} disabled={create.isPending}>
+              Back
+            </Button>
+            <Button onClick={confirmCreate} disabled={finalCount === 0 || create.isPending}>
+              {create.isPending ? (
+                <><Loader2 className="h-4 w-4 animate-spin" /> Creating…</>
+              ) : (
+                <>{schedule ? "Schedule" : "Send"} to {finalCount.toLocaleString()}</>
+              )}
+            </Button>
+          </div>
+        </div>
+      )}
+    </Modal>
+    </>
   );
 }

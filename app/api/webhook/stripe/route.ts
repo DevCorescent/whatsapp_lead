@@ -21,6 +21,7 @@ import { getStripe, isStripeConfigured } from "@/lib/stripe";
 import { syncStripeSubscription, resetAiUsage } from "@/lib/billing/subscription";
 import { applyPlanChange, claimStripeEvent } from "@/lib/billing/planChange";
 import { prisma } from "@/lib/prisma";
+import { recordPayment } from "@/lib/billing/payments";
 
 export const dynamic = "force-dynamic";
 
@@ -89,6 +90,23 @@ export async function POST(req: NextRequest) {
               planChangeId,
               reason: applied.reason,
             });
+          } else {
+            const change = await prisma.planChange.findUnique({
+              where: { id: planChangeId },
+              select: { tenantId: true, toPlanId: true },
+            });
+            if (change && s.amount_total) {
+              await recordPayment({
+                tenantId: change.tenantId,
+                provider: "stripe",
+                providerPaymentId: paymentRef ?? s.id,
+                orderId: s.id,
+                amountMinor: s.amount_total,
+                currency: s.currency ?? "inr",
+                purpose: "plan_change",
+                planId: change.toPlanId,
+              });
+            }
           }
           break;
         }
@@ -127,6 +145,17 @@ export async function POST(req: NextRequest) {
           const sub = await stripe.subscriptions.retrieve(subId);
           const tenantId = await syncStripeSubscription(sub);
           if (tenantId) await resetAiUsage(tenantId); // new period → credits reset
+          // Ledger + referring reseller's commission. The invoice id is unique per charge.
+          if (tenantId && invoice.id && invoice.amount_paid > 0) {
+            await recordPayment({
+              tenantId,
+              provider: "stripe",
+              providerPaymentId: invoice.id,
+              amountMinor: invoice.amount_paid,
+              currency: invoice.currency,
+              purpose: invoice.billing_reason === "subscription_create" ? "subscription" : "renewal",
+            });
+          }
         }
         break;
       }

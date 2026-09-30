@@ -3,6 +3,8 @@ import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { getBusinessScope } from "@/lib/business";
 import { updateContactSchema } from "@/lib/validators/contact";
+import { findBlacklisted } from "@/lib/blacklist";
+import { requirePermission } from "@/lib/permissions";
 
 type Params = { params: Promise<{ id: string }> };
 
@@ -33,7 +35,10 @@ export async function GET(req: NextRequest, { params }: Params) {
 
   if (!contact) return NextResponse.json({ success: false, error: "Contact not found" }, { status: 404 });
 
-  return NextResponse.json({ success: true, data: contact });
+  // Shown on the contact page, so a user can see why messages to this number are refused.
+  const blacklisted = (await findBlacklisted(session.user.tenantId, [contact.phone])).get(contact.phone) ?? null;
+
+  return NextResponse.json({ success: true, data: { ...contact, blacklisted } });
 }
 
 export async function PATCH(req: NextRequest, { params }: Params) {
@@ -47,6 +52,8 @@ export async function PATCH(req: NextRequest, { params }: Params) {
   // user of one business rewrite another business's contact by id.
   const scope = await getBusinessScope();
   if (!scope) return NextResponse.json({ success: false, error: "Unauthorized" }, { status: 401 });
+  const denied = await requirePermission(scope, "contacts.manage");
+  if (denied) return denied;
 
   const contact = await prisma.contact.findFirst({
     where: { id, tenantId: session.user.tenantId, businessId: scope.businessId },
@@ -65,7 +72,31 @@ export async function PATCH(req: NextRequest, { params }: Params) {
     return NextResponse.json({ success: false, error: parsed.error.issues[0].message }, { status: 400 });
   }
 
-  const { tags, ...data } = parsed.data;
+  const { tags: rawTags, ...data } = parsed.data;
+  // Only this business's tags — a caller-supplied id must not link another workspace's tag.
+  const tags = rawTags === undefined
+    ? undefined
+    : (await prisma.tag.findMany({ where: { businessId: scope.businessId, id: { in: rawTags } }, select: { id: true } })).map((t) => t.id);
+
+  // Changing the number to one another contact already has would create a duplicate.
+  if (data.phone && data.phone !== contact.phone) {
+    const clash = await prisma.contact.findUnique({
+      where: { phone_businessId: { phone: data.phone, businessId: scope.businessId } },
+      select: { id: true, name: true, isBlocked: true },
+    });
+    if (clash && clash.id !== id) {
+      return NextResponse.json(
+        {
+          success: false,
+          error: clash.isBlocked
+            ? "This number belongs to a deleted contact — re-add it from Contacts to restore it"
+            : `This number is already saved as "${clash.name}"`,
+        },
+        { status: 409 },
+      );
+    }
+  }
+
   const sanitizedData = {
     ...data,
     ...(data.source !== undefined ? { source: normalizeSource(data.source) } : {}),
@@ -97,8 +128,15 @@ export async function DELETE(req: NextRequest, { params }: Params) {
 
   const { id } = await params;
 
+  // Business-scoped like PATCH: tenant-only scoping let a user of one business delete another
+  // business's contact by id.
+  const scope = await getBusinessScope();
+  if (!scope) return NextResponse.json({ success: false, error: "Unauthorized" }, { status: 401 });
+  const denied = await requirePermission(scope, "contacts.manage");
+  if (denied) return denied;
+
   const contact = await prisma.contact.findFirst({
-    where: { id, tenantId: session.user.tenantId },
+    where: { id, tenantId: session.user.tenantId, businessId: scope.businessId },
   });
   if (!contact) return NextResponse.json({ success: false, error: "Contact not found" }, { status: 404 });
 

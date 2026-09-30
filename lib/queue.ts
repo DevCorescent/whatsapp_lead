@@ -26,9 +26,20 @@ if (!process.env.QSTASH_TOKEN) {
 }
 const qstash = new Client({ token: process.env.QSTASH_TOKEN ?? "" });
 
-/** The public URL of this deployment. Workers are called via HTTP by QStash. */
+/**
+ * The public URL of this deployment. Workers are called via HTTP by QStash.
+ *
+ * No hard-coded fallback: a white-label or self-hosted install that forgot to set
+ * NEXT_PUBLIC_APP_URL used to hand every job — customer phone numbers and message
+ * bodies included — to the original vendor's deployment. Vercel's own URL is used
+ * when available; otherwise publishing fails loudly.
+ */
 const APP_URL =
-  process.env.NEXT_PUBLIC_APP_URL ?? "https://whatsapp-lead-five.vercel.app";
+  process.env.NEXT_PUBLIC_APP_URL ??
+  (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : "");
+if (!APP_URL) {
+  console.error("[QUEUE] CRITICAL: NEXT_PUBLIC_APP_URL is not set — queue workers cannot be reached");
+}
 
 // ─── Job types ────────────────────────────────────────────────────────────────
 
@@ -120,6 +131,11 @@ export interface CampaignSendJob {
    * without an extra DB read. Required when the template uses named params ({{first_name}} style).
    */
   templateBody?: string;
+
+  // ── Wallet (set by lib/campaigns/jobs.ts) ──
+  tenantId?: string;
+  /** The wallet charge for this message, in paise. */
+  costMinor?: number;
 }
 
 // ─── Publishers ───────────────────────────────────────────────────────────────
@@ -208,4 +224,46 @@ export async function publishCampaignSend(
     notBefore: notBefore ? Math.floor(notBefore.getTime() / 1000) : undefined,
     retries: 3,
   });
+}
+
+/** QStash accepts up to 100 messages per batch request. */
+const CAMPAIGN_BATCH_SIZE = 100;
+
+/**
+ * Publish many campaign jobs in batches of 100 — one HTTP call per hundred
+ * recipients instead of one each, so a 5,000-number broadcast queues in ~50 calls
+ * and finishes well inside the request timeout. A failed batch is counted, not
+ * thrown, so one bad batch doesn't strand the rest; its recipients stay PENDING
+ * and the daily cron re-queues them.
+ */
+export async function publishCampaignSendBatch(
+  jobs: CampaignSendJob[],
+  notBefore?: Date,
+): Promise<{ published: number; failed: number }> {
+  const at = notBefore ? Math.floor(notBefore.getTime() / 1000) : undefined;
+  let published = 0;
+  let failed = 0;
+
+  for (let i = 0; i < jobs.length; i += CAMPAIGN_BATCH_SIZE) {
+    const chunk = jobs.slice(i, i + CAMPAIGN_BATCH_SIZE);
+    try {
+      await qstash.batchJSON(
+        chunk.map((job) => ({
+          url: `${APP_URL}/api/workers/campaign-send`,
+          body: job,
+          notBefore: at,
+          retries: 3,
+        })),
+      );
+      published += chunk.length;
+    } catch (error) {
+      failed += chunk.length;
+      console.error("[QUEUE] Campaign batch publish failed", {
+        campaignId: chunk[0]?.campaignId,
+        size: chunk.length,
+        error: String(error),
+      });
+    }
+  }
+  return { published, failed };
 }

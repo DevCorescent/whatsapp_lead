@@ -25,6 +25,37 @@ export class WASendError extends Error {
   }
 }
 
+/**
+ * Thrown instead of sending when the recipient is on the sending account's (or the
+ * platform's) blacklist. A WASendError, so every existing caller already surfaces
+ * it; the campaign worker checks for it to fail the recipient without retrying.
+ */
+export class WABlacklistedError extends WASendError {
+  constructor(scope: "account" | "platform") {
+    super(
+      scope === "platform"
+        ? "This number is blocked on the platform — the message was not sent."
+        : "This number is on your account's blacklist — the message was not sent.",
+    );
+    this.name = "WABlacklistedError";
+  }
+}
+
+/**
+ * Refuse to message a blacklisted number. Runs in every send function below, just
+ * before the request to Meta, so no caller — inbox, campaign, AI or chatbot reply,
+ * FAQ send, or code written later — can reach a blacklisted number. Loaded lazily so
+ * this module stays importable without a database (tests, scripts).
+ *
+ * A BSUID-only recipient has no phone number to match and is let through.
+ */
+async function guardRecipient(phoneNumberId: string, addr: { to: string } | { recipient: string }) {
+  if (!("to" in addr)) return;
+  const { blacklistReasonFor } = await import("@/lib/blacklist");
+  const hit = await blacklistReasonFor(phoneNumberId, addr.to);
+  if (hit) throw new WABlacklistedError(hit.scope);
+}
+
 /** Digits-only E.164 without '+'. Meta accepts this form for Cloud API `to`. */
 function normalizeWaTo(to: string): string {
   return to.replace(/\D/g, "");
@@ -150,6 +181,7 @@ export async function sendTextMessage(
   bsuid?: string | null
 ) {
   const addr = resolveWaRecipient(to, bsuid);
+  await guardRecipient(phoneNumberId, addr);
   if (!body.trim()) {
     throw new Error("WhatsApp send aborted — empty message body");
   }
@@ -237,6 +269,7 @@ export async function sendTemplateMessage(
   bsuid?: string | null
 ): Promise<WASendMessageResponse> {
   const addr = resolveWaRecipient(to, bsuid);
+  await guardRecipient(phoneNumberId, addr);
 
   const res = await fetch(`${WA_BASE_URL}/${phoneNumberId}/messages`, {
     method: "POST",
@@ -313,6 +346,7 @@ export async function sendMediaMessage(
   bsuid?: string | null
 ): Promise<WASendMessageResponse> {
   const addr = resolveWaRecipient(to, bsuid);
+  await guardRecipient(phoneNumberId, addr);
   const res = await fetch(`${WA_BASE_URL}/${phoneNumberId}/messages`, {
     method: "POST",
     headers: {
@@ -361,6 +395,7 @@ export async function sendMediaByUrl(
   bsuid?: string | null
 ): Promise<WASendMessageResponse> {
   const addr = resolveWaRecipient(to, bsuid);
+  await guardRecipient(phoneNumberId, addr);
   const res = await fetch(`${WA_BASE_URL}/${phoneNumberId}/messages`, {
     method: "POST",
     headers: {
@@ -568,6 +603,7 @@ export async function sendInteractiveMessage(
   bsuid?: string | null
 ): Promise<WASendMessageResponse> {
   const addr = resolveWaRecipient(to, bsuid);
+  await guardRecipient(phoneNumberId, addr);
   const res = await fetch(`${WA_BASE_URL}/${phoneNumberId}/messages`, {
     method: "POST",
     headers: {

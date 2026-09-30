@@ -46,6 +46,9 @@ export interface BusinessScope {
   role: string;
   tenantId: string;
   tenantName: string;
+  /** Read from the database on every call, not from the session. */
+  accountType: "PLATFORM" | "CLIENT";
+  resellerType: null;
   businessId: string;
   business: Business;
 }
@@ -153,6 +156,18 @@ export async function getBusinessScope(): Promise<BusinessScope | null> {
   if (!session?.user) return null;
 
   const { tenantId } = session.user;
+
+  // Business scope is client data: contacts, chats, messages, campaigns. A reseller
+  // account manages client accounts but must never act inside one or read its data,
+  // so reseller accounts get no business scope at all — every business-scoped route
+  // answers them 401. Read fresh from the database, so a converted account is
+  // covered immediately rather than when its session refreshes.
+  const account = await prisma.tenant.findUnique({
+    where: { id: tenantId },
+    select: { accountType: true, isActive: true },
+  });
+  if (!account || !account.isActive || account.accountType === "RESELLER") return null;
+
   const cookieStore = await cookies();
   const requested = cookieStore.get(CURRENT_BUSINESS_COOKIE)?.value;
 
@@ -174,6 +189,8 @@ export async function getBusinessScope(): Promise<BusinessScope | null> {
     role: session.user.role,
     tenantId,
     tenantName: session.user.tenantName,
+    accountType: account.accountType,
+    resellerType: null,
     businessId: business.id,
     business,
   };

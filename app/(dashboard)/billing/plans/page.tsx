@@ -5,6 +5,7 @@ import Link from "next/link";
 import { Check, Sparkles, ArrowLeft } from "lucide-react";
 import { Badge, Button, Card, PageHeader, Skeleton } from "@/components/ui";
 import { cn, formatCurrency } from "@/lib/utils";
+import { useBrand } from "@/components/BrandProvider";
 import {
   fetchPlanChangeQuote,
   useBillingPlans,
@@ -38,6 +39,7 @@ function loadRazorpayScript(): Promise<void> {
 }
 
 export default function PlansPage() {
+  const brand = useBrand();
   const { data, isLoading } = useBillingPlans();
   const checkout = useCheckout();
   const change = useChangePlan();
@@ -71,9 +73,9 @@ export default function PlansPage() {
           order_id: orderData.orderId,
           amount: orderData.amount,
           currency: orderData.currency,
-          name: "WhatsCRM",
+          name: brand.name,
           description: orderData.planName,
-          theme: { color: "#10b981" },
+          theme: { color: brand.primaryColor },
           handler: async (response: {
             razorpay_payment_id: string;
             razorpay_order_id: string;
@@ -106,7 +108,7 @@ export default function PlansPage() {
         rzp.open();
       });
     },
-    [verifyPayment],
+    [verifyPayment, brand.name, brand.primaryColor],
   );
 
   const choose = async (plan: PlanDTO) => {

@@ -3,6 +3,31 @@ import { randomBytes } from "crypto";
 import { prisma } from "@/lib/prisma";
 import bcrypt from "bcryptjs";
 import { registerSchema } from "@/lib/validators/auth";
+import { resellerForHost } from "@/lib/branding";
+
+/**
+ * The reseller a sign-up belongs to, if any.
+ *
+ *   1. Signing up on a white-label reseller's domain puts the account under that
+ *      reseller — its customers must see its brand and plans.
+ *   2. Otherwise, a referral code belonging to a user of an active reseller account
+ *      credits that reseller (commission) and places the client under it.
+ *
+ * Any other code (a regular user's) is kept only as `referredByCode`, as before.
+ */
+async function resolveReseller(host: string | null, code: string | null): Promise<string | null> {
+  const byDomain = await resellerForHost(host);
+  if (byDomain) return byDomain;
+  if (!code) return null;
+  const referrer = await prisma.user.findUnique({
+    where: { inviteCode: code },
+    select: { isActive: true, tenant: { select: { id: true, accountType: true, isActive: true } } },
+  });
+  if (referrer?.isActive && referrer.tenant.isActive && referrer.tenant.accountType === "RESELLER") {
+    return referrer.tenant.id;
+  }
+  return null;
+}
 
 function slugify(text: string) {
   return text
@@ -61,6 +86,8 @@ export async function POST(req: NextRequest) {
       newInviteCode = generateInviteCode();
     }
 
+    const resellerId = await resolveReseller(req.headers.get("x-forwarded-host") ?? req.headers.get("host"), inviteCode);
+
     // Create tenant + owner user + default settings + starter plan subscription
     const starterPlan = await prisma.plan.findFirst({ where: { name: "STARTER" } });
 
@@ -70,6 +97,8 @@ export async function POST(req: NextRequest) {
           name: workspaceName,
           slug,
           referredByCode: inviteCode,
+          accountType: "CLIENT",
+          ...(resellerId && { parentId: resellerId, referredById: resellerId }),
           settings: { create: {} },
         },
       });

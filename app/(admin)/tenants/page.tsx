@@ -50,13 +50,42 @@ interface AdminTenant {
   messageLimit: number;
   isActive: boolean;
   createdAt: string;
+  accountType: "PLATFORM" | "RESELLER" | "CLIENT";
+  resellerType: "NORMAL" | "WHITE_LABEL" | null;
+  commissionRate: number | null;
+  parent: { id: string; name: string } | null;
+  clients: number;
+  category: string | null;
 }
 
 interface TenantFilters {
   search: string;
   plan: string;
   status: string;
+  accountType: string;
   page: number;
+}
+
+/** "Reseller · White-label", "Client · via Acme", "Client", "Platform". */
+function accountLabel(t: AdminTenant): string {
+  if (t.accountType === "RESELLER") return `Reseller · ${t.resellerType === "WHITE_LABEL" ? "White-label" : "Normal"}`;
+  if (t.accountType === "PLATFORM") return "Platform";
+  return t.parent ? `Client · via ${t.parent.name}` : "Direct client";
+}
+
+/** Active resellers, for choosing a client's reseller. */
+function useResellers(enabled = true) {
+  return useQuery<{ id: string; name: string; resellerType: string | null }[]>({
+    queryKey: ["admin", "tenants", "resellers"],
+    queryFn: async () => {
+      const res = await fetch("/api/admin/tenants?accountType=RESELLER&isActive=true&limit=100");
+      if (!res.ok) return [];
+      const json = await res.json();
+      return (json.data ?? []) as { id: string; name: string; resellerType: string | null }[];
+    },
+    enabled,
+    staleTime: 60_000,
+  });
 }
 
 interface PlanOption {
@@ -94,6 +123,7 @@ function useAdminTenants(filters: TenantFilters) {
       if (filters.search) params.set("search", filters.search);
       if (filters.plan) params.set("planId", filters.plan);
       if (filters.status) params.set("isActive", filters.status === "active" ? "true" : "false");
+      if (filters.accountType) params.set("accountType", filters.accountType);
       params.set("page", String(filters.page));
       params.set("limit", String(PAGE_SIZE));
       const res = await fetch(`/api/admin/tenants?${params.toString()}`);
@@ -168,6 +198,7 @@ export default function AdminTenantsPage() {
   const [search, setSearch] = useState("");
   const [plan, setPlan] = useState("");
   const [status, setStatus] = useState("");
+  const [accountType, setAccountType] = useState("");
   const [page, setPage] = useState(1);
   const [provisionOpen, setProvisionOpen] = useState(false);
   const [menuFor, setMenuFor] = useState<string | null>(null);
@@ -181,6 +212,7 @@ export default function AdminTenantsPage() {
     search: debouncedSearch,
     plan,
     status,
+    accountType,
     page,
   });
   const { data: planOptions = [] } = useAdminPlans();
@@ -237,6 +269,17 @@ export default function AdminTenantsPage() {
               {p.displayName}
             </option>
           ))}
+        </select>
+        <select
+          value={accountType}
+          onChange={(e) => { setAccountType(e.target.value); resetPage(); }}
+          aria-label="Filter by account type"
+          className={cn(adminSelectClass, "sm:w-44")}
+        >
+          <option value="">All account types</option>
+          <option value="RESELLER">Resellers</option>
+          <option value="CLIENT">Clients</option>
+          <option value="PLATFORM">Platform</option>
         </select>
         <select
           value={status}
@@ -319,7 +362,11 @@ export default function AdminTenantsPage() {
                           <Avatar name={t.name} src={t.logo} size="sm" />
                           <div className="min-w-0">
                             <p className="truncate font-medium text-slate-900">{t.name}</p>
-                            <p className="truncate text-xs text-slate-500">/{t.slug}</p>
+                            <p className="truncate text-xs text-slate-500">
+                              {accountLabel(t)}
+                              {t.accountType === "RESELLER" && ` · ${t.clients} client${t.clients === 1 ? "" : "s"}`}
+                              {t.category && ` · ${t.category}`}
+                            </p>
                           </div>
                         </div>
                       </td>
@@ -594,11 +641,12 @@ function EditTenantModal({ tenant, onClose }: { tenant: AdminTenant; onClose: ()
 // ─── Provision modal ──────────────────────────────────────────────────────────
 
 interface ProvisionResult {
-  tenant: { id: string; name: string; slug: string };
+  tenant: { id: string; name: string; slug: string; accountType: string };
   user: { email: string; name: string };
-  plan: string;
   tempPassword: string;
 }
+
+type Kind = "CLIENT" | "NORMAL" | "WHITE_LABEL";
 
 function ProvisionModal({ open, onClose }: { open: boolean; onClose: () => void }) {
   const provision = useProvisionTenant();
@@ -609,7 +657,12 @@ function ProvisionModal({ open, onClose }: { open: boolean; onClose: () => void 
     ownerEmail: "",
     plan: "",
     trialDays: 14,
+    kind: "CLIENT" as Kind,
+    resellerId: "",
+    commissionRate: 10,
   });
+  const { data: resellers = [] } = useResellers(open);
+  const isReseller = form.kind !== "CLIENT";
   const [result, setResult] = useState<ProvisionResult | null>(null);
   const [copied, setCopied] = useState(false);
 
@@ -623,9 +676,17 @@ function ProvisionModal({ open, onClose }: { open: boolean; onClose: () => void 
     e.preventDefault();
     provision.mutate(
       {
-        ...form,
+        name: form.name,
         slug: form.slug || slugify(form.name),
-        plan: form.plan || (planOptions[0]?.name.toLowerCase() ?? "starter"),
+        ownerEmail: form.ownerEmail,
+        trialDays: isReseller ? 0 : form.trialDays,
+        accountType: isReseller ? "RESELLER" : "CLIENT",
+        ...(isReseller
+          ? { resellerType: form.kind, commissionRate: form.commissionRate }
+          : {
+              plan: form.plan || (planOptions[0]?.name.toLowerCase() ?? "starter"),
+              resellerId: form.resellerId || null,
+            }),
       },
       {
         onSuccess: (res: unknown) => {
@@ -640,7 +701,7 @@ function ProvisionModal({ open, onClose }: { open: boolean; onClose: () => void 
     setResult(null);
     setCopied(false);
     provision.reset();
-    setForm({ name: "", slug: "", ownerEmail: "", plan: "", trialDays: 14 });
+    setForm({ name: "", slug: "", ownerEmail: "", plan: "", trialDays: 14, kind: "CLIENT", resellerId: "", commissionRate: 10 });
     onClose();
   };
 
@@ -664,7 +725,7 @@ function ProvisionModal({ open, onClose }: { open: boolean; onClose: () => void 
         <div className="space-y-4">
           <div className="rounded-lg border border-emerald-200 bg-emerald-50 p-4">
             <p className="text-sm font-semibold text-emerald-800">{result.tenant.name} is live</p>
-            <p className="mt-0.5 text-xs text-emerald-600">/{result.tenant.slug} · {result.plan} plan</p>
+            <p className="mt-0.5 text-xs text-emerald-600">/{result.tenant.slug} · {result.tenant.accountType === "RESELLER" ? "reseller" : "client"} account</p>
           </div>
           <div className="rounded-lg border border-slate-200 bg-slate-50 p-4 space-y-2">
             <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Login credentials</p>
@@ -697,7 +758,20 @@ function ProvisionModal({ open, onClose }: { open: boolean; onClose: () => void 
         </div>
       ) : (
         <form onSubmit={submit} className="space-y-4">
-          <Field label="Workspace name" htmlFor="t-name" required>
+          <Field label="Account type" htmlFor="t-kind" required>
+            <select
+              id="t-kind"
+              value={form.kind}
+              onChange={(e) => set("kind", e.target.value as Kind)}
+              className={inputClass}
+            >
+              <option value="CLIENT">Client / business</option>
+              <option value="NORMAL">Reseller — platform branding</option>
+              <option value="WHITE_LABEL">Reseller — white-label (own branding)</option>
+            </select>
+          </Field>
+
+          <Field label={isReseller ? "Reseller name" : "Workspace name"} htmlFor="t-name" required>
             <input
               id="t-name"
               value={form.name}
@@ -734,6 +808,37 @@ function ProvisionModal({ open, onClose }: { open: boolean; onClose: () => void 
             />
           </Field>
 
+          {isReseller ? (
+            <Field label="Commission rate (%)" htmlFor="t-rate">
+              <input
+                id="t-rate"
+                type="number"
+                min={0}
+                max={100}
+                step="0.5"
+                value={form.commissionRate}
+                onChange={(e) => set("commissionRate", Number(e.target.value))}
+                className={inputClass}
+              />
+              <p className="mt-1 text-xs text-slate-500">Share of every payment by clients this reseller refers.</p>
+            </Field>
+          ) : (
+          <>
+          <Field label="Reseller" htmlFor="t-reseller">
+            <select
+              id="t-reseller"
+              value={form.resellerId}
+              onChange={(e) => set("resellerId", e.target.value)}
+              className={inputClass}
+            >
+              <option value="">None — direct client</option>
+              {resellers.map((r) => (
+                <option key={r.id} value={r.id}>
+                  {r.name}{r.resellerType === "WHITE_LABEL" ? " (white-label)" : ""}
+                </option>
+              ))}
+            </select>
+          </Field>
           <div className="grid grid-cols-2 gap-4">
             <Field label="Plan" htmlFor="t-plan" required>
               <select
@@ -765,6 +870,8 @@ function ProvisionModal({ open, onClose }: { open: boolean; onClose: () => void 
               />
             </Field>
           </div>
+          </>
+          )}
 
           {provision.isError && (
             <p className="rounded-lg bg-rose-50 px-3 py-2 text-xs text-rose-700">

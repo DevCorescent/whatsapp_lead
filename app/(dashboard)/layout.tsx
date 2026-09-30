@@ -5,6 +5,8 @@ import { prisma } from "@/lib/prisma";
 import { Sidebar } from "@/components/dashboard/Sidebar";
 import { Topbar } from "@/components/dashboard/Topbar";
 import { OnboardingWrapper } from "@/components/onboarding/OnboardingWrapper";
+import { brandStyle, getBrandForTenant } from "@/lib/branding";
+import { BrandProvider } from "@/components/BrandProvider";
 
 /**
  * The plan badge lives in the sidebar but isn't on the JWT, so it's read here.
@@ -28,10 +30,25 @@ export default async function DashboardLayout({ children }: { children: ReactNod
   if (!session?.user) redirect("/login");
   if (session.user.role === "SUPER_ADMIN") redirect("/dashboard");
 
-  const plan = await getPlanName(session.user.tenantId);
+  const isReseller = session.user.accountType === "RESELLER";
+  // A white-label reseller and its clients see the reseller's brand; its colour
+  // re-points the app's emerald palette for everything below (lib/branding.ts).
+  const [plan, brand] = await Promise.all([
+    isReseller ? Promise.resolve(null) : getPlanName(session.user.tenantId),
+    getBrandForTenant(session.user.tenantId),
+  ]);
 
   return (
-    <div className="flex h-screen overflow-hidden bg-[#f6f7f9]">
+    <BrandProvider
+      brand={{
+        name: brand.name,
+        logoUrl: brand.logoUrl,
+        primaryColor: brand.primaryColor,
+        supportEmail: brand.supportEmail,
+        isWhiteLabel: brand.isWhiteLabel,
+      }}
+    >
+    <div className="flex h-screen overflow-hidden bg-[#f6f7f9]" style={brandStyle(brand)}>
       <Sidebar
         user={{
           name: session.user.name,
@@ -39,15 +56,20 @@ export default async function DashboardLayout({ children }: { children: ReactNod
           avatar: session.user.avatar,
           tenantName: session.user.tenantName,
           plan,
+          accountType: session.user.accountType,
+          resellerType: session.user.resellerType,
         }}
+        brand={{ name: brand.name, logoUrl: brand.logoUrl }}
       />
 
       <div className="flex min-w-0 flex-1 flex-col">
-        <Topbar tenantName={session.user.tenantName} />
+        <Topbar tenantName={session.user.tenantName} reseller={isReseller} />
         <main className="scrollbar-slim flex-1 overflow-auto p-4 lg:p-6">{children}</main>
       </div>
 
-      <OnboardingWrapper tenantId={session.user.tenantId} tenantName={session.user.tenantName} />
+      {/* WhatsApp onboarding is for client accounts; resellers never connect a number. */}
+      {!isReseller && <OnboardingWrapper tenantId={session.user.tenantId} tenantName={session.user.tenantName} />}
     </div>
+    </BrandProvider>
   );
 }

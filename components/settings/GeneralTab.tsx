@@ -16,6 +16,11 @@ type SettingsData = {
   timezone: string;
 };
 
+type CategoryData = {
+  category: { id: string; name: string } | null;
+  categories: { id: string; name: string }[];
+};
+
 export function GeneralTab() {
   const qc = useQueryClient();
   const { data, isLoading } = useQuery<SettingsData>({
@@ -27,7 +32,17 @@ export function GeneralTab() {
     },
   });
 
+  const { data: categoryData } = useQuery<CategoryData>({
+    queryKey: ["account-category"],
+    queryFn: async () => {
+      const r = await fetch("/api/account/category");
+      const j = await r.json();
+      return j.data;
+    },
+  });
+
   const [name, setName] = useState("");
+  const [categoryId, setCategoryId] = useState("");
   const [domain, setDomain] = useState("");
   const [timezone, setTimezone] = useState("Asia/Kolkata");
   const [confirm, setConfirm] = useState("");
@@ -44,6 +59,19 @@ export function GeneralTab() {
     setDomain(data.tenant?.domain ?? "");
     setTimezone(data.timezone ?? "Asia/Kolkata");
   }
+  const [categorySeeded, setCategorySeeded] = useState(false);
+  if (categoryData && !categorySeeded) {
+    setCategorySeeded(true);
+    setCategoryId(categoryData.category?.id ?? "");
+  }
+  // A category deactivated by the platform stays on accounts that already had it, so
+  // keep it selectable here even though the active list no longer includes it.
+  const categoryOptions = [
+    ...(categoryData?.categories ?? []),
+    ...(categoryData?.category && !categoryData.categories.some((c) => c.id === categoryData.category!.id)
+      ? [categoryData.category]
+      : []),
+  ];
 
   const save = useMutation({
     mutationFn: async () => {
@@ -53,10 +81,19 @@ export function GeneralTab() {
         body: JSON.stringify({ tenantName: name, domain: domain || undefined, timezone }),
       });
       if (!r.ok) { const j = await r.json(); throw new Error(j.error ?? "Save failed"); }
+      if (categoryData && categoryId !== (categoryData.category?.id ?? "")) {
+        const c = await fetch("/api/account/category", {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ categoryId: categoryId || null }),
+        });
+        if (!c.ok) { const j = await c.json(); throw new Error(j.error ?? "Could not save the business category"); }
+      }
       return r.json();
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["settings"] });
+      qc.invalidateQueries({ queryKey: ["account-category"] });
       setSaved(true);
       setTimeout(() => setSaved(false), 2500);
     },
@@ -94,6 +131,18 @@ export function GeneralTab() {
               />
             </Field>
 
+            <Field label="Business category" htmlFor="ws-category">
+              <select
+                id="ws-category"
+                value={categoryId}
+                onChange={(e) => setCategoryId(e.target.value)}
+                className={inputClass}
+              >
+                <option value="">— Select a category —</option>
+                {categoryOptions.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+              </select>
+            </Field>
+
             <Field label="Custom domain" htmlFor="ws-domain">
               <input
                 id="ws-domain"
@@ -103,7 +152,7 @@ export function GeneralTab() {
                 placeholder="crm.acmerealty.com"
               />
               <p className="mt-1.5 text-xs text-slate-500">
-                Point a CNAME at <code className="font-mono">cname.whatscrm.app</code> to use it.
+                Point a CNAME record at <code className="font-mono">{process.env.NEXT_PUBLIC_CNAME_TARGET ?? "cname.vercel-dns.com"}</code>, then contact support to activate it.
               </p>
             </Field>
 

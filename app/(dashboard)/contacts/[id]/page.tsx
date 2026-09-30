@@ -7,6 +7,7 @@ import {
   Activity as ActivityIcon,
   AlertTriangle,
   ArrowLeft,
+  Ban,
   MessageSquare,
   Pencil,
   TrendingUp,
@@ -14,6 +15,7 @@ import {
   UserX,
 } from "lucide-react";
 import type { LeadScoreLabel } from "@prisma/client";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useContact, useDeleteContact } from "@/hooks/useContacts";
 import { Avatar, Badge, Button, Card, EmptyState, Modal, Skeleton } from "@/components/ui";
 import { EditContactModal } from "@/components/contacts/EditContactModal";
@@ -67,6 +69,8 @@ type LeadLite = {
 };
 
 type ContactDetail = Omit<ContactRow, "leads"> & {
+  /** Set when the number is on the account's (or the platform's) blacklist. */
+  blacklisted?: { reason: string | null; scope: "account" | "platform" } | null;
   conversations?: ConversationLite[] | null;
   leads?: LeadLite[] | null;
   activities?: ActivityLite[] | null;
@@ -88,6 +92,30 @@ export default function ContactDetailPage() {
   const [editOpen, setEditOpen] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const deleteContact = useDeleteContact();
+  const queryClient = useQueryClient();
+  const [blacklistOpen, setBlacklistOpen] = useState(false);
+  const [blacklistReason, setBlacklistReason] = useState("");
+  const blacklist = useMutation({
+    mutationFn: async (vars: { phone: string; reason: string }) => {
+      const res = await fetch("/api/blacklist", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ phones: [vars.phone], reason: vars.reason || undefined }),
+      });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(json.error ?? "Could not blacklist this number");
+      return json;
+    },
+    onSuccess: () => {
+      setBlacklistOpen(false);
+      setBlacklistReason("");
+      queryClient.invalidateQueries({ queryKey: ["contacts"] });
+    },
+    onError: (err: Error) => {
+      setBlacklistOpen(false);
+      setNotice(err.message);
+    },
+  });
 
   // The payload may be the contact itself or wrapped in { data }. Neither is
   // guaranteed while the route returns 501 — normalise, then verify.
@@ -149,8 +177,14 @@ export default function ContactDetailPage() {
           <div className="flex flex-col gap-4 sm:flex-row sm:items-center">
             <Avatar name={contact.name} src={contact.avatarUrl} size="xl" />
             <div className="min-w-0">
-              <h1 className="text-xl font-bold tracking-tight text-slate-900">
+              <h1 className="flex flex-wrap items-center gap-2 text-xl font-bold tracking-tight text-slate-900">
                 {contact.name ?? "Unnamed contact"}
+                {contact.blacklisted && (
+                  <Badge className="bg-rose-50 text-rose-700 ring-rose-600/20">
+                    <Ban className="mr-1 h-3 w-3" />
+                    Blacklisted{contact.blacklisted.scope === "platform" ? " (platform)" : ""}
+                  </Badge>
+                )}
               </h1>
               <p className="mt-0.5 text-sm text-slate-500">
                 {[contact.designation, contact.company].filter(Boolean).join(" · ") ||
@@ -180,6 +214,20 @@ export default function ContactDetailPage() {
               <Pencil className="h-4 w-4" />
               Edit
             </Button>
+            {contact.blacklisted ? (
+              <Link
+                href={`/blacklist?search=${encodeURIComponent(contact.phone ?? "")}`}
+                className="inline-flex h-9 items-center gap-2 rounded-lg px-3.5 text-sm font-medium text-rose-700 ring-1 ring-inset ring-rose-200 hover:bg-rose-50"
+              >
+                <Ban className="h-4 w-4" />
+                Manage block
+              </Link>
+            ) : (
+              <Button variant="secondary" onClick={() => setBlacklistOpen(true)}>
+                <Ban className="h-4 w-4" />
+                Blacklist
+              </Button>
+            )}
             <Button variant="danger" onClick={() => setConfirmDelete(true)}>
               <Trash2 className="h-4 w-4" />
               Delete
@@ -227,7 +275,7 @@ export default function ContactDetailPage() {
           if (!deleteContact.isPending) setConfirmDelete(false);
         }}
         title="Delete contact?"
-        description={`${contact.name ?? contact.phone} will be removed from this workspace, along with their conversations and message history. This cannot be undone.`}
+        description={`${contact.name ?? contact.phone} will be removed from your contact list. Their conversation history is kept, and adding the number again restores the contact. Deleting does not stop messages to this number — use Blacklist for that.`}
       >
         <div className="flex justify-end gap-2">
           <Button
@@ -252,6 +300,37 @@ export default function ContactDetailPage() {
             }
           >
             {deleteContact.isPending ? "Deleting…" : "Delete"}
+          </Button>
+        </div>
+      </Modal>
+
+      <Modal
+        open={blacklistOpen}
+        onClose={() => !blacklist.isPending && setBlacklistOpen(false)}
+        title="Blacklist this number?"
+        description={`No message will be sent to ${contact.phone} from this account — campaigns, broadcasts, inbox replies or automated replies — until it is unblocked. The contact itself is kept.`}
+      >
+        <label className="mb-1.5 block text-sm font-medium text-slate-700" htmlFor="bl-reason">
+          Reason <span className="font-normal text-slate-400">(optional, kept in the history)</span>
+        </label>
+        <input
+          id="bl-reason"
+          value={blacklistReason}
+          onChange={(e) => setBlacklistReason(e.target.value)}
+          maxLength={500}
+          className="w-full rounded-lg bg-white px-3 py-2 text-sm text-slate-900 shadow-sm ring-1 ring-inset ring-slate-200 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+          placeholder="e.g. Asked not to be contacted"
+        />
+        <div className="mt-4 flex justify-end gap-2">
+          <Button variant="secondary" onClick={() => setBlacklistOpen(false)} disabled={blacklist.isPending}>
+            Cancel
+          </Button>
+          <Button
+            variant="danger"
+            disabled={blacklist.isPending || !contact.phone}
+            onClick={() => contact.phone && blacklist.mutate({ phone: contact.phone, reason: blacklistReason.trim() })}
+          >
+            {blacklist.isPending ? "Blacklisting…" : "Blacklist"}
           </Button>
         </div>
       </Modal>
@@ -296,7 +375,11 @@ function OverviewTab({ contact }: { contact: ContactDetail }) {
             />
             <Row
               label="Status"
-              value={contact.isBlocked ? "Blocked" : contact.optedOut ? "Opted out" : "Active"}
+              value={
+                contact.blacklisted
+                  ? `Blacklisted${contact.blacklisted.reason ? ` — ${contact.blacklisted.reason}` : ""}`
+                  : contact.isBlocked ? "Deleted" : contact.optedOut ? "Opted out" : "Active"
+              }
             />
           </div>
         </dl>

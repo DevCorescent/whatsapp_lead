@@ -131,7 +131,20 @@ function NotificationBell() {
   );
 }
 
-export function Topbar({ tenantName }: { tenantName?: string | null }) {
+export function Topbar({ tenantName, reseller = false }: { tenantName?: string | null; reseller?: boolean }) {
+  // Search and notifications read client data (contacts, leads, chats); a reseller
+  // account has none and is refused by those APIs, so it gets a plain header.
+  if (reseller) {
+    return (
+      <header className="flex h-16 shrink-0 items-center justify-end gap-3 border-b border-slate-200/70 bg-white/80 px-4 pl-16 backdrop-blur-sm lg:px-6 lg:pl-6">
+        <span className="truncate text-sm font-medium text-slate-600">{tenantName}</span>
+      </header>
+    );
+  }
+  return <ClientTopbar tenantName={tenantName} />;
+}
+
+function ClientTopbar({ tenantName }: { tenantName?: string | null }) {
   const [status, setStatus] = useState<AgentStatus>("Online");
   const [statusOpen, setStatusOpen] = useState(false);
   const [search, setSearch] = useState("");

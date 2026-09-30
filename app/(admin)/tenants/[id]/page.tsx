@@ -54,6 +54,13 @@ interface TenantDetail {
   slug: string;
   logo: string | null;
   isActive: boolean;
+  category: { id: string; name: string } | null;
+  accountType: "PLATFORM" | "RESELLER" | "CLIENT";
+  resellerType: "NORMAL" | "WHITE_LABEL" | null;
+  commissionRate: number | null;
+  parent: { id: string; name: string; resellerType: string | null } | null;
+  referredBy: { id: string; name: string } | null;
+  whiteLabel: { brandName: string; domain: string | null; isActive: boolean } | null;
   createdAt: string;
   updatedAt: string;
   users: TenantUser[];
@@ -82,6 +89,7 @@ interface TenantDetail {
     contacts: number;
     leads: number;
     conversations: number;
+    children: number;
   };
 }
 
@@ -210,6 +218,193 @@ function useAssignSubscription(id: string) {
   });
 }
 
+/** Business category picker for the header. Includes inactive categories — an admin may still assign them. */
+function CategorySelect({ tenant, update }: { tenant: TenantDetail; update: ReturnType<typeof useUpdateTenant> }) {
+  const { data: categories } = useQuery<{ id: string; name: string; isActive: boolean }[]>({
+    queryKey: ["admin", "categories"],
+    queryFn: async () => {
+      const res = await fetch("/api/admin/categories");
+      if (!res.ok) return [];
+      return (await res.json()).data ?? [];
+    },
+  });
+  return (
+    <select
+      value={tenant.category?.id ?? ""}
+      disabled={update.isPending || !categories}
+      onChange={(e) => update.mutate({ categoryId: e.target.value || null })}
+      className="h-8 rounded-lg bg-white px-2 text-xs text-slate-700 ring-1 ring-inset ring-slate-200 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+      aria-label="Business category"
+    >
+      <option value="">No category</option>
+      {(categories ?? []).map((c) => (
+        <option key={c.id} value={c.id}>{c.name}{c.isActive ? "" : " (inactive)"}</option>
+      ))}
+    </select>
+  );
+}
+
+/**
+ * Where the account sits in the hierarchy, and the controls to move it:
+ * client ↔ reseller, reseller type, which reseller a client belongs to, and the
+ * reseller's commission rate. The API enforces the rules (no reseller under a
+ * reseller, no demoting a reseller that still manages clients, …).
+ */
+function HierarchyPanel({ tenant, update }: { tenant: TenantDetail; update: ReturnType<typeof useUpdateTenant> }) {
+  const { data: resellers = [] } = useQuery<{ id: string; name: string }[]>({
+    queryKey: ["admin", "tenants", "resellers"],
+    queryFn: async () => {
+      const res = await fetch("/api/admin/tenants?accountType=RESELLER&limit=100");
+      if (!res.ok) return [];
+      return (await res.json()).data ?? [];
+    },
+    enabled: tenant.accountType === "CLIENT",
+  });
+  const [rate, setRate] = useState<string | null>(null);
+
+  if (tenant.accountType === "PLATFORM") {
+    return (
+      <AdminPanel title="Account hierarchy" subtitle="The platform account">
+        <p className="text-sm text-slate-500">This account runs the platform. Its type can&apos;t be changed.</p>
+      </AdminPanel>
+    );
+  }
+
+  const selectCls = "h-9 rounded-lg bg-white px-2 text-sm text-slate-700 ring-1 ring-inset ring-slate-200 focus:outline-none focus:ring-2 focus:ring-emerald-500";
+  const kind = tenant.accountType === "CLIENT" ? "CLIENT" : tenant.resellerType ?? "NORMAL";
+
+  return (
+    <AdminPanel title="Account hierarchy" subtitle="Type, reseller and commission">
+      <dl className="space-y-3 text-sm">
+        <Row label="Type">
+          <select
+            value={kind}
+            disabled={update.isPending}
+            onChange={(e) => {
+              const v = e.target.value;
+              update.mutate(v === "CLIENT" ? { accountType: "CLIENT" } : { accountType: "RESELLER", resellerType: v });
+            }}
+            className={selectCls}
+            aria-label="Account type"
+          >
+            <option value="CLIENT">Client / business</option>
+            <option value="NORMAL">Reseller — platform branding</option>
+            <option value="WHITE_LABEL">Reseller — white-label</option>
+          </select>
+        </Row>
+        {tenant.accountType === "CLIENT" ? (
+          <>
+            <Row label="Reseller">
+              <select
+                value={tenant.parent?.id ?? ""}
+                disabled={update.isPending}
+                onChange={(e) => update.mutate({ parentId: e.target.value || null })}
+                className={selectCls}
+                aria-label="Reseller"
+              >
+                <option value="">None — direct client</option>
+                {resellers.map((r) => <option key={r.id} value={r.id}>{r.name}</option>)}
+              </select>
+            </Row>
+            <Row label="Referred by">{tenant.referredBy?.name ?? "—"}</Row>
+          </>
+        ) : (
+          <>
+            <Row label="Clients">{tenant._count.children}</Row>
+            <Row label="Commission">
+              <span className="inline-flex items-center gap-2">
+                <input
+                  type="number"
+                  min={0}
+                  max={100}
+                  step="0.5"
+                  value={rate ?? String(tenant.commissionRate ?? 0)}
+                  onChange={(e) => setRate(e.target.value)}
+                  className={`${selectCls} w-20`}
+                  aria-label="Commission rate"
+                />
+                %
+                {rate !== null && Number(rate) !== (tenant.commissionRate ?? 0) && (
+                  <AdminButton size="sm" disabled={update.isPending} onClick={() => update.mutate({ commissionRate: Number(rate) }, { onSuccess: () => setRate(null) })}>
+                    Save
+                  </AdminButton>
+                )}
+              </span>
+            </Row>
+            {tenant.resellerType === "WHITE_LABEL" && (
+              <Row label="Brand">
+                {tenant.whiteLabel
+                  ? `${tenant.whiteLabel.brandName}${tenant.whiteLabel.domain ? ` · ${tenant.whiteLabel.domain}` : " · no domain yet"}`
+                  : "Not set up yet"}
+              </Row>
+            )}
+          </>
+        )}
+      </dl>
+    </AdminPanel>
+  );
+}
+
+/** The account's message wallet, with manual credit / correction (e.g. a bank transfer). */
+function WalletPanel({ tenantId }: { tenantId: string }) {
+  const qc = useQueryClient();
+  const [amount, setAmount] = useState("");
+  const [note, setNote] = useState("");
+  const inr = (m: number) => new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR" }).format(m / 100);
+
+  const { data } = useQuery({
+    queryKey: ["admin", "tenant", tenantId, "wallet"],
+    queryFn: async () => {
+      const res = await fetch(`/api/admin/tenants/${tenantId}/wallet`);
+      if (!res.ok) throw new Error("Failed to load wallet");
+      return (await res.json()).data as {
+        balanceMinor: number;
+        transactions: { id: string; type: string; amountMinor: number; description: string | null; createdAt: string }[];
+      };
+    },
+  });
+  const adjust = useMutation({
+    mutationFn: async () => {
+      const res = await fetch(`/api/admin/tenants/${tenantId}/wallet`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ amountMinor: Math.round(Number(amount) * 100), note }),
+      });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(json.error ?? "Adjustment failed");
+    },
+    onSuccess: () => { setAmount(""); setNote(""); qc.invalidateQueries({ queryKey: ["admin", "tenant", tenantId, "wallet"] }); },
+  });
+
+  const inputCls = "h-9 rounded-lg bg-white px-3 text-sm ring-1 ring-inset ring-slate-200 focus:outline-none focus:ring-2 focus:ring-emerald-500";
+  return (
+    <AdminPanel title="Wallet" subtitle={data ? `Balance ${inr(data.balanceMinor)}` : "Message credit"}>
+      <div className="flex flex-col gap-2 sm:flex-row">
+        <input type="number" value={amount} onChange={(e) => setAmount(e.target.value)} placeholder="₹ (negative to deduct)" className={`${inputCls} sm:w-44`} aria-label="Amount in rupees" />
+        <input value={note} onChange={(e) => setNote(e.target.value)} placeholder="Note, e.g. NEFT ref 12345" className={`${inputCls} flex-1`} maxLength={200} aria-label="Note" />
+        <AdminButton size="sm" className="h-9" disabled={!Number(amount) || !note.trim() || adjust.isPending} onClick={() => adjust.mutate()}>
+          {Number(amount) < 0 ? "Deduct" : "Add credit"}
+        </AdminButton>
+      </div>
+      {adjust.isError && <p className="mt-2 text-xs text-rose-700">{(adjust.error as Error).message}</p>}
+      {data && data.transactions.length > 0 && (
+        <ul className="mt-4 divide-y divide-slate-100 text-sm">
+          {data.transactions.map((t) => (
+            <li key={t.id} className="flex justify-between gap-3 py-1.5">
+              <span className="min-w-0 truncate text-slate-600">
+                {formatDate(t.createdAt)} · {t.type.replace("_", " ").toLowerCase()} · {t.description ?? ""}
+              </span>
+              <span className={t.amountMinor < 0 ? "tabular-nums text-slate-700" : "tabular-nums text-emerald-700"}>
+                {t.amountMinor > 0 ? "+" : ""}{inr(t.amountMinor)}
+              </span>
+            </li>
+          ))}
+        </ul>
+      )}
+    </AdminPanel>
+  );
+}
+
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
 export default function TenantDetailPage({ params }: { params: Promise<{ id: string }> }) {
@@ -259,7 +454,8 @@ export default function TenantDetailPage({ params }: { params: Promise<{ id: str
         title={tenant.name}
         description={`/${tenant.slug} · joined ${formatDate(tenant.createdAt)}`}
         action={
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
+            <CategorySelect tenant={tenant} update={update} />
             <AdminBadge tone={tenant.isActive ? "emerald" : "rose"}>
               <span className="h-1.5 w-1.5 rounded-full bg-current" />
               {tenant.isActive ? "Active" : "Suspended"}
@@ -292,6 +488,11 @@ export default function TenantDetailPage({ params }: { params: Promise<{ id: str
         <StatTile icon={UserCheck} label="Contacts" value={tenant._count.contacts} tone="sky" />
         <StatTile icon={TrendingUp} label="Leads" value={tenant._count.leads} tone="emerald" />
         <StatTile icon={MessageSquare} label="Conversations" value={tenant._count.conversations} tone="amber" />
+      </div>
+
+      <div className="mt-6 grid grid-cols-1 gap-6 lg:grid-cols-2">
+        <HierarchyPanel tenant={tenant} update={update} />
+        <WalletPanel tenantId={tenant.id} />
       </div>
 
       {/* Subscription + assignment */}

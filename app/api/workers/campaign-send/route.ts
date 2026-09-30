@@ -33,10 +33,11 @@ import { CampaignStatus } from "@prisma/client";
 import { verifyQStashSignature } from "@/lib/qstash-verify";
 import { cachedBusinessCreds } from "@/lib/cache";
 import { resolveWhatsAppCreds } from "@/lib/business";
-import { sendTextMessage, sendTemplateMessage, type WATemplateComponent, type WATemplateParameter } from "@/lib/whatsapp";
+import { sendTextMessage, sendTemplateMessage, WABlacklistedError, type WATemplateComponent, type WATemplateParameter } from "@/lib/whatsapp";
 import { detectParameterFormat, extractNamedParams } from "@/lib/templates";
 import { prisma } from "@/lib/prisma";
 import type { CampaignSendJob } from "@/lib/queue";
+import { credit, debit, maybeAlertLowBalance } from "@/lib/wallet";
 
 /**
  * How many redeliveries QStash will attempt, which must match the `retries` that
@@ -54,6 +55,43 @@ const CAMPAIGN_SEND_RETRIES = 3;
 const TERMINAL_STATUSES = ["SENT", "FAILED"];
 
 /**
+ * How long a claim (status SENDING) is honoured. A worker that crashed mid-send leaves its claim
+ * behind; after this, a redelivery may retake it. Comfortably longer than one Meta round trip
+ * plus retries, so a live send is never taken over.
+ */
+const CLAIM_TTL_MS = 5 * 60_000;
+
+/**
+ * Take exclusive ownership of a recipient before sending to it.
+ *
+ * QStash delivers at-least-once, and a recipient can also have two jobs queued (a resume or the
+ * cron re-queueing while an older job is still pending). Checking "not yet SENT" is not enough —
+ * two deliveries can both see PENDING and both send. The conditional update is atomic: only one
+ * caller moves the row to SENDING; every other delivery sees count 0 and stands down.
+ */
+async function claimRecipient(recipientId: string): Promise<boolean> {
+  const claimed = await prisma.campaignContact.updateMany({
+    where: {
+      id: recipientId,
+      OR: [
+        { status: "PENDING" },
+        { status: "SENDING", claimedAt: { lt: new Date(Date.now() - CLAIM_TTL_MS) } },
+      ],
+    },
+    data: { status: "SENDING", claimedAt: new Date() },
+  });
+  return claimed.count === 1;
+}
+
+/** Hand a claimed recipient back (a retry is coming, or the campaign is paused). */
+async function releaseRecipient(recipientId: string): Promise<void> {
+  await prisma.campaignContact.updateMany({
+    where: { id: recipientId, status: "SENDING" },
+    data: { status: "PENDING", claimedAt: null },
+  });
+}
+
+/**
  * Record a recipient's final outcome exactly once, and move the campaign counter with it.
  *
  * Both halves are conditional on the same guard. The `updateMany` matches only a recipient that
@@ -68,7 +106,7 @@ const TERMINAL_STATUSES = ["SENT", "FAILED"];
 async function settleRecipient(
   job: CampaignSendJob,
   outcome:
-    | { status: "SENT"; waMessageId: string | null }
+    | { status: "SENT"; waMessageId?: string | null; costMinor?: number }
     | { status: "FAILED"; reason: string }
 ): Promise<boolean> {
   const settled = await prisma.campaignContact.updateMany({
@@ -80,7 +118,8 @@ async function settleRecipient(
             sentAt: new Date(),
             // Meta's id for this send. Delivery receipts arrive keyed by it, so storing it here is
             // what lets the webhook attribute a `delivered`/`read` callback back to this recipient.
-            waMessageId: outcome.waMessageId,
+            waMessageId: outcome.waMessageId ?? null,
+            costMinor: outcome.costMinor ?? null,
           }
         : { status: "FAILED", failedReason: outcome.reason },
   });
@@ -91,11 +130,30 @@ async function settleRecipient(
     where: { id: job.campaignId },
     data:
       outcome.status === "SENT"
-        ? { sentCount: { increment: 1 } }
+        ? { sentCount: { increment: 1 }, costMinor: { increment: outcome.costMinor ?? 0 } }
         : { failedCount: { increment: 1 } },
   });
 
   return true;
+}
+
+/**
+ * Give back what this recipient was charged, once — for a message that never went out.
+ * Only refunds a charge that actually exists.
+ */
+async function refundCharge(job: CampaignSendJob): Promise<void> {
+  if (!job.tenantId || !(job.costMinor && job.costMinor > 0)) return;
+  const charged = await prisma.walletTransaction.findUnique({
+    where: { idempotencyKey: `debit:${job.recipientId}` },
+    select: { id: true },
+  });
+  if (!charged) return;
+  await credit(job.tenantId, job.costMinor, "REFUND", {
+    idempotencyKey: `refund:${job.recipientId}`,
+    description: "Refund — message not sent",
+    referenceType: "campaign_contact",
+    referenceId: job.recipientId,
+  });
 }
 
 /**
@@ -135,13 +193,16 @@ export async function POST(req: NextRequest) {
     bodyParamCount: job.bodyParams?.length ?? 0,
   });
 
+  // Whether this delivery holds the recipient's claim — only then may it release it on failure.
+  let claimed = false;
+
   try {
     // QStash delivers at-least-once, and a send is the one thing here that cannot be taken back.
     // A recipient that has already reached a terminal state has had its outcome decided, so a
     // redelivery must not send to it again or move its campaign's counters a second time.
     const recipient = await prisma.campaignContact.findUnique({
       where: { id: job.recipientId },
-      select: { status: true, phone: true, campaignId: true },
+      select: { status: true, phone: true, campaignId: true, campaign: { select: { status: true } } },
     });
 
     if (!recipient) {
@@ -166,6 +227,38 @@ export async function POST(req: NextRequest) {
         status: recipient.status,
       });
       return NextResponse.json({ ok: true, skipped: `already ${recipient.status}` });
+    }
+
+    const campaignStatus = recipient.campaign.status;
+
+    // A cancelled campaign sends nothing more; its remaining recipients are closed out.
+    if (campaignStatus === CampaignStatus.CANCELLED) {
+      await settleRecipient(job, { status: "FAILED", reason: "Campaign was cancelled" });
+      return NextResponse.json({ ok: true, skipped: "campaign cancelled" });
+    }
+
+    // A paused campaign holds its recipients PENDING. The job is acknowledged (not retried —
+    // QStash would spend its retries while the pause lasts) and resuming re-queues everyone
+    // still PENDING (PATCH /api/campaigns/[id]).
+    if (campaignStatus === CampaignStatus.PAUSED) {
+      return NextResponse.json({ ok: true, skipped: "campaign paused" });
+    }
+
+    // A scheduled campaign's jobs were queued with a delay; the first one to fire marks it as
+    // sending, so the list shows RUNNING and completeIfFinished can close it out.
+    if (campaignStatus === CampaignStatus.SCHEDULED) {
+      await prisma.campaign.updateMany({
+        where: { id: job.campaignId, status: CampaignStatus.SCHEDULED },
+        data: { status: CampaignStatus.RUNNING, startedAt: new Date() },
+      });
+    }
+
+    claimed = await claimRecipient(job.recipientId);
+    if (!claimed) {
+      console.log("[WORKER CAMPAIGN-SEND] Recipient claimed by another delivery — skip", {
+        recipientId: job.recipientId,
+      });
+      return NextResponse.json({ ok: true, skipped: "in flight elsewhere" });
     }
 
     const creds = await cachedBusinessCreds(job.businessId, async () => {
@@ -196,10 +289,33 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ ok: true, sent: false });
     }
 
+    // ── Wallet: charge before sending ──
+    // Keyed by recipient, so a retried or redelivered job is never charged twice. When the
+    // balance can't cover it, the campaign pauses; top up and Resume re-queues whoever is left.
+    const charge = job.tenantId && job.costMinor && job.costMinor > 0 ? job.costMinor : 0;
+    if (charge > 0) {
+      const paid = await debit(job.tenantId!, charge, {
+        idempotencyKey: `debit:${job.recipientId}`,
+        description: `WhatsApp to +${job.phone}`,
+        referenceType: "campaign_contact",
+        referenceId: job.recipientId,
+      });
+      if (!paid.ok) {
+        console.warn("[WORKER CAMPAIGN-SEND] Wallet empty — pausing campaign", { campaignId: job.campaignId });
+        await prisma.campaign.updateMany({
+          where: { id: job.campaignId, status: CampaignStatus.RUNNING },
+          data: { status: CampaignStatus.PAUSED, lastError: "Paused: the wallet balance ran out. Top up and resume." },
+        });
+        await releaseRecipient(job.recipientId);
+        claimed = false;
+        return NextResponse.json({ ok: true, paused: "insufficient balance" });
+      }
+    }
+
     // The send is isolated in its own try so that only the send itself can be judged a send
     // failure. Anything that goes wrong after Meta has accepted the message is a bookkeeping
     // problem, and must never be mistaken for one — see the phase below.
-    let sent;
+    let sent: { messages?: { id: string }[] } | undefined;
     try {
       if (job.templateName) {
         // Template campaigns use the WhatsApp template API — the only channel Meta allows
@@ -289,6 +405,18 @@ export async function POST(req: NextRequest) {
     } catch (error) {
       const reason = error instanceof Error ? error.message : "Unknown error";
 
+      // Blacklisted (checked inside the send, before the provider): final, never retried.
+      if (error instanceof WABlacklistedError) {
+        console.warn("[WORKER CAMPAIGN-SEND] Recipient is blacklisted — not sent", {
+          campaignId: job.campaignId,
+          recipientId: job.recipientId,
+        });
+        await refundCharge(job);
+        await settleRecipient(job, { status: "FAILED", reason: `Blacklisted: ${reason}` });
+        await completeIfFinished(job.campaignId);
+        return NextResponse.json({ ok: true, sent: false, blacklisted: true });
+      }
+
       // "How often the message has been retried so far", counting from 0 — so the first delivery
       // reports 0 and the last reports CAMPAIGN_SEND_RETRIES. A missing or unparseable header is
       // read as "no more attempts": without it we cannot know whether another delivery is coming,
@@ -309,8 +437,10 @@ export async function POST(req: NextRequest) {
           `[WORKER CAMPAIGN-SEND] Send to ${job.phone} failed (attempt ${retried + 1} of ${CAMPAIGN_SEND_RETRIES + 1}), asking QStash to retry:`,
           reason
         );
-        // Deliberately left unsettled: the recipient stays PENDING so the retry can still
-        // succeed, and `completeIfFinished` keeps the campaign RUNNING while it does.
+        // Deliberately left unsettled: the claim is released so the retry can take it and
+        // still succeed, and `completeIfFinished` keeps the campaign RUNNING while it does.
+        // The charge stays: the retry finds it (same key) and isn't charged again.
+        await releaseRecipient(job.recipientId);
         return NextResponse.json({ error: reason }, { status: 500 });
       }
 
@@ -318,6 +448,7 @@ export async function POST(req: NextRequest) {
         `[WORKER CAMPAIGN-SEND] Send to ${job.phone} failed after all ${CAMPAIGN_SEND_RETRIES + 1} attempts:`,
         reason
       );
+      await refundCharge(job);
       await settleRecipient(job, { status: "FAILED", reason });
       await completeIfFinished(job.campaignId);
 
@@ -331,8 +462,8 @@ export async function POST(req: NextRequest) {
     // better than messaging someone twice. Contained here rather than in the outer catch, which
     // is reserved for pre-send failures where a retry is genuinely safe.
     try {
-      const waMessageId = sent.messages?.[0]?.id ?? null;
-      console.log("[WORKER CAMPAIGN-SEND] Meta accepted — settling SENT", {
+      const waMessageId = sent?.messages?.[0]?.id ?? null;
+      console.log("[WORKER CAMPAIGN-SEND] Provider accepted — settling SENT", {
         campaignId: job.campaignId,
         recipientId: job.recipientId,
         phone: job.phone,
@@ -341,8 +472,10 @@ export async function POST(req: NextRequest) {
       await settleRecipient(job, {
         status: "SENT",
         waMessageId,
+        costMinor: charge,
       });
       await completeIfFinished(job.campaignId);
+      if (charge > 0) await maybeAlertLowBalance(job.tenantId!);
     } catch (error) {
       console.error(
         `[WORKER CAMPAIGN-SEND] Sent to ${job.phone} but could not record the outcome for ${job.recipientId}; not retrying:`,
@@ -360,6 +493,9 @@ export async function POST(req: NextRequest) {
       `[WORKER CAMPAIGN-SEND] Failed to process recipient ${job.recipientId}:`,
       error
     );
+    // Hand the claim back so the redelivery can take it; otherwise the recipient would sit in
+    // SENDING until the claim went stale.
+    if (claimed) await releaseRecipient(job.recipientId).catch(() => {});
     return NextResponse.json({ error: "Send failed" }, { status: 500 });
   }
 

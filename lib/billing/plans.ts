@@ -28,11 +28,33 @@ import { prisma } from "@/lib/prisma";
  * *unowned* private plan (owner null — the reusable agency tier) is reachable by
  * nobody: it is assignable by an admin but never self-serve, since there is no
  * tenant it can be said to belong to.
+ *
+ * Reseller plans (`resellerId` set, always PRIVATE) are the catalogue for that
+ * reseller's clients: a client under a reseller with active plans sees those
+ * instead of the platform's public plans. Nobody else can reach them — a planId
+ * is not a secret, so a direct client posting a reseller's cheaper plan id gets
+ * nothing. A reseller with no plans of its own leaves its clients on the
+ * platform catalogue.
  */
-export function purchasablePlanWhere(tenantId: string): Prisma.PlanWhereInput {
+export async function purchasablePlanWhere(tenantId: string): Promise<Prisma.PlanWhereInput> {
+  const tenant = await prisma.tenant.findUnique({
+    where: { id: tenantId },
+    select: { accountType: true, parentId: true },
+  });
+
+  if (tenant?.accountType === "CLIENT" && tenant.parentId) {
+    const resellerHasPlans = await prisma.plan.count({ where: { resellerId: tenant.parentId, isActive: true } });
+    if (resellerHasPlans > 0) {
+      return {
+        isActive: true,
+        OR: [{ resellerId: tenant.parentId }, { ownerTenantId: tenantId }],
+      };
+    }
+  }
+
   return {
     isActive: true,
-    OR: [{ visibility: "PUBLIC" }, { ownerTenantId: tenantId }],
+    OR: [{ visibility: "PUBLIC", resellerId: null }, { ownerTenantId: tenantId }],
   };
 }
 
@@ -44,7 +66,7 @@ export function purchasablePlanWhere(tenantId: string): Prisma.PlanWhereInput {
  * customer's custom plan exists, which is the thing the filter is hiding.
  */
 export async function findPurchasablePlan(tenantId: string, planId: string): Promise<Plan | null> {
-  return prisma.plan.findFirst({ where: { id: planId, ...purchasablePlanWhere(tenantId) } });
+  return prisma.plan.findFirst({ where: { id: planId, ...(await purchasablePlanWhere(tenantId)) } });
 }
 
 /**
@@ -61,7 +83,7 @@ export async function listPlansFor(
   tenantId: string,
 ): Promise<{ plans: Plan[]; currentPlanId: string | null; status: string | null }> {
   const [purchasable, subscription] = await Promise.all([
-    prisma.plan.findMany({ where: purchasablePlanWhere(tenantId), orderBy: { sortOrder: "asc" } }),
+    prisma.plan.findMany({ where: await purchasablePlanWhere(tenantId), orderBy: { sortOrder: "asc" } }),
     prisma.subscription.findUnique({
       where: { tenantId },
       select: { planId: true, status: true, plan: true },

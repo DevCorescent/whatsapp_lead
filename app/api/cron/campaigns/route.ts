@@ -1,112 +1,77 @@
+// ============================================================================
+// ROUTE : /api/cron/campaigns  (GET, Vercel cron)
+//
+// Safety net for campaign sends. Launch already queues every recipient (scheduled
+// ones with a QStash delay), so normally this finds nothing. It catches:
+//   · due SCHEDULED campaigns whose delayed jobs never ran (e.g. a failed publish);
+//   · RUNNING campaigns left with PENDING recipients an hour after starting (a
+//     batch that failed to publish, or jobs QStash gave up on before settling).
+//
+// Re-queuing is safe: the worker claims a recipient before sending, so a recipient
+// that still has an older job in flight is never messaged twice. Jobs are built by
+// lib/campaigns/jobs.ts — the same builder launch uses — so media headers and
+// personalised variables survive (this route used to rebuild jobs and drop them).
+//
+// ACCESS: `Authorization: Bearer $CRON_SECRET`. Refused outright when the secret is
+// unset — otherwise the literal header "Bearer undefined" would have been accepted.
+// ============================================================================
+
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { publishCampaignSend } from "@/lib/queue";
+import { queuePendingRecipients } from "@/lib/campaigns/jobs";
+
+export const maxDuration = 60;
+
+const STALE_RUNNING_MS = 60 * 60_000;
 
 export async function GET(req: NextRequest) {
-  console.log("[CRON CAMPAIGNS] Tick received", {
-    CRON_SECRET_SET: Boolean(process.env.CRON_SECRET),
-    QSTASH_TOKEN_SET: Boolean(process.env.QSTASH_TOKEN),
-    DATABASE_URL_SET: Boolean(process.env.DATABASE_URL),
-    APP_URL: process.env.NEXT_PUBLIC_APP_URL ?? "(not set — using hardcoded fallback)",
-  });
-
-  const authHeader = req.headers.get("authorization");
-  if (authHeader !== `Bearer ${process.env.CRON_SECRET}`) {
-    console.warn("[CRON CAMPAIGNS] Auth failed — wrong or missing CRON_SECRET");
+  const secret = process.env.CRON_SECRET;
+  if (!secret || req.headers.get("authorization") !== `Bearer ${secret}`) {
+    console.warn("[CRON CAMPAIGNS] Auth failed — CRON_SECRET missing or wrong");
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  console.log("[CRON CAMPAIGNS] Auth OK — querying due campaigns");
-
   const now = new Date();
 
-  let dueCampaigns;
   try {
-    dueCampaigns = await prisma.campaign.findMany({
-      where: { status: "SCHEDULED", scheduledAt: { lte: now } },
-      include: {
-        contacts: {
-          where: { status: "PENDING" },
-          include: { contact: { select: { phone: true, name: true, company: true } } },
-        },
+    const due = await prisma.campaign.findMany({
+      where: {
+        OR: [
+          { status: "SCHEDULED", scheduledAt: { lte: now } },
+          { status: "RUNNING", startedAt: { lte: new Date(now.getTime() - STALE_RUNNING_MS) } },
+        ],
+        contacts: { some: { status: "PENDING" } },
       },
-    });
-    console.log("[CRON CAMPAIGNS] DB query OK", { dueCampaignCount: dueCampaigns.length });
-  } catch (error) {
-    console.error("[CRON CAMPAIGNS] DB query failed", { error: String(error) });
-    return NextResponse.json({ error: "DB error" }, { status: 500 });
-  }
-
-  if (dueCampaigns.length === 0) {
-    console.log("[CRON CAMPAIGNS] No due campaigns — done");
-    return NextResponse.json({ success: true, processed: 0 });
-  }
-
-  let totalProcessed = 0;
-
-  for (const campaign of dueCampaigns) {
-    console.log("[CRON CAMPAIGNS] Processing campaign", { campaignId: campaign.id, recipientCount: campaign.contacts.length });
-
-    await prisma.campaign.update({
-      where: { id: campaign.id },
-      data: { status: "RUNNING", startedAt: now },
+      select: { id: true, status: true },
+      take: 50,
     });
 
-    if (campaign.contacts.length === 0) {
-      await prisma.campaign.update({
-        where: { id: campaign.id },
-        data: { status: "COMPLETED", completedAt: new Date() },
-      });
-      totalProcessed++;
-      continue;
-    }
+    // Scheduled campaigns that came due with nobody left to send to are simply finished.
+    await prisma.campaign.updateMany({
+      where: {
+        status: "SCHEDULED",
+        scheduledAt: { lte: now },
+        contacts: { none: { status: { in: ["PENDING", "SENDING"] } } },
+      },
+      data: { status: "COMPLETED", completedAt: now },
+    });
 
-    const meta =
-      campaign.metadata && typeof campaign.metadata === "object"
-        ? (campaign.metadata as Record<string, unknown>)
-        : {};
-    const templateName = typeof meta.templateName === "string" ? meta.templateName : undefined;
-    const language = typeof meta.language === "string" ? meta.language : "en";
-    const bodyVarMapping = Array.isArray(meta.bodyVarMapping)
-      ? (meta.bodyVarMapping as string[])
-      : [];
-
-    const CONTACT_FIELD: Record<string, (r: { phone: string; name: string | null; company: string | null }) => string> = {
-      name: (r) => r.name ?? "",
-      phone: (r) => r.phone,
-      company: (r) => r.company ?? "",
-    };
-
-    for (const cc of campaign.contacts) {
-      try {
-        const phone = cc.contact?.phone ?? cc.phone;
-        const contactData = {
-          phone,
-          name: cc.contact?.name ?? null,
-          company: cc.contact?.company ?? null,
-        };
-        const bodyParams = bodyVarMapping.map((field) =>
-          CONTACT_FIELD[field] ? CONTACT_FIELD[field](contactData) : field,
-        );
-        const message = bodyParams.join(" / ") || templateName || "Hello from WhatsCRM";
-
-        await publishCampaignSend({
-          campaignId: campaign.id,
-          recipientId: cc.id,
-          phone,
-          message,
-          businessId: campaign.businessId,
-          ...(templateName ? { templateName, language, bodyParams: bodyParams.length ? bodyParams : undefined } : {}),
+    let queued = 0;
+    for (const campaign of due) {
+      if (campaign.status === "SCHEDULED") {
+        await prisma.campaign.updateMany({
+          where: { id: campaign.id, status: "SCHEDULED" },
+          data: { status: "RUNNING", startedAt: now },
         });
-        console.log("[CRON CAMPAIGNS] Queued recipient", { recipientId: cc.id });
-      } catch (error) {
-        console.error("[CRON CAMPAIGNS] Failed to queue recipient", { recipientId: cc.id, error: String(error) });
       }
+      const { published } = await queuePendingRecipients(campaign.id);
+      queued += published;
     }
 
-    totalProcessed++;
+    console.log("[CRON CAMPAIGNS] Done", { campaigns: due.length, queued });
+    return NextResponse.json({ success: true, processed: due.length, queued });
+  } catch (error) {
+    console.error("[CRON CAMPAIGNS] Failed", { error: String(error) });
+    return NextResponse.json({ error: "Cron failed" }, { status: 500 });
   }
-
-  console.log("[CRON CAMPAIGNS] Done", { totalProcessed });
-  return NextResponse.json({ success: true, processed: totalProcessed });
 }

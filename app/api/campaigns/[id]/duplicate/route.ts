@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
+import { requirePermission } from "@/lib/permissions";
 
 export async function POST(
   _req: NextRequest,
@@ -10,6 +11,9 @@ export async function POST(
   if (!session?.user) {
     return NextResponse.json({ success: false, error: "Unauthorized" }, { status: 401 });
   }
+
+  const denied = await requirePermission(session.user, "campaigns.send");
+  if (denied) return denied;
 
   const { tenantId } = session.user;
   const { id } = await params;

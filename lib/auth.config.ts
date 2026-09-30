@@ -23,6 +23,9 @@ export const authConfig = {
       session.user.tenantId = token.tenantId as string;
       session.user.tenantSlug = token.tenantSlug as string;
       session.user.tenantName = token.tenantName as string;
+      session.user.accountType = (token.accountType as string | undefined) ?? "CLIENT";
+      session.user.resellerType = (token.resellerType as string | null | undefined) ?? null;
+      session.user.parentTenantId = (token.parentTenantId as string | null | undefined) ?? null;
       session.user.avatar = token.avatar as string | undefined;
       return session;
     },

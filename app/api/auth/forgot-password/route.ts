@@ -11,6 +11,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { createHash, randomBytes } from "node:crypto";
 import { prisma } from "@/lib/prisma";
 import { sendPasswordResetEmail } from "@/lib/email";
+import { getBrandForTenant } from "@/lib/branding";
 import { forgotPasswordSchema } from "@/lib/validators/auth";
 
 const TOKEN_TTL_MINUTES = 30;
@@ -43,7 +44,7 @@ export async function POST(req: NextRequest) {
     const { email } = parsed.data;
     const user = await prisma.user.findFirst({
       where: { email, isActive: true },
-      select: { id: true, name: true, email: true },
+      select: { id: true, name: true, email: true, tenantId: true },
     });
 
     // Silently stop for unknown/inactive accounts — no token, no email, same response.
@@ -59,7 +60,10 @@ export async function POST(req: NextRequest) {
       prisma.passwordResetToken.create({ data: { userId: user.id, tokenHash, expiresAt } }),
     ]);
 
-    const appUrl = process.env.NEXT_PUBLIC_APP_URL ?? new URL(req.url).origin;
+    // The link and the email speak for the account's brand: a white-label client resets its
+    // password on the reseller's domain, not the platform's.
+    const brand = await getBrandForTenant(user.tenantId);
+    const appUrl = brand.isWhiteLabel ? brand.baseUrl : process.env.NEXT_PUBLIC_APP_URL ?? new URL(req.url).origin;
     const resetUrl = `${appUrl.replace(/\/$/, "")}/reset-password?token=${token}`;
 
     try {
@@ -67,6 +71,7 @@ export async function POST(req: NextRequest) {
         to: user.email,
         name: user.name ?? user.email,
         resetUrl,
+        brand: { name: brand.name, color: brand.primaryColor, replyTo: brand.supportEmail },
       });
     } catch (mailError) {
       // Token is already stored — log loudly so Vercel shows why the inbox stayed empty.

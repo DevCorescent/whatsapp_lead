@@ -17,6 +17,8 @@ import crypto from "crypto";
 import { prisma } from "@/lib/prisma";
 import { applyPlanChange } from "@/lib/billing/planChange";
 import { findPurchasablePlan } from "@/lib/billing/plans";
+import { recordPayment, recordPaymentTx } from "@/lib/billing/payments";
+import { applyWalletTopup } from "@/lib/billing/walletTopup";
 
 export const dynamic = "force-dynamic";
 
@@ -63,6 +65,15 @@ export async function POST(req: NextRequest) {
       const planChangeId = notes?.planChangeId;
       const planId = notes?.planId;
       const paymentId = payment.id as string;
+      const amountMinor = Number(payment.amount ?? 0);
+      const currency = String(payment.currency ?? "inr");
+      const orderId = typeof payment.order_id === "string" ? payment.order_id : null;
+
+      // Wallet top-up: credited once, whether this webhook or the browser's confirmation lands first.
+      if (notes?.purpose === "wallet_topup" && tenantId) {
+        await applyWalletTopup({ tenantId, paymentId, orderId, amountMinor, currency });
+        return NextResponse.json({ received: true });
+      }
 
       if (planChangeId) {
         // Prorated upgrade — apply via PlanChange row (idempotent).
@@ -70,33 +81,35 @@ export async function POST(req: NextRequest) {
         if (!applied.ok && applied.reason !== "not-payable") {
           console.error("[RAZORPAY WEBHOOK] Could not apply plan change", { planChangeId, reason: applied.reason });
         }
+        if (applied.ok && tenantId) {
+          await recordPayment({ tenantId, provider: "razorpay", providerPaymentId: paymentId, orderId, amountMinor, currency, purpose: "plan_change" });
+        }
       } else if (tenantId && planId) {
-        // Fresh subscription — activate if not already active on this plan.
-        const existing = await prisma.subscription.findUnique({ where: { tenantId } });
-        if (!existing || existing.planId !== planId || existing.status !== "ACTIVE") {
-          const plan = await findPurchasablePlan(tenantId, planId);
-          if (plan) {
-            const now = new Date();
-            const end = new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000);
-            await prisma.subscription.upsert({
-              where: { tenantId },
-              create: {
-                tenantId,
-                planId: plan.id,
-                status: "ACTIVE",
-                currentPeriodStart: now,
-                currentPeriodEnd: end,
-                cancelAtPeriodEnd: false,
-              },
-              update: {
-                planId: plan.id,
-                status: "ACTIVE",
-                currentPeriodStart: now,
-                currentPeriodEnd: end,
-                cancelAtPeriodEnd: false,
-                cancelledAt: null,
-              },
+        // Fresh subscription. The payment ledger decides: only the first confirmation of this
+        // payment (this webhook or the browser's verify call, whichever lands first) activates
+        // the plan and credits commission — a redelivery can't extend the period again.
+        const plan = await findPurchasablePlan(tenantId, planId);
+        if (plan) {
+          const now = new Date();
+          const end = new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000);
+          const data = {
+            planId: plan.id,
+            status: "ACTIVE" as const,
+            currentPeriodStart: now,
+            currentPeriodEnd: end,
+            cancelAtPeriodEnd: false,
+            cancelledAt: null,
+          };
+          try {
+            await prisma.$transaction(async (tx) => {
+              const created = await recordPaymentTx(tx, {
+                tenantId, provider: "razorpay", providerPaymentId: paymentId, orderId, amountMinor, currency,
+                purpose: "subscription", planId: plan.id,
+              });
+              if (created) await tx.subscription.upsert({ where: { tenantId }, create: { tenantId, ...data }, update: data });
             });
+          } catch (e) {
+            if ((e as { code?: string }).code !== "P2002") throw e;
           }
         }
       }

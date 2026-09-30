@@ -144,7 +144,7 @@ export const FEATURE_HINT: Record<PlanFeature, string> = {
   ragEnabled:
     "Upload your PDFs and docs, and the AI answers from them instead of guessing. Upgrade to switch it on.",
   whiteLabel:
-    "Replace the WhatsCRM branding with your own logo and custom domain. Upgrade to switch it on.",
+    "Replace the default branding with your own logo and custom domain. Upgrade to switch it on.",
   advancedAi:
     "Score and qualify every lead automatically from what the customer actually said. Upgrade to switch it on.",
   allowExport:

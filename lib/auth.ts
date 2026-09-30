@@ -4,6 +4,42 @@ import { prisma } from "@/lib/prisma";
 import bcrypt from "bcryptjs";
 import { z } from "zod";
 
+/**
+ * How long session claims (role, account type, active flags) are trusted before they
+ * are re-read from the database. Sessions are JWTs, so without this a user who was
+ * deactivated, demoted, or whose account was suspended or converted kept their old
+ * powers until the token expired — days. The re-read is one indexed query, done at
+ * most once per window per token.
+ */
+const CLAIMS_TTL_MS = 5 * 60_000;
+
+/** Current claims for a user, or null when the user or their account can no longer sign in. */
+async function loadClaims(userId: string) {
+  const user = await prisma.user.findUnique({
+    where: { id: userId },
+    select: {
+      role: true,
+      isActive: true,
+      tenant: {
+        select: {
+          id: true, slug: true, name: true, isActive: true,
+          accountType: true, resellerType: true, parentId: true,
+        },
+      },
+    },
+  });
+  if (!user || !user.isActive || !user.tenant.isActive) return null;
+  return {
+    role: user.role,
+    tenantId: user.tenant.id,
+    tenantSlug: user.tenant.slug,
+    tenantName: user.tenant.name,
+    accountType: user.tenant.accountType,
+    resellerType: user.tenant.resellerType ?? null,
+    parentTenantId: user.tenant.parentId ?? null,
+  };
+}
+
 const loginSchema = z.object({
   email: z.string().email(),
   password: z.string().min(6),
@@ -52,6 +88,9 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
           tenantId: user.tenantId,
           tenantSlug: user.tenant.slug,
           tenantName: user.tenant.name,
+          accountType: user.tenant.accountType,
+          resellerType: user.tenant.resellerType ?? null,
+          parentTenantId: user.tenant.parentId ?? null,
           // Prisma models a missing avatar as null; the augmented NextAuth `User` models it as
           // optional. Normalising here keeps the two in agreement without widening the session type.
           avatar: user.avatar ?? undefined,
@@ -70,7 +109,19 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
         token.tenantId = user.tenantId;
         token.tenantSlug = user.tenantSlug;
         token.tenantName = user.tenantName;
+        token.accountType = user.accountType;
+        token.resellerType = user.resellerType;
+        token.parentTenantId = user.parentTenantId;
         token.avatar = user.avatar;
+        token.claimsAt = Date.now();
+        return token;
+      }
+
+      // Refresh stale claims from the database; sign out a user who can no longer sign in.
+      if (!token.claimsAt || Date.now() - token.claimsAt > CLAIMS_TTL_MS) {
+        const claims = await loadClaims(token.id);
+        if (!claims) return null;
+        Object.assign(token, claims, { claimsAt: Date.now() });
       }
       return token;
     },
@@ -82,6 +133,9 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
       session.user.tenantId = token.tenantId;
       session.user.tenantSlug = token.tenantSlug;
       session.user.tenantName = token.tenantName;
+      session.user.accountType = token.accountType ?? "CLIENT";
+      session.user.resellerType = token.resellerType ?? null;
+      session.user.parentTenantId = token.parentTenantId ?? null;
       session.user.avatar = token.avatar;
       return session;
     },
