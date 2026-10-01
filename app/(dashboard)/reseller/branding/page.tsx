@@ -5,7 +5,7 @@
 
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { AlertCircle, CheckCircle2, ExternalLink, FileText, Globe, Info, LayoutTemplate, Loader2, MessageSquare, Save } from "lucide-react";
+import { AlertCircle, CheckCircle2, Clock, ExternalLink, FileText, Globe, Info, LayoutTemplate, Loader2, MessageSquare, RefreshCw, Save } from "lucide-react";
 import Link from "next/link";
 import { Button, Card, Field, PageHeader, SkeletonRows, inputClass } from "@/components/ui";
 import { api } from "@/components/reseller/shared";
@@ -16,6 +16,13 @@ interface Config {
   address: string | null; loginHeadline: string | null; loginSubtext: string | null; isActive: boolean;
   subdomain: string | null; landingEnabled: boolean; landingTitle: string | null; landingSubtitle: string | null;
   termsContent: string | null; privacyContent: string | null;
+}
+
+interface DomainCheck {
+  domain: string;
+  state: "connected" | "pending" | "not_added" | "error";
+  message: string;
+  record?: { type: string; name: string; value: string };
 }
 
 interface FeeStatus {
@@ -40,6 +47,15 @@ export default function ResellerBrandingPage() {
   const pay = useMutation({
     mutationFn: () => api("/api/reseller/branding/pay", { method: "POST" }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["reseller", "branding"] }),
+  });
+
+  // Connection status of the saved custom domain (not of what's being typed).
+  const savedDomain = data?.data?.domain ?? null;
+  const domainCheck = useQuery({
+    queryKey: ["reseller", "branding", "domain", savedDomain],
+    queryFn: async () => (await api<{ data: DomainCheck | null }>("/api/reseller/branding/domain")).data,
+    enabled: Boolean(savedDomain),
+    refetchOnWindowFocus: false,
   });
 
   const [form, setForm] = useState<Config | null>(null);
@@ -141,6 +157,17 @@ export default function ResellerBrandingPage() {
               Add a CNAME record for this domain pointing to <code className="font-mono">cname.vercel-dns.com</code>. Once it
               resolves, your login page is served there with your brand.
             </p>
+            {(form.domain ?? "").trim() && (form.domain ?? "").trim().toLowerCase() !== (savedDomain ?? "") && (
+              <p className="text-xs font-medium text-amber-700">Click Save branding (at the bottom) to connect this domain and check its status.</p>
+            )}
+            {savedDomain && (form.domain ?? "").trim().toLowerCase() === savedDomain && (
+              <DomainStatus
+                check={domainCheck.data ?? null}
+                loading={domainCheck.isFetching}
+                failed={domainCheck.isError}
+                onCheck={() => domainCheck.refetch()}
+              />
+            )}
           </Card>
 
           <Card className="space-y-4 p-5">
@@ -245,6 +272,53 @@ export default function ResellerBrandingPage() {
           </div>
         </Card>
       </div>
+    </div>
+  );
+}
+
+const STATE_STYLE: Record<DomainCheck["state"], { label: string; className: string; Icon: typeof CheckCircle2 }> = {
+  connected: { label: "Connected", className: "bg-emerald-50 text-emerald-800 ring-emerald-600/20", Icon: CheckCircle2 },
+  pending: { label: "Waiting for DNS", className: "bg-amber-50 text-amber-800 ring-amber-600/20", Icon: Clock },
+  not_added: { label: "Not added yet", className: "bg-amber-50 text-amber-800 ring-amber-600/20", Icon: Clock },
+  error: { label: "Couldn't check", className: "bg-rose-50 text-rose-700 ring-rose-600/20", Icon: AlertCircle },
+};
+
+/** Is the saved custom domain live yet, and which DNS record is missing if not. */
+function DomainStatus({ check, loading, failed, onCheck }: { check: DomainCheck | null; loading: boolean; failed: boolean; onCheck: () => void }) {
+  const style = check ? STATE_STYLE[check.state] : failed ? STATE_STYLE.error : null;
+  return (
+    <div className="space-y-2 rounded-lg bg-slate-50 p-3 ring-1 ring-inset ring-slate-200">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <span className="flex items-center gap-2 text-sm text-slate-700">
+          <span className="font-medium">{check?.domain ?? "Your domain"}</span>
+          {style && (
+            <span className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-medium ring-1 ring-inset ${style.className}`}>
+              <style.Icon className="h-3.5 w-3.5" /> {style.label}
+            </span>
+          )}
+        </span>
+        <Button type="button" variant="secondary" size="sm" onClick={onCheck} disabled={loading}>
+          {loading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />} Check now
+        </Button>
+      </div>
+      {check && <p className="text-xs text-slate-600">{check.message}</p>}
+      {check?.record && (
+        <table className="w-full overflow-hidden rounded-md bg-white text-left text-xs ring-1 ring-slate-200">
+          <thead className="bg-slate-100 text-slate-500">
+            <tr><th className="px-2.5 py-1.5 font-medium">Type</th><th className="px-2.5 py-1.5 font-medium">Name</th><th className="px-2.5 py-1.5 font-medium">Value</th></tr>
+          </thead>
+          <tbody>
+            <tr className="font-mono text-slate-800">
+              <td className="px-2.5 py-1.5">{check.record.type}</td>
+              <td className="break-all px-2.5 py-1.5">{check.record.name}</td>
+              <td className="break-all px-2.5 py-1.5">{check.record.value}</td>
+            </tr>
+          </tbody>
+        </table>
+      )}
+      {check && check.state !== "connected" && (
+        <p className="text-[11px] text-slate-500">DNS changes can take from a few minutes to a few hours. Click Check now again later.</p>
+      )}
     </div>
   );
 }

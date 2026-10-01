@@ -214,7 +214,9 @@ export function Sidebar({ user, brand }: { user: SidebarUser; brand: SidebarBran
             <p className="truncate text-xs text-slate-500">{prettyRole(user.role)}</p>
           </div>
           <button
-            onClick={() => signOut({ callbackUrl: "/login" })}
+            // Stay on the current host: a callbackUrl is resolved against AUTH_URL, which
+            // would drop a white-label client on the platform's own login page.
+            onClick={() => signOut({ redirect: false }).then(() => { window.location.href = "/login"; })}
             className="rounded-lg p-1.5 text-slate-400 transition hover:bg-rose-50 hover:text-rose-600"
             aria-label="Sign out"
             title="Sign out"
