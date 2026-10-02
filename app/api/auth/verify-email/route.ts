@@ -67,9 +67,11 @@ export async function POST(req: NextRequest) {
       },
     });
 
-    const host = req.headers.get("x-forwarded-host") ?? req.headers.get("host") ?? "";
-    const proto = host.includes("localhost") ? "http" : "https";
-    const verifyUrl = `${proto}://${host}/verify-email?token=${newToken}`;
+    const rawHost = req.headers.get("x-forwarded-host") ?? req.headers.get("host") ?? "";
+    const isLocal = rawHost.includes("localhost") || rawHost.startsWith("127.");
+    const appBase = process.env.NEXT_PUBLIC_APP_URL?.replace(/\/$/, "");
+    const baseUrl = isLocal && appBase ? appBase : `https://${rawHost}`;
+    const verifyUrl = `${baseUrl}/verify-email?token=${newToken}`;
 
     await sendVerificationEmail({
       to: email,

@@ -180,9 +180,13 @@ export async function POST(req: NextRequest) {
     });
 
     // Send verification email (best-effort — don't fail registration if SMTP is down)
-    const host = req.headers.get("x-forwarded-host") ?? req.headers.get("host") ?? "";
-    const proto = host.includes("localhost") ? "http" : "https";
-    const verifyUrl = `${proto}://${host}/verify-email?token=${result.emailVerifyToken}`;
+    // On localhost, use NEXT_PUBLIC_APP_URL so the link in the email points to the real
+    // production domain instead of http://localhost:3000, which spam filters reject outright.
+    const rawHost = req.headers.get("x-forwarded-host") ?? req.headers.get("host") ?? "";
+    const isLocal = rawHost.includes("localhost") || rawHost.startsWith("127.");
+    const appBase = process.env.NEXT_PUBLIC_APP_URL?.replace(/\/$/, "");
+    const baseUrl = isLocal && appBase ? appBase : `https://${rawHost}`;
+    const verifyUrl = `${baseUrl}/verify-email?token=${result.emailVerifyToken}`;
     try {
       await sendVerificationEmail({
         to: email,
