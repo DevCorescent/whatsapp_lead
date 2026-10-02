@@ -626,7 +626,32 @@ function TemplateModal({
     return null;
   });
 
-  const hasDraftErrors = !!bodyError || !!headerError || varExampleErrors.some(Boolean) || buttonErrors.some(Boolean);
+  // Language-script mismatch: warn when a non-Latin language is selected but the
+  // body contains no characters from that script.
+  const languageError: string | null = (() => {
+    if (!body.trim()) return null;
+    const NON_LATIN: Record<string, { label: string; pattern: RegExp }> = {
+      hi_IN: { label: "Hindi", pattern: /[ऀ-ॿ]/ },
+      ar_AR: { label: "Arabic", pattern: /[؀-ۿݐ-ݿ]/ },
+    };
+    const info = NON_LATIN[language];
+    if (!info) return null;
+    if (!info.pattern.test(body))
+      return `Language is set to ${info.label} but the body contains no ${info.label} characters — type in ${info.label} or change the language to English.`;
+    return null;
+  })();
+
+  // Media header uploaded: block save when IMAGE/VIDEO/DOCUMENT is chosen in
+  // upload mode but no file has been uploaded yet.
+  const mediaHeaderError: string | null =
+    (headerType === "IMAGE" || headerType === "VIDEO" || headerType === "DOCUMENT") &&
+    !headerContent.trim()
+      ? `Provide a ${headerType.toLowerCase()} for the header — upload a file or enter a URL.`
+      : null;
+
+  const hasDraftErrors =
+    !!bodyError || !!headerError || !!languageError || !!mediaHeaderError ||
+    varExampleErrors.some(Boolean) || buttonErrors.some(Boolean);
 
   // If the saved headerContent is a Resumable Upload handle (4::…), restore the
   // "upload done" state so the client sees their previous upload instead of a raw handle.
@@ -660,9 +685,11 @@ function TemplateModal({
   }
 
   const submit = () => {
-    // Surface the first draft-time error rather than letting the save proceed
-    // and fail server-side or at Meta submission.
-    const firstDraftError = bodyError ?? buttonErrors.find(Boolean) ?? null;
+    if (!name.trim()) { setError("Template name is required."); return; }
+    if (!body.trim()) { setError("Message body is required."); return; }
+    const firstDraftError =
+      bodyError ?? headerError ?? languageError ?? mediaHeaderError ??
+      varExampleErrors.find(Boolean) ?? buttonErrors.find(Boolean) ?? null;
     if (firstDraftError) { setError(firstDraftError); return; }
     setError(null);
     const varList = varExamples.map((v) => v.trim()).filter(Boolean);
@@ -738,12 +765,18 @@ function TemplateModal({
               id="tpl-language"
               value={language}
               onChange={(e) => setLanguage(e.target.value)}
-              className={inputClass}
+              className={cn(inputClass, languageError && "border-amber-400 focus:ring-amber-400")}
             >
               {LANGUAGES.map((l) => (
                 <option key={l.code} value={l.code}>{l.label} ({l.code})</option>
               ))}
             </select>
+            {languageError && (
+              <p className="flex items-start gap-1.5 rounded-md bg-amber-50 px-2.5 py-1.5 text-[11px] text-amber-800 mt-1">
+                <AlertCircle className="mt-0.5 h-3 w-3 shrink-0" aria-hidden />
+                {languageError}
+              </p>
+            )}
           </Field>
         </div>
 
@@ -888,6 +921,12 @@ function TemplateModal({
                     <Info className="h-3 w-3 shrink-0" />
                     This sample is uploaded to Meta and used during template review only.
                   </p>
+                  {mediaHeaderError && headerUploadState !== "uploading" && (
+                    <p className="flex items-start gap-1.5 rounded-md bg-rose-50 px-2.5 py-1.5 text-[11px] text-rose-700">
+                      <AlertCircle className="mt-0.5 h-3 w-3 shrink-0" aria-hidden />
+                      {mediaHeaderError}
+                    </p>
+                  )}
                 </>
               ) : (
                 <>
