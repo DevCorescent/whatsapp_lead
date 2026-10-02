@@ -74,13 +74,6 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
         const passwordMatch = await bcrypt.compare(password, user.password);
         if (!passwordMatch) return null;
 
-        // Block login until the user has clicked their verification link.
-        // emailVerified defaults true for all accounts created before this
-        // feature was added, so only new self-registered users are gated.
-        if (!user.emailVerified) {
-          throw new Error("EMAIL_NOT_VERIFIED");
-        }
-
         // Update last login
         await prisma.user.update({
           where: { id: user.id },

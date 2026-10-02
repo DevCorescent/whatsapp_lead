@@ -4,7 +4,6 @@ import { prisma } from "@/lib/prisma";
 import bcrypt from "bcryptjs";
 import { registerSchema } from "@/lib/validators/auth";
 import { resellerForHost } from "@/lib/branding";
-import { sendVerificationEmail } from "@/lib/email";
 
 /**
  * The reseller a sign-up belongs to, if any.
@@ -148,7 +147,6 @@ export async function POST(req: NextRequest) {
         },
       });
 
-      const emailVerifyToken = randomBytes(32).toString("hex");
       const user = await tx.user.create({
         data: {
           tenantId: tenant.id,
@@ -157,9 +155,7 @@ export async function POST(req: NextRequest) {
           password: hashedPassword,
           role: "TENANT_OWNER",
           inviteCode: newInviteCode,
-          emailVerified: false,
-          emailVerifyToken,
-          emailVerifyExpiry: new Date(Date.now() + 24 * 60 * 60 * 1000),
+          emailVerified: true,
         },
       });
 
@@ -176,27 +172,8 @@ export async function POST(req: NextRequest) {
         });
       }
 
-      return { tenant, user, emailVerifyToken };
+      return { tenant, user };
     });
-
-    // Send verification email (best-effort — don't fail registration if SMTP is down)
-    // On localhost, use NEXT_PUBLIC_APP_URL so the link in the email points to the real
-    // production domain instead of http://localhost:3000, which spam filters reject outright.
-    const rawHost = req.headers.get("x-forwarded-host") ?? req.headers.get("host") ?? "";
-    const isLocal = rawHost.includes("localhost") || rawHost.startsWith("127.");
-    const appBase = process.env.NEXT_PUBLIC_APP_URL?.replace(/\/$/, "");
-    const baseUrl = isLocal && appBase ? appBase : `https://${rawHost}`;
-    const verifyUrl = `${baseUrl}/verify-email?token=${result.emailVerifyToken}`;
-    try {
-      await sendVerificationEmail({
-        to: email,
-        name,
-        verifyUrl,
-        tenantId: result.tenant.id,
-      });
-    } catch (emailErr) {
-      console.error("[REGISTER] Verification email failed (non-fatal):", emailErr);
-    }
 
     return NextResponse.json(
       {
@@ -206,7 +183,7 @@ export async function POST(req: NextRequest) {
           tenantId: result.tenant.id,
           tenantSlug: result.tenant.slug,
         },
-        message: "Account created — please check your email to verify your address.",
+        message: "Account created successfully.",
       },
       { status: 201 }
     );

@@ -134,11 +134,17 @@ export default function RegisterPage() {
       return;
     }
 
-    // Don't auto-sign-in — user must verify their email first.
-    // Verification email was sent server-side; check server logs if it doesn't arrive.
-    console.log("[Register] Account created. Verification email sent to", values.email,
-      "— check server logs (Vercel / terminal) if it doesn't arrive within 60 s.");
-    setSuccess(true);
+    // Auto sign-in and redirect to inbox.
+    const signInResult = await signIn("credentials", {
+      email: values.email,
+      password: values.password,
+      redirect: false,
+    });
+    if (signInResult?.error) {
+      setError("Account created but sign-in failed — please log in manually.");
+      return;
+    }
+    router.push("/inbox");
   }
 
   return (
