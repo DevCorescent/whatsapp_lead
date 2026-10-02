@@ -105,27 +105,39 @@ export default function RegisterPage() {
 
   async function onSubmit(values: RegisterFormValues) {
     setError("");
+    console.log("[Register] Submitting for", values.email);
 
-    const res = await fetch("/api/auth/register", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        name: values.name,
-        email: values.email,
-        password: values.password,
-        workspaceName: values.workspaceName,
-        inviteCode: values.inviteCode || undefined,
-      }),
-    });
+    let res: Response;
+    try {
+      res = await fetch("/api/auth/register", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name: values.name,
+          email: values.email,
+          password: values.password,
+          workspaceName: values.workspaceName,
+          inviteCode: values.inviteCode || undefined,
+        }),
+      });
+    } catch (networkErr) {
+      console.error("[Register] Network error:", networkErr);
+      setError("Network error — check your connection and try again.");
+      return;
+    }
 
     const data = await res.json();
+    console.log("[Register] API response:", res.status, data.success ? "OK" : data.error);
 
     if (!data.success) {
       setError(data.error ?? "Something went wrong. Please try again.");
       return;
     }
 
-    // Don't auto-sign-in — user must verify their email first
+    // Don't auto-sign-in — user must verify their email first.
+    // Verification email was sent server-side; check server logs if it doesn't arrive.
+    console.log("[Register] Account created. Verification email sent to", values.email,
+      "— check server logs (Vercel / terminal) if it doesn't arrive within 60 s.");
     setSuccess(true);
   }
 

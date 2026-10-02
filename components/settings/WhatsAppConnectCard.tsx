@@ -388,6 +388,7 @@ export function WhatsAppConnectCard({ businessId }: { businessId?: string }) {
         xfbml: true,
         version: "v21.0",
       });
+      console.log("[WA Connect] Facebook SDK initialised, appId:", config.appId);
       markReady();
     };
 
@@ -461,6 +462,14 @@ export function WhatsAppConnectCard({ businessId }: { businessId?: string }) {
   }, []);
 
   const launchSignup = () => {
+    console.log("[WA Connect] launchSignup called", {
+      configId: config?.configId ? "set" : "missing",
+      appId: config?.appId ? "set" : "missing",
+      fbReady,
+      protocol: window.location.protocol,
+      target: target?.id,
+    });
+
     if (!config?.configId || !config?.appId) return;
 
     if (window.location.protocol !== "https:") {
@@ -469,6 +478,7 @@ export function WhatsAppConnectCard({ businessId }: { businessId?: string }) {
     }
 
     if (!fbReady || !window.FB) {
+      console.warn("[WA Connect] FB SDK not ready — fbReady:", fbReady, "window.FB:", !!window.FB);
       setError("Facebook SDK is still loading. Wait a moment and try again.");
       return;
     }
@@ -700,44 +710,50 @@ export function WhatsAppConnectCard({ businessId }: { businessId?: string }) {
 
         {config?.enabled && (
           <div className="mt-5">
-            <button
-              type="button"
-              onClick={launchSignup}
-              disabled={busy || sdkLoading || !target}
-              aria-busy={busy}
-              className={cn(
-                "inline-flex w-full items-center justify-center gap-2.5 rounded-lg px-4 py-2.5",
-                "text-sm font-semibold text-white shadow-sm transition sm:w-auto",
-                "bg-[#1877F2] hover:bg-[#166FE5]",
-                "focus:outline-none focus-visible:ring-2 focus-visible:ring-[#1877F2] focus-visible:ring-offset-2",
-                "disabled:cursor-not-allowed disabled:bg-slate-300",
-              )}
-            >
-              {busy ? (
-                <>
-                  <Loader2 className="h-4 w-4 animate-spin" aria-hidden />
-                  Finishing connection…
-                </>
-              ) : (
-                sdkLoading ? (
-                <>
-                  <Loader2 className="h-4 w-4 animate-spin" aria-hidden />
-                  Loading…
-                </>
-              ) : (
-                <>
-                  <FacebookGlyph />
-                  {isConnected ? "Connect another number" : "Continue with Facebook"}
-                </>
-              )
-              )}
-            </button>
+            {!target ? (
+              <p className="flex items-center gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
+                <AlertTriangle className="h-4 w-4 shrink-0 text-amber-600" aria-hidden />
+                Create or select a business first, then connect your WhatsApp number here.
+              </p>
+            ) : (
+              <>
+                <button
+                  type="button"
+                  onClick={launchSignup}
+                  disabled={busy || sdkLoading}
+                  aria-busy={busy}
+                  className={cn(
+                    "inline-flex w-full items-center justify-center gap-2.5 rounded-lg px-4 py-2.5",
+                    "text-sm font-semibold text-white shadow-sm transition sm:w-auto",
+                    busy || sdkLoading ? "bg-slate-400 cursor-not-allowed" : "bg-[#1877F2] hover:bg-[#166FE5]",
+                    "focus:outline-none focus-visible:ring-2 focus-visible:ring-[#1877F2] focus-visible:ring-offset-2",
+                  )}
+                >
+                  {busy ? (
+                    <>
+                      <Loader2 className="h-4 w-4 animate-spin" aria-hidden />
+                      Finishing connection…
+                    </>
+                  ) : sdkLoading ? (
+                    <>
+                      <Loader2 className="h-4 w-4 animate-spin" aria-hidden />
+                      Loading Meta SDK…
+                    </>
+                  ) : (
+                    <>
+                      <FacebookGlyph />
+                      {isConnected ? "Connect another number" : "Continue with Facebook"}
+                    </>
+                  )}
+                </button>
 
-            <p className="mt-3 flex items-start gap-1.5 text-xs text-slate-500">
-              <ShieldCheck className="mt-0.5 h-3.5 w-3.5 shrink-0 text-slate-400" aria-hidden />
-              You&apos;ll sign in with Meta and pick your WhatsApp Business account. We never see
-              your Meta password, and your access token is encrypted before it is stored.
-            </p>
+                <p className="mt-3 flex items-start gap-1.5 text-xs text-slate-500">
+                  <ShieldCheck className="mt-0.5 h-3.5 w-3.5 shrink-0 text-slate-400" aria-hidden />
+                  You&apos;ll sign in with Meta and pick your WhatsApp Business account. We never see
+                  your Meta password, and your access token is encrypted before it is stored.
+                </p>
+              </>
+            )}
           </div>
         )}
 

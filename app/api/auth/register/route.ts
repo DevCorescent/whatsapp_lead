@@ -61,8 +61,52 @@ export async function POST(req: NextRequest) {
     // Optional invite code from the signup form — stored for referral tracking only.
     const inviteCode =
       typeof (body as Record<string, unknown>).inviteCode === "string"
-        ? ((body as Record<string, unknown>).inviteCode as string).trim() || null
+        ? ((body as Record<string, unknown>).inviteCode as string).trim().toUpperCase() || null
         : null;
+
+    // If a code was supplied, verify it exists — reject unknown codes immediately
+    // so users don't silently register without the credit they expected.
+    if (inviteCode) {
+      const codeOwner = await prisma.user.findUnique({
+        where: { inviteCode },
+        select: { id: true },
+      });
+      if (!codeOwner) {
+        return NextResponse.json(
+          { success: false, error: "Invalid invite code — please check it and try again." },
+          { status: 400 }
+        );
+      }
+    }
+
+    // Block disposable / throwaway email domains
+    const emailDomain = email.split("@")[1]?.toLowerCase();
+    const DISPOSABLE_DOMAINS = new Set([
+      "mailinator.com","guerrillamail.com","guerrillamail.info","guerrillamail.biz",
+      "guerrillamail.de","guerrillamail.net","guerrillamail.org","guerrillamailblock.com",
+      "tempmail.com","temp-mail.org","throwam.com","throwaway.email","throwam.com",
+      "fakeinbox.com","sharklasers.com","guerrillamailblock.com","grr.la","guerrillamail.info",
+      "spam4.me","yopmail.com","yopmail.fr","cool.fr.nf","jetable.fr.nf","nospam.ze.tc",
+      "nomail.xl.cx","mega.zik.dj","speed.1s.fr","courriel.fr.nf","moncourrier.fr.nf",
+      "monemail.fr.nf","monmail.fr.nf","dispostable.com","mailnull.com","spamgourmet.com",
+      "trashmail.at","trashmail.io","trashmail.me","trashmail.net","trashmail.org",
+      "trashmail.xyz","trashmailer.com","trash-mail.at","discard.email","discardmail.com",
+      "discardmail.de","spamspot.com","spamthisplease.com","spamhereplease.com",
+      "mailexpire.com","mailforspam.com","maileater.com","mail-temporaire.fr",
+      "jetable.com","jetable.net","jetable.org","jetable.pro","nwldx.com",
+      "wegwerfmail.de","wegwerfmail.net","wegwerfmail.org","10minutemail.com",
+      "10minutemail.net","10minutemail.org","10minute-mail.com","20minutemail.com",
+      "mohmal.com","getnada.com","mailnesia.com","maildrop.cc","mailnull.com",
+      "spamgourmet.net","spamgourmet.org","tempr.email","discard.email",
+      "mailboxy.fun","inboxkitten.com","tempinbox.com","spamex.com","binkmail.com",
+      "safetymail.info","tempalias.com","mytrashmail.com","mintemail.com",
+    ]);
+    if (emailDomain && DISPOSABLE_DOMAINS.has(emailDomain)) {
+      return NextResponse.json(
+        { success: false, error: "Please use a real work or personal email address — disposable email services are not allowed." },
+        { status: 400 }
+      );
+    }
 
     // Check if email already exists
     const existingUser = await prisma.user.findFirst({ where: { email } });
