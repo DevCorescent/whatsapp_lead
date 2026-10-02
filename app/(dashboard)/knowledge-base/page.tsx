@@ -26,6 +26,7 @@ import {
   Layers,
   Loader2,
   MessagesSquare,
+  RefreshCw,
   Sparkles,
   Pencil,
   Trash2,
@@ -140,6 +141,18 @@ export default function KnowledgeBasePage() {
     },
   });
 
+  const reindexMutation = useMutation({
+    mutationFn: async (id: string) => {
+      const res = await fetch(`/api/knowledge/${id}/reindex`, { method: "POST" });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error((json as { error?: string }).error ?? "Re-index failed");
+      return json;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["knowledge"] });
+    },
+  });
+
   return (
     <div>
       <PageHeader
@@ -219,11 +232,13 @@ export default function KnowledgeBasePage() {
               key={doc.id}
               doc={doc}
               deleting={deleteMutation.isPending && deleteMutation.variables === doc.id}
+              reindexing={reindexMutation.isPending && reindexMutation.variables === doc.id}
               onDelete={() => setConfirmDelete(doc)}
               onRename={() => {
                 setDraftName(doc.name);
                 setRenameDoc(doc);
               }}
+              onReindex={() => reindexMutation.mutate(doc.id)}
             />
           ))}
         </div>
@@ -319,13 +334,17 @@ export default function KnowledgeBasePage() {
 function DocumentCard({
   doc,
   deleting,
+  reindexing,
   onDelete,
   onRename,
+  onReindex,
 }: {
   doc: KnowledgeDoc;
   deleting: boolean;
+  reindexing: boolean;
   onDelete: () => void;
   onRename: () => void;
+  onReindex: () => void;
 }) {
   const { status, error } = readStatus(doc);
   const faqCount = readFaqState(doc.metadata).faqs.length;
@@ -344,14 +363,23 @@ function DocumentCard({
           >
             <Pencil className="h-4 w-4" />
           </button>
-        <button
-          aria-label={`Delete ${doc.name}`}
-          disabled={deleting}
-          className="rounded-lg p-1.5 text-slate-300 transition hover:bg-rose-50 hover:text-rose-600 group-hover:text-slate-400 disabled:opacity-50"
-          onClick={onDelete}
-        >
-          {deleting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
-        </button>
+          <button
+            aria-label={`Re-index ${doc.name}`}
+            disabled={reindexing || status === "PROCESSING"}
+            title="Re-index — fixes documents that aren't being retrieved by the AI"
+            className="rounded-lg p-1.5 text-slate-300 transition hover:bg-sky-50 hover:text-sky-600 group-hover:text-slate-400 disabled:opacity-50"
+            onClick={onReindex}
+          >
+            {reindexing ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
+          </button>
+          <button
+            aria-label={`Delete ${doc.name}`}
+            disabled={deleting}
+            className="rounded-lg p-1.5 text-slate-300 transition hover:bg-rose-50 hover:text-rose-600 group-hover:text-slate-400 disabled:opacity-50"
+            onClick={onDelete}
+          >
+            {deleting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
+          </button>
         </div>
       </div>
 
