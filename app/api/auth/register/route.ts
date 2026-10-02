@@ -4,6 +4,7 @@ import { prisma } from "@/lib/prisma";
 import bcrypt from "bcryptjs";
 import { registerSchema } from "@/lib/validators/auth";
 import { resellerForHost } from "@/lib/branding";
+import { sendVerificationEmail } from "@/lib/email";
 
 /**
  * The reseller a sign-up belongs to, if any.
@@ -103,6 +104,7 @@ export async function POST(req: NextRequest) {
         },
       });
 
+      const emailVerifyToken = randomBytes(32).toString("hex");
       const user = await tx.user.create({
         data: {
           tenantId: tenant.id,
@@ -111,6 +113,9 @@ export async function POST(req: NextRequest) {
           password: hashedPassword,
           role: "TENANT_OWNER",
           inviteCode: newInviteCode,
+          emailVerified: false,
+          emailVerifyToken,
+          emailVerifyExpiry: new Date(Date.now() + 24 * 60 * 60 * 1000),
         },
       });
 
@@ -127,8 +132,23 @@ export async function POST(req: NextRequest) {
         });
       }
 
-      return { tenant, user };
+      return { tenant, user, emailVerifyToken };
     });
+
+    // Send verification email (best-effort — don't fail registration if SMTP is down)
+    const host = req.headers.get("x-forwarded-host") ?? req.headers.get("host") ?? "";
+    const proto = host.includes("localhost") ? "http" : "https";
+    const verifyUrl = `${proto}://${host}/verify-email?token=${result.emailVerifyToken}`;
+    try {
+      await sendVerificationEmail({
+        to: email,
+        name,
+        verifyUrl,
+        tenantId: result.tenant.id,
+      });
+    } catch (emailErr) {
+      console.error("[REGISTER] Verification email failed (non-fatal):", emailErr);
+    }
 
     return NextResponse.json(
       {
@@ -138,7 +158,7 @@ export async function POST(req: NextRequest) {
           tenantId: result.tenant.id,
           tenantSlug: result.tenant.slug,
         },
-        message: "Account created successfully",
+        message: "Account created — please check your email to verify your address.",
       },
       { status: 201 }
     );

@@ -125,15 +125,8 @@ export default function RegisterPage() {
       return;
     }
 
+    // Don't auto-sign-in — user must verify their email first
     setSuccess(true);
-
-    await signIn("credentials", {
-      email: values.email,
-      password: values.password,
-      redirect: false,
-    });
-
-    router.push("/inbox");
   }
 
   return (
@@ -158,18 +151,33 @@ export default function RegisterPage() {
       )}
 
       {success && (
-        <div
-          role="status"
-          className="mb-5 flex items-start gap-2.5 rounded-lg border border-emerald-200 bg-emerald-50 px-3.5 py-3"
-        >
-          <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-emerald-600" />
-          <p className="text-sm font-medium text-emerald-700">
-            Workspace created — taking you to your inbox…
+        <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-6 text-center">
+          <CheckCircle2 className="mx-auto mb-3 h-10 w-10 text-emerald-600" />
+          <h2 className="mb-1 text-lg font-bold text-slate-900">Check your inbox</h2>
+          <p className="text-sm text-slate-600">
+            We sent a verification link to <strong>{control._formValues.email}</strong>.
+            Click the link to activate your account and log in.
+          </p>
+          <p className="mt-3 text-xs text-slate-400">
+            Didn't receive it? Check your spam folder or{" "}
+            <button
+              type="button"
+              className="underline text-emerald-700 hover:no-underline"
+              onClick={async () => {
+                await fetch("/api/auth/verify-email", {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({ email: control._formValues.email }),
+                });
+              }}
+            >
+              resend the email
+            </button>.
           </p>
         </div>
       )}
 
-      <form onSubmit={handleSubmit(onSubmit)} className="space-y-5" noValidate>
+      {!success && <form onSubmit={handleSubmit(onSubmit)} className="space-y-5" noValidate>
         <Field
           label="Workspace name"
           htmlFor="workspaceName"
@@ -369,7 +377,7 @@ export default function RegisterPage() {
           )}
         </div>
 
-        <Button type="submit" disabled={isSubmitting || success} className="w-full py-2.5">
+        <Button type="submit" disabled={isSubmitting} className="w-full py-2.5">
           {isSubmitting ? (
             <>
               <Loader2 className="h-4 w-4 animate-spin" />
@@ -379,7 +387,7 @@ export default function RegisterPage() {
             "Create free account"
           )}
         </Button>
-      </form>
+      </form>}
 
       <p className="mt-6 text-center text-sm text-slate-500">
         Already have an account?{" "}

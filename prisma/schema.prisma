@@ -414,6 +414,13 @@ model User {
   /// Share with others — whoever signs up with it gets linked back here.
   inviteCode String? @unique
 
+  /// Set true once the user clicks the verification link in their welcome email.
+  /// Default true so existing accounts are unaffected by the migration.
+  emailVerified   Boolean   @default(true)
+  /// Single-use random hex token mailed at registration. Cleared on verification.
+  emailVerifyToken  String?   @unique
+  emailVerifyExpiry DateTime?
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -788,6 +795,7 @@ model CampaignContact {
   deliveredAt  DateTime?
   readAt       DateTime?
   repliedAt    DateTime?
+  clickedAt    DateTime?
   failedReason String?
 
   campaign Campaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)

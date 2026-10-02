@@ -5,7 +5,7 @@
 
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { AlertCircle, CheckCircle2, Clock, ExternalLink, FileText, Globe, Info, LayoutTemplate, Loader2, MessageSquare, RefreshCw, Save } from "lucide-react";
+import { AlertCircle, CheckCircle2, Clock, ExternalLink, FileText, Globe, Info, LayoutTemplate, Loader2, Mail, MessageSquare, RefreshCw, Save, Trash2 } from "lucide-react";
 import Link from "next/link";
 import { Button, Card, Field, PageHeader, SkeletonRows, inputClass } from "@/components/ui";
 import { api } from "@/components/reseller/shared";
@@ -37,6 +37,12 @@ const EMPTY: Config = {
   supportEmail: "", supportPhone: "", website: "", address: "", loginHeadline: "", loginSubtext: "", isActive: true,
   subdomain: "", landingEnabled: true, landingTitle: "", landingSubtitle: "", termsContent: "", privacyContent: "",
 };
+
+interface SmtpForm {
+  smtpHost: string; smtpPort: string; smtpUser: string; smtpPass: string; smtpFrom: string;
+}
+
+const EMPTY_SMTP: SmtpForm = { smtpHost: "", smtpPort: "465", smtpUser: "", smtpPass: "", smtpFrom: "" };
 
 export default function ResellerBrandingPage() {
   const qc = useQueryClient();
@@ -70,6 +76,33 @@ export default function ResellerBrandingPage() {
   const save = useMutation({
     mutationFn: () => api<{ domainStatus: { status: string; message: string } | null }>("/api/reseller/branding", { method: "PUT", json: form }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["reseller", "branding"] }),
+  });
+
+  // ── SMTP state ────────────────────────────────────────────────────────────────
+  const { data: smtpData } = useQuery({
+    queryKey: ["reseller", "smtp"],
+    queryFn: async () => api<{ data: Partial<SmtpForm> }>("/api/reseller/smtp"),
+  });
+  const [smtpForm, setSmtpForm] = useState<SmtpForm | null>(null);
+  if (smtpData !== undefined && smtpForm === null) {
+    setSmtpForm({ ...EMPTY_SMTP, ...Object.fromEntries(Object.entries(smtpData.data ?? {}).map(([k, v]) => [k, String(v ?? "")])) } as SmtpForm);
+  }
+  const saveSMTP = useMutation({
+    mutationFn: () => api("/api/reseller/smtp", {
+      method: "PUT",
+      json: {
+        smtpHost: smtpForm?.smtpHost || null,
+        smtpPort: smtpForm?.smtpPort ? Number(smtpForm.smtpPort) : null,
+        smtpUser: smtpForm?.smtpUser || null,
+        smtpPass: smtpForm?.smtpPass || null,
+        smtpFrom: smtpForm?.smtpFrom || null,
+      },
+    }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["reseller", "smtp"] }),
+  });
+  const clearSMTP = useMutation({
+    mutationFn: () => api("/api/reseller/smtp", { method: "DELETE" }),
+    onSuccess: () => { setSmtpForm(EMPTY_SMTP); qc.invalidateQueries({ queryKey: ["reseller", "smtp"] }); },
   });
 
   if (isLoading || (!form && !isError)) return <SkeletonRows rows={6} />;
@@ -246,6 +279,65 @@ export default function ResellerBrandingPage() {
             </Button>
           </div>
         </form>
+
+        {/* SMTP configuration — send client emails from the reseller's own mail server */}
+        {smtpForm && (
+          <Card className="space-y-4 p-5">
+            <div className="flex items-center justify-between">
+              <h2 className="flex items-center gap-2 text-sm font-semibold text-slate-900">
+                <Mail className="h-4 w-4" /> Outbound Email (SMTP)
+              </h2>
+              <button
+                type="button"
+                onClick={() => clearSMTP.mutate()}
+                disabled={clearSMTP.isPending}
+                className="flex items-center gap-1 text-xs text-slate-400 hover:text-rose-600"
+                title="Remove SMTP config (revert to platform mail)"
+              >
+                <Trash2 className="h-3.5 w-3.5" /> Clear
+              </button>
+            </div>
+            <p className="text-xs text-slate-500">
+              Emails sent to your clients (invites, password resets, alerts) will use this server instead of the platform's.
+              Your domain must have SPF/DKIM records for the sending address.
+            </p>
+            <div className="grid gap-3 sm:grid-cols-2">
+              <Field label="SMTP Host" htmlFor="smtp-host">
+                <input id="smtp-host" className={inputClass} placeholder="smtp.yourdomain.com"
+                  value={smtpForm.smtpHost} onChange={(e) => setSmtpForm((f) => f ? { ...f, smtpHost: e.target.value } : f)} />
+              </Field>
+              <Field label="Port" htmlFor="smtp-port">
+                <input id="smtp-port" type="number" className={inputClass} placeholder="465"
+                  value={smtpForm.smtpPort} onChange={(e) => setSmtpForm((f) => f ? { ...f, smtpPort: e.target.value } : f)} />
+              </Field>
+              <Field label="Username" htmlFor="smtp-user">
+                <input id="smtp-user" className={inputClass} placeholder="noreply@yourdomain.com"
+                  value={smtpForm.smtpUser} onChange={(e) => setSmtpForm((f) => f ? { ...f, smtpUser: e.target.value } : f)} />
+              </Field>
+              <Field label="Password" htmlFor="smtp-pass">
+                <input id="smtp-pass" type="password" className={inputClass} placeholder="••••••••"
+                  value={smtpForm.smtpPass} onChange={(e) => setSmtpForm((f) => f ? { ...f, smtpPass: e.target.value } : f)} />
+              </Field>
+              <div className="sm:col-span-2">
+                <Field label="From address" htmlFor="smtp-from">
+                  <input id="smtp-from" className={inputClass} placeholder={`"Acme CRM" <noreply@yourdomain.com>`}
+                    value={smtpForm.smtpFrom} onChange={(e) => setSmtpForm((f) => f ? { ...f, smtpFrom: e.target.value } : f)} />
+                </Field>
+              </div>
+            </div>
+            {saveSMTP.isError && (
+              <p className="text-xs text-rose-600">{(saveSMTP.error as Error)?.message ?? "Failed to save SMTP"}</p>
+            )}
+            {saveSMTP.isSuccess && (
+              <p className="flex items-center gap-1 text-xs text-emerald-700"><CheckCircle2 className="h-3.5 w-3.5" /> SMTP saved and verified.</p>
+            )}
+            <div className="flex justify-end">
+              <Button type="button" variant="secondary" disabled={saveSMTP.isPending} onClick={() => saveSMTP.mutate()}>
+                {saveSMTP.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />} Save &amp; test SMTP
+              </Button>
+            </div>
+          </Card>
+        )}
 
         {/* Live preview of the login panel */}
         <Card className="overflow-hidden lg:sticky lg:top-0">

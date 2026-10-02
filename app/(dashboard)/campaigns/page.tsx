@@ -334,6 +334,7 @@ function CampaignsPageInner() {
                   <th className="px-4 py-3 font-medium">Sent</th>
                   <th className="px-4 py-3 font-medium">Delivered</th>
                   <th className="px-4 py-3 font-medium">Read</th>
+                  <th className="px-4 py-3 font-medium">Clicked</th>
                   <th className="px-4 py-3 font-medium">Replied</th>
                   <th className="px-4 py-3 font-medium">Failed</th>
                   <th className="px-4 py-3 font-medium">Created</th>
@@ -371,6 +372,9 @@ function CampaignsPageInner() {
                       </td>
                       <td className="px-4 py-3">
                         <RateBar value={c.readCount ?? 0} total={c.totalCount} />
+                      </td>
+                      <td className="px-4 py-3">
+                        <RateBar value={c.clickedCount ?? 0} total={c.totalCount} />
                       </td>
                       <td className="px-4 py-3 tabular-nums text-slate-700">
                         {formatCompact(c.repliedCount ?? 0)}

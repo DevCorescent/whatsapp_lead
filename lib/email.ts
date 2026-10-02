@@ -1,5 +1,6 @@
 import nodemailer from "nodemailer";
 import type { Transporter } from "nodemailer";
+import { prisma } from "@/lib/prisma";
 
 type SmtpEnv = {
   host: string;
@@ -28,20 +29,79 @@ function readSmtpEnv(): SmtpEnv {
   return { host, port, user, pass, from };
 }
 
-let transporter: Transporter | null = null;
+// Cache transporters by config key so we don't re-create connection pools on
+// every send when the same SMTP account is used repeatedly.
+const _transporterCache = new Map<string, Transporter>();
 
-function getTransporter(): Transporter {
-  if (transporter) return transporter;
-
-  const { host, port, user, pass } = readSmtpEnv();
-  transporter = nodemailer.createTransport({
-    host,
-    port,
-    // 465 = implicit TLS; 587 = STARTTLS
-    secure: port === 465,
-    auth: { user, pass },
+function getTransporterFor(smtp: SmtpEnv): Transporter {
+  const key = `${smtp.host}:${smtp.port}:${smtp.user}`;
+  const cached = _transporterCache.get(key);
+  if (cached) return cached;
+  const t = nodemailer.createTransport({
+    host: smtp.host,
+    port: smtp.port,
+    secure: smtp.port === 465,
+    auth: { user: smtp.user, pass: smtp.pass },
   });
-  return transporter;
+  _transporterCache.set(key, t);
+  return t;
+}
+
+/**
+ * Resolve SMTP credentials for a given tenant following the hierarchy:
+ *
+ *   1. If the tenant is a CLIENT → use its parent reseller's SMTP (if configured).
+ *   2. If the tenant is a RESELLER → use its own SMTP (if configured).
+ *   3. Fall back to the platform's env-var SMTP.
+ *
+ * This lets white-label resellers deliver emails from their own mail server so
+ * SPF/DKIM is authorised for their domain, giving better deliverability and
+ * keeping the platform's sending reputation separate.
+ */
+async function resolveSmtpConfig(tenantId?: string): Promise<SmtpEnv> {
+  if (tenantId) {
+    try {
+      const settings = await prisma.tenantSettings.findUnique({
+        where: { tenantId },
+        select: {
+          smtpHost: true, smtpPort: true, smtpUser: true, smtpPass: true, smtpFrom: true,
+          tenant: { select: { accountType: true, parentId: true } },
+        },
+      });
+
+      // CLIENT → check parent (reseller) SMTP first
+      if (settings?.tenant.accountType === "CLIENT" && settings.tenant.parentId) {
+        const parent = await prisma.tenantSettings.findUnique({
+          where: { tenantId: settings.tenant.parentId },
+          select: { smtpHost: true, smtpPort: true, smtpUser: true, smtpPass: true, smtpFrom: true },
+        });
+        if (parent?.smtpHost && parent?.smtpUser && parent?.smtpPass && parent?.smtpFrom) {
+          return {
+            host: parent.smtpHost,
+            port: parent.smtpPort ?? 465,
+            user: parent.smtpUser,
+            pass: parent.smtpPass,
+            from: parent.smtpFrom,
+          };
+        }
+      }
+
+      // RESELLER (or CLIENT with no parent SMTP) → own SMTP
+      if (settings?.smtpHost && settings?.smtpUser && settings?.smtpPass && settings?.smtpFrom) {
+        return {
+          host: settings.smtpHost,
+          port: settings.smtpPort ?? 465,
+          user: settings.smtpUser,
+          pass: settings.smtpPass,
+          from: settings.smtpFrom,
+        };
+      }
+    } catch (err) {
+      console.warn("[EMAIL] SMTP DB lookup failed, falling back to env", err);
+    }
+  }
+
+  return readSmtpEnv();
 }
 
 /** The address part of SMTP_FROM ("Name <a@b.c>" or "a@b.c"). */
@@ -51,10 +111,10 @@ function fromAddress(from: string): string {
 }
 
 /**
- * Send through the platform's SMTP account. A white-label brand changes only the
- * display name ("Acme CRM" <noreply@platform>) and the Reply-To (the brand's support
- * address) — the sending address stays the platform's, whose domain is the one
- * authorised (SPF/DKIM) to send.
+ * Send one email, resolving SMTP via the hierarchy when `tenantId` is given.
+ * The brand overrides the display name (and Reply-To) but not the actual
+ * sending address — the account whose credentials are used is the authorised
+ * sender for SPF/DKIM purposes.
  */
 async function sendMail(opts: {
   to: string;
@@ -62,14 +122,15 @@ async function sendMail(opts: {
   html: string;
   kind: string;
   brand?: EmailBrand;
+  tenantId?: string;
 }) {
-  const smtp = readSmtpEnv();
+  const smtp = await resolveSmtpConfig(opts.tenantId);
   const name = opts.brand?.name?.replace(/["<>\r\n]/g, "").trim();
   const from = name ? `"${name}" <${fromAddress(smtp.from)}>` : smtp.from;
   const replyTo = opts.brand?.replyTo?.trim() || undefined;
-  const transport = getTransporter();
+  const transport = getTransporterFor(smtp);
 
-  console.log(`[EMAIL] Sending ${opts.kind}`, { to: opts.to, subject: opts.subject });
+  console.log(`[EMAIL] Sending ${opts.kind}`, { to: opts.to, subject: opts.subject, via: smtp.host });
 
   try {
     const info = await transport.sendMail({
@@ -79,11 +140,7 @@ async function sendMail(opts: {
       subject: opts.subject,
       html: opts.html,
     });
-    console.log(`[EMAIL] Sent ${opts.kind}`, {
-      to: opts.to,
-      messageId: info.messageId,
-      response: info.response,
-    });
+    console.log(`[EMAIL] Sent ${opts.kind}`, { to: opts.to, messageId: info.messageId });
     return info;
   } catch (error) {
     console.error(`[EMAIL] Failed ${opts.kind}`, {
@@ -107,11 +164,6 @@ const PLATFORM_EMAIL_BRAND: EmailBrand = {
   color: "#059669",
 };
 
-/**
- * Escape a value for HTML. Workspace names, people's names and brand names are
- * user-controlled; interpolated raw, a workspace called `<a href=…>` became a link
- * in every invite that workspace sent.
- */
 function esc(value: string): string {
   return value
     .replace(/&/g, "&amp;")
@@ -121,13 +173,39 @@ function esc(value: string): string {
     .replace(/'/g, "&#39;");
 }
 
-/** Only http(s) links in buttons. */
 function safeUrl(url: string): string {
   return /^https?:\/\//i.test(url) ? esc(url) : "#";
 }
 
 function safeColor(color: string): string {
   return /^#[0-9a-f]{6}$/i.test(color) ? color : PLATFORM_EMAIL_BRAND.color;
+}
+
+export async function sendVerificationEmail(opts: {
+  to: string;
+  name: string;
+  verifyUrl: string;
+  brand?: EmailBrand;
+  tenantId?: string;
+}) {
+  const brand = opts.brand ?? PLATFORM_EMAIL_BRAND;
+  await sendMail({
+    brand,
+    kind: "email-verify",
+    to: opts.to,
+    tenantId: opts.tenantId,
+    subject: `Verify your email — ${brand.name}`,
+    html: `
+      <div style="font-family:sans-serif;max-width:560px;margin:0 auto;">
+        <h2 style="color:${safeColor(brand.color)};">Verify your email address</h2>
+        <p>Hi ${esc(opts.name)},</p>
+        <p>Thanks for signing up to ${esc(brand.name)}. Click the button below to verify your email address and activate your account.</p>
+        <a href="${safeUrl(opts.verifyUrl)}" style="display:inline-block;margin-top:16px;padding:12px 28px;background:${safeColor(brand.color)};color:#fff;border-radius:6px;text-decoration:none;font-weight:600;">Verify Email</a>
+        <p style="margin-top:24px;color:#6b7280;font-size:13px;">This link expires in 24 hours. If you didn't create an account, you can safely ignore this email.</p>
+        <p style="color:#6b7280;font-size:12px;margin-top:8px;">Or paste this link into your browser:<br>${esc(opts.verifyUrl)}</p>
+      </div>
+    `,
+  });
 }
 
 export async function sendInviteEmail(opts: {
@@ -138,12 +216,14 @@ export async function sendInviteEmail(opts: {
   tempPassword: string;
   loginUrl: string;
   brand?: EmailBrand;
+  tenantId?: string;
 }) {
   const brand = opts.brand ?? PLATFORM_EMAIL_BRAND;
   await sendMail({
     brand,
     kind: "invite",
     to: opts.to,
+    tenantId: opts.tenantId,
     subject: `You've been invited to ${opts.tenantName} on ${brand.name}`,
     html: `
       <div style="font-family:sans-serif;max-width:560px;margin:0 auto;">
@@ -166,12 +246,14 @@ export async function sendPasswordResetEmail(opts: {
   name: string;
   resetUrl: string;
   brand?: EmailBrand;
+  tenantId?: string;
 }) {
   const brand = opts.brand ?? PLATFORM_EMAIL_BRAND;
   await sendMail({
     brand,
     kind: "password-reset",
     to: opts.to,
+    tenantId: opts.tenantId,
     subject: `Reset your ${brand.name} password`,
     html: `
       <div style="font-family:sans-serif;max-width:560px;margin:0 auto;">
@@ -190,12 +272,14 @@ export async function sendWelcomeEmail(opts: {
   tenantName: string;
   loginUrl: string;
   brand?: EmailBrand;
+  tenantId?: string;
 }) {
   const brand = opts.brand ?? PLATFORM_EMAIL_BRAND;
   await sendMail({
     brand,
     kind: "welcome",
     to: opts.to,
+    tenantId: opts.tenantId,
     subject: `Welcome to ${brand.name} — ${opts.tenantName}`,
     html: `
       <div style="font-family:sans-serif;max-width:560px;margin:0 auto;">
@@ -214,12 +298,14 @@ export async function sendLowBalanceEmail(opts: {
   balance: string;
   walletUrl: string;
   brand?: EmailBrand;
+  tenantId?: string;
 }) {
   const brand = opts.brand ?? PLATFORM_EMAIL_BRAND;
   await sendMail({
     brand,
     kind: "low-balance",
     to: opts.to,
+    tenantId: opts.tenantId,
     subject: `Low message balance — ${opts.tenantName}`,
     html: `
       <div style="font-family:sans-serif;max-width:560px;margin:0 auto;">
@@ -232,19 +318,20 @@ export async function sendLowBalanceEmail(opts: {
   });
 }
 
-/** A short plain notice to an account owner (e.g. a fee reminder). */
 export async function sendNoticeEmail(opts: {
   to: string;
   name: string;
   subject: string;
   message: string;
   brand?: EmailBrand;
+  tenantId?: string;
 }) {
   const brand = opts.brand ?? PLATFORM_EMAIL_BRAND;
   await sendMail({
     brand,
     kind: "notice",
     to: opts.to,
+    tenantId: opts.tenantId,
     subject: opts.subject,
     html: `
       <div style="font-family:sans-serif;max-width:560px;margin:0 auto;">

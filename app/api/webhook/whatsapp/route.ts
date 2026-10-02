@@ -340,6 +340,54 @@ async function applyCampaignReceipt(
 
 
 /**
+ * Record a button or list reply on a campaign message.
+ *
+ * When a recipient taps a quick-reply or call-to-action button on a campaign template,
+ * Meta sends an inbound `interactive` message whose `context.id` is the wamid of the
+ * campaign message they tapped on. We look that up in CampaignContact and, on the first
+ * tap only, stamp `clickedAt` and increment the campaign's `clickedCount`.
+ *
+ * Like the delivery-receipt handlers this is fire-and-forget from `processChange`'s
+ * perspective: a failed increment is a missed metric, not a missed message.
+ */
+async function applyCampaignClickReceipt(
+  tenantId: string,
+  message: WAMessage
+): Promise<void> {
+  // Only interactive messages with a context (i.e., a reply to a specific message)
+  if (message.type !== "interactive") return;
+  const contextId = (message as unknown as { context?: { id?: string } }).context?.id;
+  if (!contextId) return;
+
+  const recipient = await prisma.campaignContact.findUnique({
+    where: { waMessageId: contextId },
+    select: {
+      id: true,
+      clickedAt: true,
+      campaign: { select: { id: true, tenantId: true } },
+    },
+  });
+
+  if (!recipient || recipient.campaign.tenantId !== tenantId) return;
+  if (recipient.clickedAt !== null) return; // already counted
+
+  try {
+    await prisma.$transaction([
+      prisma.campaignContact.update({
+        where: { id: recipient.id },
+        data: { clickedAt: new Date() },
+      }),
+      prisma.campaign.update({
+        where: { id: recipient.campaign.id },
+        data: { clickedCount: { increment: 1 } },
+      }),
+    ]);
+  } catch (error) {
+    console.error("[WEBHOOK] Failed to apply campaign click receipt:", error);
+  }
+}
+
+/**
  * Dispatch one `change` from a webhook payload to the right ingestion path.
  *
  * A change carries either inbound messages or delivery receipts — never both — so the two
@@ -521,6 +569,9 @@ async function processChange(change: WAChange): Promise<void> {
       profile?.profile?.name,
       contactWaId
     );
+
+    // Track button/list taps that reply to a campaign message (context.id = campaign wamid).
+    await applyCampaignClickReceipt(tenantId, message);
 
     console.log("[WEBHOOK] Message dispatched", { waMessageId: message.id });
   }

@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { signIn, getSession } from "next-auth/react";
 import Link from "next/link";
 import { useForm } from "react-hook-form";
@@ -9,6 +9,7 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import {
   AlertCircle,
   Check,
+  CheckCircle2,
   Copy,
   Eye,
   EyeOff,
@@ -45,6 +46,8 @@ export default function LoginPage() {
 
 function SignInForm() {
   const router = useRouter();
+  const params = useSearchParams();
+  const justVerified = params.get("verified") === "1";
   const [error, setError] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [copied, setCopied] = useState(false);
@@ -66,7 +69,10 @@ function SignInForm() {
       redirect: false,
     });
     if (result?.error) {
-      setError("Invalid email or password");
+      const msg = result.error.includes("EMAIL_NOT_VERIFIED")
+        ? "Please verify your email before logging in. Check your inbox for the verification link."
+        : "Invalid email or password";
+      setError(msg);
     } else {
       const session = await getSession();
       router.push(session?.user?.role === "SUPER_ADMIN" ? "/dashboard" : "/inbox");
@@ -90,10 +96,31 @@ function SignInForm() {
         </p>
       </div>
 
+      {justVerified && (
+        <div role="status" className="mb-5 flex items-start gap-2.5 rounded-lg border border-emerald-200 bg-emerald-50 px-3.5 py-3">
+          <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-emerald-600" />
+          <p className="text-sm font-medium text-emerald-700">Email verified — you can now log in.</p>
+        </div>
+      )}
+
       {error && (
         <div role="alert" className="mb-5 flex items-start gap-2.5 rounded-lg border border-rose-200 bg-rose-50 px-3.5 py-3">
           <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-rose-600" />
-          <p className="text-sm font-medium text-rose-700">{error}</p>
+          <div>
+            <p className="text-sm font-medium text-rose-700">{error}</p>
+            {error.includes("verify") && (
+              <button
+                type="button"
+                className="mt-1 text-xs text-rose-600 underline"
+                onClick={async () => {
+                  const em = (document.getElementById("email") as HTMLInputElement)?.value;
+                  if (em) await fetch("/api/auth/verify-email", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ email: em }) });
+                }}
+              >
+                Resend verification email
+              </button>
+            )}
+          </div>
         </div>
       )}
 
