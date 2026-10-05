@@ -103,7 +103,7 @@ export function HeaderMediaInput({
             ) : uploadState === "done" ? (
               <>
                 <span className="text-2xl">✅</span>
-                <span className="text-xs font-medium text-emerald-700">{fileName}</span>
+                <span className="max-w-full break-all text-xs font-medium text-emerald-700">{fileName}</span>
                 <span className="text-[11px] text-emerald-600">Uploaded — click to replace</span>
               </>
             ) : uploadState === "error" ? (

@@ -198,7 +198,7 @@ export function CmsSectionPage({ sectionKey }: { sectionKey: SectionKey }) {
         <span className="font-medium text-slate-900">{CMS_SECTIONS[sectionKey].label}</span>
       </nav>
 
-      <div className="grid gap-5 lg:grid-cols-[13.5rem_minmax(0,1fr)] lg:items-start">
+      <div className="grid grid-cols-1 gap-5 lg:grid-cols-[13.5rem_minmax(0,1fr)] lg:items-start">
         <SectionNav
           current={sectionKey}
           confirmLeave={confirmLeave}
@@ -467,7 +467,7 @@ function SectionForm({
             href={siteHref(key)}
             target="_blank"
             rel="noopener noreferrer"
-            className="inline-flex items-center gap-2 rounded-lg bg-white px-3 py-2 text-sm font-medium text-slate-700 ring-1 ring-inset ring-slate-200 transition hover:bg-slate-50 hover:text-slate-900"
+            className="inline-flex min-h-10 items-center gap-2 rounded-lg bg-white px-3 py-2 text-sm font-medium text-slate-700 ring-1 ring-inset ring-slate-200 transition hover:bg-slate-50 hover:text-slate-900 sm:min-h-0"
           >
             <ExternalLink className="h-4 w-4" />
             View on website
@@ -580,7 +580,7 @@ function SectionForm({
               </span>
             )}
           </p>
-          <div className="flex gap-2">
+          <div className="ml-auto flex gap-2">
             <AdminButton variant="ghost" onClick={discard} disabled={!dirty || busy}>
               Discard
             </AdminButton>
@@ -601,7 +601,7 @@ function SectionForm({
         <p className="text-sm text-slate-600">
           Everything saved for this section — text, items, order and visibility — is removed. This cannot be undone.
         </p>
-        <div className="mt-5 flex justify-end gap-2">
+        <div className="mt-5 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
           <AdminButton variant="ghost" onClick={() => setConfirmReset(false)}>
             Cancel
           </AdminButton>

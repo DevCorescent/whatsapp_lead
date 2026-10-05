@@ -447,7 +447,10 @@ export async function importTemplatesFromMeta(
   tenantId: string,
 ): Promise<{ created: number; updated: number }> {
   const { wabaId, apiKey } = await getBusinessTemplateCreds(businessId);
-  const metaTemplates = await listMessageTemplates(wabaId, apiKey);
+  const LIST_LIMIT = 2000;
+  const metaTemplates = await listMessageTemplates(wabaId, apiKey, LIST_LIMIT);
+  // Hitting the cap means the list may be cut short, so "missing from Meta" can't be trusted.
+  const complete = metaTemplates.length < LIST_LIMIT;
 
   let created = 0;
   let updated = 0;
@@ -505,6 +508,8 @@ export async function importTemplatesFromMeta(
           ...(existing.variables.length === 0 && importedVariables.length > 0
             ? { variables: importedVariables }
             : {}),
+          // An edit approved in Meta's console changes the text; keep ours in step.
+          ...(body && { body }),
         },
       });
       updated++;
@@ -513,7 +518,21 @@ export async function importTemplatesFromMeta(
       const duplicate = await prisma.messageTemplate.findFirst({
         where: { businessId, name: mt.name, language: mt.language },
       });
-      if (!duplicate) {
+      if (duplicate && !duplicate.waTemplateId) {
+        // The same template made here but never linked to Meta (e.g. created in both places).
+        // Link it, so it takes Meta's status — skipping it left it a Draft that never
+        // appeared in Broadcast.
+        await prisma.messageTemplate.update({
+          where: { id: duplicate.id },
+          data: {
+            waTemplateId: mt.id,
+            status,
+            rejectionReason: status === "REJECTED" ? mt.rejection_reason ?? null : null,
+            lastSyncedAt: new Date(),
+          },
+        });
+        updated++;
+      } else if (!duplicate) {
         await prisma.messageTemplate.create({
           data: {
             tenantId,
@@ -538,7 +557,9 @@ export async function importTemplatesFromMeta(
     }
   }
 
-  // Mark local templates as DISABLED if Meta no longer has them
+  // Mark local templates as DISABLED if Meta no longer has them — only when the list is
+  // complete; a truncated list would disable perfectly good approved templates.
+  if (!complete) return { created, updated };
   const metaIds = new Set(metaTemplates.map((mt) => mt.id).filter(Boolean));
   const localSubmitted = await prisma.messageTemplate.findMany({
     where: { businessId, waTemplateId: { not: null }, status: { notIn: ["DRAFT", "DISABLED"] } },
@@ -555,6 +576,43 @@ export async function importTemplatesFromMeta(
   }
 
   return { created, updated };
+}
+
+/** How long an in-review template's status is trusted before the list re-checks it. */
+const STALE_REVIEW_MS = 2 * 60_000;
+/** The most a list request waits for those checks. Slower ones finish in the background. */
+const REFRESH_BUDGET_MS = 4_000;
+
+/**
+ * Re-check this business's in-review templates with Meta, if not checked recently.
+ *
+ * Called whenever the template list is loaded (Templates, Broadcast, Campaigns), so a
+ * template Meta has approved shows up as soon as someone looks, instead of waiting
+ * for the daily cron or an admin pressing "Sync all". Throttled per template by
+ * `lastSyncedAt`, capped in count and in time, and never throws.
+ */
+export async function refreshStaleTemplates(businessId: string): Promise<void> {
+  try {
+    const stale = await prisma.messageTemplate.findMany({
+      where: {
+        businessId,
+        status: { in: ["SUBMITTED", "PENDING"] },
+        OR: [{ lastSyncedAt: null }, { lastSyncedAt: { lt: new Date(Date.now() - STALE_REVIEW_MS) } }],
+      },
+      select: { id: true },
+      orderBy: { lastSyncedAt: { sort: "asc", nulls: "first" } },
+      take: 20,
+    });
+    if (stale.length === 0) return;
+
+    const checks = Promise.allSettled(stale.map(({ id }) => refreshTemplate(id, businessId))).then((results) => {
+      const failed = results.filter((r) => r.status === "rejected");
+      if (failed.length) console.warn("[TEMPLATES] Status refresh failed", { businessId, failed: failed.length });
+    });
+    await Promise.race([checks, new Promise((resolve) => setTimeout(resolve, REFRESH_BUDGET_MS))]);
+  } catch (error) {
+    console.error("[TEMPLATES] Status refresh skipped", error);
+  }
 }
 
 /** Sync every in-review template for one business (used by the manual "Sync all"). */

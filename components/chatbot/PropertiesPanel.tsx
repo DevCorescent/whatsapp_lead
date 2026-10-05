@@ -43,7 +43,7 @@ export function PropertiesPanel({
 }) {
   if (!node) {
     return (
-      <aside className="flex w-72 shrink-0 items-center justify-center border-l border-slate-200 bg-white p-6 text-center">
+      <aside className="hidden w-72 shrink-0 items-center justify-center border-l border-slate-200 bg-white p-6 text-center md:flex">
         <p className="text-sm text-slate-400">Select a node to edit its properties.</p>
       </aside>
     );
@@ -55,7 +55,7 @@ export function PropertiesPanel({
   const set = (patch: Partial<AnyNodeData>) => onChange(node.id, { ...data, ...patch } as AnyNodeData);
 
   return (
-    <aside className="scrollbar-slim flex w-72 shrink-0 flex-col overflow-y-auto border-l border-slate-200 bg-white">
+    <aside className="scrollbar-slim absolute inset-x-0 bottom-0 z-20 flex max-h-[65%] flex-col overflow-y-auto rounded-t-2xl border-t border-slate-200 bg-white shadow-2xl md:static md:z-auto md:max-h-none md:w-72 md:shrink-0 md:rounded-none md:border-t-0 md:border-l md:shadow-none">
       <div className="sticky top-0 z-10 flex items-center justify-between gap-2 border-b border-slate-200 bg-white px-4 py-3">
         <span className="flex min-w-0 items-center gap-2">
           <span className={cn("flex h-6 w-6 items-center justify-center rounded-md", meta.chip)}>
@@ -63,7 +63,7 @@ export function PropertiesPanel({
           </span>
           <span className="truncate text-sm font-semibold text-slate-800">{meta.label}</span>
         </span>
-        <button onClick={onClose} aria-label="Close properties" className="rounded p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-600">
+        <button onClick={onClose} aria-label="Close properties" className="rounded p-2 text-slate-400 md:p-1 hover:bg-slate-100 hover:text-slate-600">
           <X className="h-4 w-4" />
         </button>
       </div>

@@ -47,13 +47,15 @@ export function AdminPanel({
   bodyClassName?: string;
 }) {
   return (
-    <AdminCard className={cn("flex flex-col", className)}>
-      <div className="flex items-start justify-between gap-3 border-b border-slate-200 px-4 py-3 sm:px-5">
-        <div className="min-w-0">
-          <h2 className="truncate text-sm font-semibold text-slate-900">{title}</h2>
-          {subtitle && <p className="mt-0.5 truncate text-xs text-slate-500">{subtitle}</p>}
+    <AdminCard className={cn("flex min-w-0 flex-col", className)}>
+      <div className="flex flex-wrap items-start justify-between gap-x-3 gap-y-2 border-b border-slate-200 px-4 py-3 sm:flex-nowrap sm:px-5">
+        <div className="min-w-0 flex-1 basis-48 sm:basis-auto">
+          <h2 className="text-sm font-semibold text-slate-900 break-words sm:truncate">{title}</h2>
+          {subtitle && (
+            <p className="mt-0.5 text-xs text-slate-500 break-words sm:truncate">{subtitle}</p>
+          )}
         </div>
-        {action}
+        {action && <div className="flex max-w-full shrink-0 flex-wrap items-center gap-2">{action}</div>}
       </div>
       <div className={cn("flex-1 p-4 sm:p-5", bodyClassName)}>{children}</div>
     </AdminCard>
@@ -73,11 +75,11 @@ export function AdminPageHeader({
 }) {
   return (
     <div className="mb-6 flex flex-wrap items-start justify-between gap-4">
-      <div>
+      <div className="min-w-0">
         <h1 className="text-xl font-bold tracking-tight text-slate-900 sm:text-2xl">{title}</h1>
         {description && <p className="mt-1 text-sm text-slate-500">{description}</p>}
       </div>
-      {action}
+      {action && <div className="flex max-w-full flex-wrap items-center gap-2">{action}</div>}
     </div>
   );
 }
@@ -104,7 +106,7 @@ export function AdminButton({
   };
   const sizes: Record<string, string> = {
     sm: "px-2.5 py-1.5 text-xs",
-    md: "px-4 py-2 text-sm",
+    md: "min-h-10 px-4 py-2 text-sm sm:min-h-0",
   };
 
   return (
@@ -266,9 +268,9 @@ export function StatTile({
         : "text-slate-400";
 
   return (
-    <AdminCard className="p-4">
-      <div className="flex items-start justify-between gap-3">
-        <p className="text-xs font-medium uppercase tracking-wide text-slate-500">{label}</p>
+    <AdminCard className="min-w-0 p-3 sm:p-4">
+      <div className="flex items-start justify-between gap-2 sm:gap-3">
+        <p className="min-w-0 text-xs font-medium uppercase tracking-wide text-slate-500 break-words">{label}</p>
         <span
           className={cn(
             "flex h-8 w-8 shrink-0 items-center justify-center rounded-lg ring-1 ring-inset",
@@ -282,10 +284,10 @@ export function StatTile({
       {loading ? (
         <AdminSkeleton className="mt-3 h-7 w-24" />
       ) : (
-        <p className="mt-2 text-2xl font-bold tracking-tight text-slate-900">{value}</p>
+        <p className="mt-2 break-words text-xl font-bold tracking-tight text-slate-900 sm:text-2xl">{value}</p>
       )}
 
-      <div className="mt-2 flex items-center gap-1 text-xs">
+      <div className="mt-2 flex min-w-0 flex-wrap items-center gap-1 text-xs">
         {loading ? (
           <AdminSkeleton className="h-3 w-28" />
         ) : (
@@ -349,7 +351,7 @@ export function Segmented<T extends string>({
   onChange: (value: T) => void;
 }) {
   return (
-    <div className="inline-flex rounded-lg border border-slate-200 bg-slate-50 p-0.5">
+    <div className="scrollbar-slim inline-flex max-w-full overflow-x-auto rounded-lg border border-slate-200 bg-slate-50 p-0.5">
       {options.map((o) => (
         <button
           key={o.value}
@@ -357,7 +359,7 @@ export function Segmented<T extends string>({
           onClick={() => onChange(o.value)}
           aria-pressed={value === o.value}
           className={cn(
-            "rounded-md px-3 py-1.5 text-xs font-medium transition",
+            "shrink-0 whitespace-nowrap rounded-md px-3 py-1.5 text-xs font-medium transition",
             value === o.value
               ? "bg-[#0B6E4F] text-white"
               : "text-slate-500 hover:bg-white hover:text-slate-900",

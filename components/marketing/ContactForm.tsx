@@ -15,7 +15,7 @@ type FormState = {
 const EMPTY_FORM: FormState = { name: "", email: "", phone: "", company: "", message: "" };
 
 const INPUT_CLASS =
-  "mt-1.5 w-full rounded-lg border border-gray-300 px-4 py-2.5 text-sm text-gray-900 placeholder:text-gray-400 focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-500/20";
+  "mt-1.5 w-full rounded-lg border border-gray-300 px-4 py-2.5 text-base text-gray-900 sm:text-sm placeholder:text-gray-400 focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-500/20";
 
 export default function ContactForm() {
   const [form, setForm] = useState<FormState>(EMPTY_FORM);

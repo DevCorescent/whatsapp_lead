@@ -159,7 +159,7 @@ export default function KnowledgeBasePage() {
         title="Knowledge Base"
         description="Documents the AI reads before answering a customer."
         action={
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             <Button variant="secondary" onClick={() => setOpen(true)}>
               <UploadCloud className="h-4 w-4" />
               Upload
@@ -277,7 +277,7 @@ export default function KnowledgeBasePage() {
               {(renameMutation.error as Error).message}
             </p>
           )}
-          <div className="mt-4 flex justify-end gap-2">
+          <div className="mt-4 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end max-sm:[&>button]:h-10 max-sm:[&>button]:w-full">
             <Button
               type="button"
               variant="secondary"
@@ -304,7 +304,7 @@ export default function KnowledgeBasePage() {
             {(deleteMutation.error as Error).message}
           </p>
         )}
-        <div className="flex justify-end gap-2">
+        <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end max-sm:[&>button]:h-10 max-sm:[&>button]:w-full">
           <Button
             variant="secondary"
             onClick={() => setConfirmDelete(null)}

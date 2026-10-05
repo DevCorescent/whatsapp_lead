@@ -143,7 +143,7 @@ export default function TicketsPage() {
 
       {/* Filter bar */}
       <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
-        <div className="scrollbar-slim flex gap-1 overflow-x-auto border-b border-slate-200">
+        <div className="scrollbar-slim flex min-w-0 max-w-full gap-1 overflow-x-auto border-b border-slate-200">
           {STATUS_TABS.map((t) => (
             <button
               key={t.key}
@@ -160,12 +160,12 @@ export default function TicketsPage() {
           ))}
         </div>
 
-        <div className="flex flex-wrap items-center gap-2">
+        <div className="flex w-full items-center gap-2 sm:w-auto sm:flex-wrap">
           <select
             aria-label="Filter by priority"
             value={priority}
             onChange={(e) => setPriority(e.target.value)}
-            className={cn(inputClass, "w-auto py-1.5 text-xs")}
+            className={cn(inputClass, "min-w-0 flex-1 py-1.5 text-xs sm:w-auto sm:flex-none")}
           >
             <option value="ALL">All priorities</option>
             {PRIORITIES.map((p) => (
@@ -178,7 +178,7 @@ export default function TicketsPage() {
             aria-label="Filter by department"
             value={department}
             onChange={(e) => setDepartment(e.target.value)}
-            className={cn(inputClass, "w-auto py-1.5 text-xs")}
+            className={cn(inputClass, "min-w-0 flex-1 py-1.5 text-xs sm:w-auto sm:flex-none")}
           >
             <option value="ALL">All departments</option>
             {DEPARTMENTS.map((d) => (
@@ -212,7 +212,42 @@ export default function TicketsPage() {
             }
           />
         ) : (
-          <div className="scrollbar-slim overflow-x-auto">
+          <>
+          {/* Phones: stacked cards instead of the 8-column table */}
+          <ul className="divide-y divide-slate-100 md:hidden">
+            {tickets.map((t) => {
+              const contact = t.contact ?? t.conversation?.contact ?? null;
+              return (
+                <li key={t.id}>
+                  <button
+                    type="button"
+                    onClick={() => setSelectedTicket(t)}
+                    className="block w-full p-4 text-left hover:bg-slate-50"
+                  >
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <p className="truncate font-medium text-slate-900">{t.subject}</p>
+                        <p className="mt-0.5 truncate text-xs text-slate-500">
+                          <span className="font-mono text-[11px] text-slate-400">#{t.id.slice(-6).toUpperCase()}</span>
+                          {contact && <> · {contact.name}</>}
+                          {t.department && <> · {t.department}</>}
+                        </p>
+                      </div>
+                      <Badge className={TICKET_STATUS_STYLE[t.status]}>{STATUS_LABEL[t.status]}</Badge>
+                    </div>
+                    <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1.5">
+                      <Badge className={TICKET_PRIORITY_STYLE[t.priority]}>{t.priority}</Badge>
+                      {t.slaDeadline && <SlaCell deadline={t.slaDeadline} status={t.status} now={now} />}
+                      <span className="text-xs text-slate-500">
+                        {t.assignedTo ? t.assignedTo.name : "Unassigned"} · {formatDate(t.createdAt)}
+                      </span>
+                    </div>
+                  </button>
+                </li>
+              );
+            })}
+          </ul>
+          <div className="scrollbar-slim hidden overflow-x-auto md:block">
             <table className="w-full min-w-[60rem] text-left text-sm">
               <thead className="border-b border-slate-200 bg-slate-50 text-xs uppercase tracking-wide text-slate-500">
                 <tr>
@@ -285,6 +320,7 @@ export default function TicketsPage() {
               </tbody>
             </table>
           </div>
+          </>
         )}
       </Card>
 
@@ -584,7 +620,7 @@ function NewTicketModal({ open, onClose }: { open: boolean; onClose: () => void 
 
         {error && <p className="rounded-lg bg-rose-50 px-3 py-2 text-xs text-rose-700">{error}</p>}
 
-        <div className="flex justify-end gap-2 pt-2">
+        <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end [&>button]:h-10 [&>button]:w-full sm:[&>button]:h-9 sm:[&>button]:w-auto pt-2">
           <Button type="button" variant="secondary" onClick={() => { reset(); onClose(); }}>
             Cancel
           </Button>
@@ -651,8 +687,8 @@ function TicketDetailModal({ ticket, onClose }: { ticket: TicketRow | null; onCl
         {contact && (
           <div className="flex items-center gap-2 rounded-lg bg-slate-50 px-3 py-2.5">
             <Avatar name={contact.name} size="sm" />
-            <div>
-              <p className="text-sm font-medium text-slate-900">{contact.name}</p>
+            <div className="min-w-0">
+              <p className="truncate text-sm font-medium text-slate-900">{contact.name}</p>
               {contact.phone && <p className="text-xs text-slate-500">{contact.phone}</p>}
             </div>
           </div>
@@ -699,7 +735,7 @@ function TicketDetailModal({ ticket, onClose }: { ticket: TicketRow | null; onCl
 
         {error && <p className="rounded-lg bg-rose-50 px-3 py-2 text-xs text-rose-700">{error}</p>}
 
-        <div className="flex justify-end gap-2 pt-2">
+        <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end [&>button]:h-10 [&>button]:w-full sm:[&>button]:h-9 sm:[&>button]:w-auto pt-2">
           <Button variant="secondary" onClick={onClose}>Close</Button>
           <Button
             disabled={newStatus === ticket?.status || update.isPending}

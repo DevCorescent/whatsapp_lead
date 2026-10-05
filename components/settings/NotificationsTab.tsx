@@ -77,7 +77,7 @@ export function NotificationsTab() {
             </div>
 
             <div className="flex gap-6 sm:gap-0">
-              <label className="flex w-16 cursor-pointer items-center justify-center gap-2">
+              <label className="flex min-h-10 cursor-pointer items-center gap-2 sm:min-h-0 sm:w-16 sm:justify-center">
                 <input
                   type="checkbox"
                   checked={prefs[e.key].email}
@@ -87,7 +87,7 @@ export function NotificationsTab() {
                 />
                 <span className="text-xs text-slate-500 sm:hidden">Email</span>
               </label>
-              <label className="flex w-16 cursor-pointer items-center justify-center gap-2">
+              <label className="flex min-h-10 cursor-pointer items-center gap-2 sm:min-h-0 sm:w-16 sm:justify-center">
                 <input
                   type="checkbox"
                   checked={prefs[e.key].inApp}
@@ -102,7 +102,7 @@ export function NotificationsTab() {
         ))}
       </ul>
 
-      <div className="flex justify-end border-t border-slate-200 px-5 py-4">
+      <div className="flex justify-end max-sm:[&>button]:h-10 max-sm:[&>button]:w-full border-t border-slate-200 px-5 py-4">
         <Button>
           <Save className="h-4 w-4" />
           Save Preferences

@@ -57,14 +57,14 @@ export default function AdminRatesPage() {
               return (
                 <div key={r.category} className="flex flex-col gap-2 sm:flex-row sm:items-center">
                   <span className="text-sm text-slate-700 sm:w-72">{LABEL[r.category] ?? r.category}</span>
-                  <div className="flex items-center gap-2">
+                  <div className="flex flex-wrap items-center gap-2">
                     <input
                       type="number"
                       min={0}
                       value={value}
                       placeholder="Not set — free"
                       onChange={(e) => setEdits((x) => ({ ...x, [r.category]: e.target.value }))}
-                      className="h-9 w-44 rounded-lg bg-white px-3 text-sm ring-1 ring-inset ring-slate-200 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                      className="h-10 w-36 rounded-lg sm:h-9 sm:w-44 bg-white px-3 text-sm ring-1 ring-inset ring-slate-200 focus:outline-none focus:ring-2 focus:ring-emerald-500"
                       aria-label={`Price for ${LABEL[r.category]}`}
                     />
                     <span className="text-xs text-slate-500">paise{value && ` = ₹${(Number(value) / 100).toFixed(2)}`}</span>

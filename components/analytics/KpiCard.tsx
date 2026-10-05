@@ -43,7 +43,7 @@ export function KpiCard({
 }: KpiCardProps) {
   if (loading) {
     return (
-      <Card className="p-4">
+      <Card className="min-w-0 p-3 sm:p-4">
         <div className="flex items-center justify-between">
           <Skeleton className="h-3 w-24" />
           <Skeleton className="h-7 w-7 rounded-lg" />
@@ -64,7 +64,7 @@ export function KpiCard({
   const TrendIcon = positive ? TrendingUp : TrendingDown;
 
   return (
-    <Card className="p-4 transition hover:shadow-md">
+    <Card className="min-w-0 p-3 transition hover:shadow-md sm:p-4">
       {/* Label and icon share the top line, so the number owns its own row and
           reads as the focal point instead of sitting third in a stack. */}
       <div className="flex items-start justify-between gap-2">
@@ -81,7 +81,7 @@ export function KpiCard({
 
       <p
         className={cn(
-          "nums mt-2 text-[26px] font-semibold leading-none tracking-tight",
+          "nums mt-2 truncate text-[22px] font-semibold sm:text-[26px] leading-none tracking-tight",
           value == null ? "text-slate-300" : "text-slate-900",
         )}
       >
@@ -110,7 +110,7 @@ export function KpiCard({
               {delta > 0 ? "+" : ""}
               {delta.toFixed(0)}%
             </span>
-            <span className="text-slate-400">vs prev</span>
+            <span className="truncate text-slate-400">vs prev</span>
           </>
         ) : (
           <span className="text-slate-300">— vs prev</span>

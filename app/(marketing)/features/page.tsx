@@ -92,7 +92,7 @@ function PipelineMockup() {
             value: "₹64 L",
           },
         ].map((col) => (
-          <div key={col.stage} className="rounded-xl bg-white p-2">
+          <div key={col.stage} className="min-w-0 rounded-xl bg-white p-2">
             <p className="mb-2 text-[10px] font-semibold uppercase tracking-wide text-gray-500">
               {col.stage}
             </p>
@@ -361,7 +361,7 @@ export default function FeaturesPage() {
             )}
           >
             <div className="mx-auto grid max-w-7xl items-center gap-12 px-4 sm:px-6 lg:grid-cols-2 lg:gap-16 lg:px-8">
-              <div className={isReversed ? "lg:order-2" : ""}>
+              <div className={cn("min-w-0", isReversed && "lg:order-2")}>
                 <span className="inline-flex items-center gap-2 rounded-full bg-emerald-600/10 px-3 py-1 text-xs font-semibold text-emerald-600">
                   <Icon className="h-4 w-4" />
                   {eyebrow}
@@ -382,7 +382,7 @@ export default function FeaturesPage() {
                 </ul>
               </div>
 
-              <div className={isReversed ? "lg:order-1" : ""}>
+              <div className={cn("min-w-0", isReversed && "lg:order-1")}>
                 <Mockup />
               </div>
             </div>

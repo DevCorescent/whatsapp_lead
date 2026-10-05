@@ -52,7 +52,7 @@ function ClientsPageInner() {
         title="Clients"
         description="Businesses you manage or referred. You see their account and usage — never their chats or messages."
         action={
-          <Button onClick={() => setCreating(true)}>
+          <Button className="h-10 sm:h-9" onClick={() => setCreating(true)}>
             <Plus className="h-4 w-4" /> Add client
           </Button>
         }
@@ -60,7 +60,7 @@ function ClientsPageInner() {
 
       <Card className="overflow-hidden">
         <div className="border-b border-slate-100 p-4">
-          <div className="relative max-w-sm">
+          <div className="relative sm:max-w-sm">
             <Search className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
             <input
               value={search}
@@ -83,7 +83,38 @@ function ClientsPageInner() {
             description="Add a client here, or share your referral link from the Overview page."
           />
         ) : (
-          <div className="scrollbar-slim overflow-x-auto">
+          <>
+          {/* Phones: stacked cards — the 7-column table is unusable at 360px. */}
+          <ul className="divide-y divide-slate-100 md:hidden">
+            {rows.map((c) => {
+              const status = !c.isActive ? "SUSPENDED" : c.subscription?.status ?? "—";
+              return (
+                <li key={c.id}>
+                  <Link href={`/reseller/clients/${c.id}`} className="block px-4 py-3 transition hover:bg-slate-50">
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <p className="truncate text-sm font-medium text-slate-900">{c.name}</p>
+                        <p className="truncate text-xs text-slate-500">
+                          {c.owner?.email ?? "—"}
+                          {!c.managed && " · referred"}
+                          {c.category && ` · ${c.category.name}`}
+                        </p>
+                      </div>
+                      <Badge className={cn("shrink-0", STATUS_TONE[status] ?? "")}>{status}</Badge>
+                    </div>
+                    <dl className="mt-2 grid grid-cols-2 gap-x-4 gap-y-1 text-xs">
+                      <div className="flex justify-between gap-2"><dt className="text-slate-500">Plan</dt><dd className="truncate text-slate-700">{c.subscription?.plan.displayName ?? "—"}</dd></div>
+                      <div className="flex justify-between gap-2"><dt className="text-slate-500">Users</dt><dd className="tabular-nums text-slate-700">{c.counts.users}</dd></div>
+                      <div className="flex justify-between gap-2"><dt className="text-slate-500">Contacts</dt><dd className="tabular-nums text-slate-700">{c.counts.contacts.toLocaleString()}</dd></div>
+                      <div className="flex justify-between gap-2"><dt className="text-slate-500">Commission</dt><dd className="tabular-nums text-slate-700">{money(c.commissionMinor)}</dd></div>
+                      <div className="col-span-2 flex justify-between gap-2"><dt className="text-slate-500">Joined</dt><dd className="text-slate-500">{formatDate(c.createdAt)}</dd></div>
+                    </dl>
+                  </Link>
+                </li>
+              );
+            })}
+          </ul>
+          <div className="scrollbar-slim hidden overflow-x-auto md:block">
             <table className="w-full min-w-3xl text-left text-sm">
               <thead className="border-b border-slate-200 bg-slate-50 text-xs uppercase tracking-wide text-slate-500">
                 <tr>
@@ -125,9 +156,10 @@ function ClientsPageInner() {
               </tbody>
             </table>
           </div>
+          </>
         )}
         {pagination && pagination.totalPages > 1 && (
-          <div className="flex items-center justify-between border-t border-slate-100 px-4 py-2.5 text-xs text-slate-500">
+          <div className="flex flex-wrap items-center justify-between gap-2 border-t border-slate-100 px-4 py-2.5 text-xs text-slate-500">
             <span>{pagination.total} clients · page {pagination.page} of {pagination.totalPages}</span>
             <div className="flex gap-1">
               <Button variant="secondary" size="sm" disabled={page <= 1} onClick={() => setPage(page - 1)}>Previous</Button>
@@ -207,14 +239,15 @@ function CreateClientModal({ open, onClose, onCreated }: { open: boolean; onClos
               ? `Login details were emailed to ${created.email}.`
               : `The email to ${created.email} couldn't be sent — share these details yourself.`}
           </p>
-          <div className="rounded-lg bg-slate-50 p-3 ring-1 ring-inset ring-slate-200">
+          <div className="break-all rounded-lg bg-slate-50 p-3 ring-1 ring-inset ring-slate-200">
             <p>Email: <span className="font-mono">{created.email}</span></p>
             <p className="mt-1">Temporary password: <span className="font-mono">{created.tempPassword}</span></p>
           </div>
           <p className="text-xs text-slate-500">This password is shown only once. The client should change it after logging in.</p>
-          <div className="flex justify-end gap-2">
+          <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
             <Button
               variant="secondary"
+              className="h-10 sm:h-9"
               onClick={async () => {
                 try {
                   await navigator.clipboard.writeText(created.tempPassword);
@@ -224,7 +257,7 @@ function CreateClientModal({ open, onClose, onCreated }: { open: boolean; onClos
             >
               {copied ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />} Copy password
             </Button>
-            <Button onClick={close}>Done</Button>
+            <Button className="h-10 sm:h-9" onClick={close}>Done</Button>
           </div>
         </div>
       ) : (
@@ -267,9 +300,9 @@ function CreateClientModal({ open, onClose, onCreated }: { open: boolean; onClos
               <AlertCircle className="h-3.5 w-3.5 shrink-0" /> {(create.error as Error).message}
             </p>
           )}
-          <div className="flex justify-end gap-2 pt-1">
-            <Button type="button" variant="secondary" onClick={close}>Cancel</Button>
-            <Button type="submit" disabled={!form.name.trim() || !form.ownerEmail.trim() || !form.planId || create.isPending}>
+          <div className="flex flex-col-reverse gap-2 pt-1 sm:flex-row sm:justify-end">
+            <Button type="button" variant="secondary" className="h-10 sm:h-9" onClick={close}>Cancel</Button>
+            <Button type="submit" className="h-10 sm:h-9" disabled={!form.name.trim() || !form.ownerEmail.trim() || !form.planId || create.isPending}>
               {create.isPending && <Loader2 className="h-4 w-4 animate-spin" />} Create client
             </Button>
           </div>

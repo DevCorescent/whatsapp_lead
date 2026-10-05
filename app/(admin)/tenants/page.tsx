@@ -16,6 +16,7 @@ import {
   Plus,
   RefreshCcw,
   Search,
+  UserCheck,
 } from "lucide-react";
 import { Avatar, Field, Modal, inputClass } from "@/components/ui";
 import {
@@ -56,6 +57,7 @@ interface AdminTenant {
   parent: { id: string; name: string } | null;
   clients: number;
   category: string | null;
+  whatsappNumbers?: number;
 }
 
 interface TenantFilters {
@@ -226,13 +228,119 @@ export default function AdminTenantsPage() {
 
   const resetPage = () => setPage(1);
 
+  // Row action menu — shared by the desktop table and the phone card list.
+  /** Open the account as its owner would (lib/viewAs.ts). A full load picks up the new session. */
+  async function startViewAs(tenantId: string) {
+    try {
+      const res = await fetch("/api/admin/view-as", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ tenantId }),
+      });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(json.error ?? "Couldn't open this account");
+      window.location.href = json.data.redirect;
+    } catch (e) {
+      alert((e as Error).message);
+    }
+  }
+
+  const renderRowMenu = (t: AdminTenant) => (
+    <>
+      <button
+        onClick={(e) => {
+          e.stopPropagation();
+          setMenuFor(menuFor === t.id ? null : t.id);
+        }}
+        aria-label={`Actions for ${t.name}`}
+        aria-expanded={menuFor === t.id}
+        className="rounded-lg p-2 text-slate-400 transition hover:bg-slate-100 hover:text-slate-700 md:p-1.5"
+      >
+        <MoreHorizontal className="h-4 w-4" />
+      </button>
+
+      {menuFor === t.id && (
+        <>
+          <div
+            className="fixed inset-0 z-10"
+            onClick={(e) => {
+              e.stopPropagation();
+              setMenuFor(null);
+            }}
+            aria-hidden
+          />
+          <div
+            onClick={(e) => e.stopPropagation()}
+            className="absolute right-0 top-11 z-20 w-48 md:right-4 overflow-hidden rounded-lg border border-slate-200 bg-white py-1 text-left shadow-lg"
+          >
+            <MenuItem
+              icon={Eye}
+              label="View details"
+              onClick={() => {
+                setMenuFor(null);
+                router.push(`/tenants/${t.id}`);
+              }}
+            />
+            <MenuItem
+              icon={Pencil}
+              label="Edit name"
+              onClick={() => {
+                setMenuFor(null);
+                setEditTenant(t);
+              }}
+            />
+            <MenuItem
+              icon={RefreshCcw}
+              label="Change plan"
+              onClick={() => {
+                setMenuFor(null);
+                router.push(`/tenants/${t.id}?tab=plan`);
+              }}
+            />
+            {t.accountType !== "PLATFORM" && t.isActive && (
+              <MenuItem
+                icon={UserCheck}
+                label="View as this account"
+                onClick={() => {
+                  setMenuFor(null);
+                  void startViewAs(t.id);
+                }}
+              />
+            )}
+            <div className="my-1 border-t border-slate-100" />
+            {t.isActive ? (
+              <MenuItem
+                icon={Pause}
+                label="Suspend"
+                danger
+                onClick={() => {
+                  setMenuFor(null);
+                  setSuspendConfirm(t);
+                }}
+              />
+            ) : (
+              <MenuItem
+                icon={Play}
+                label="Activate"
+                onClick={() => {
+                  setMenuFor(null);
+                  updateTenant.mutate({ id: t.id, isActive: true });
+                }}
+              />
+            )}
+          </div>
+        </>
+      )}
+    </>
+  );
+
   return (
     <>
       <AdminPageHeader
         title="Tenants"
         description="Every workspace account on the platform."
         action={
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             <AdminButton variant="secondary" onClick={() => void refetch()} disabled={isFetching}>
               <RefreshCcw className={cn("h-4 w-4", isFetching && "animate-spin")} />
               <span className="hidden sm:inline">Refresh</span>
@@ -246,7 +354,7 @@ export default function AdminTenantsPage() {
       />
 
       {/* Filters */}
-      <div className="mb-4 flex flex-col gap-3 sm:flex-row">
+      <div className="mb-4 grid grid-cols-1 gap-3 sm:flex sm:flex-row">
         <div className="relative flex-1">
           <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
           <input
@@ -334,6 +442,51 @@ export default function AdminTenantsPage() {
           />
         ) : (
           <>
+            {/* Phones: stacked cards — the 7-column table is unusable at 360px. */}
+            <ul className="divide-y divide-slate-100 md:hidden">
+              {tenants.map((t) => {
+                const unlimited = t.messageLimit <= 0;
+                return (
+                  <li
+                    key={t.id}
+                    onClick={() => router.push(`/tenants/${t.id}`)}
+                    className="cursor-pointer px-4 py-3 transition hover:bg-slate-50"
+                  >
+                    <div className="flex items-start gap-3">
+                      <Avatar name={t.name} src={t.logo} size="sm" />
+                      <div className="min-w-0 flex-1">
+                        <p className="truncate text-sm font-medium text-slate-900">{t.name}</p>
+                        <p className="truncate text-xs text-slate-500">
+                          {accountLabel(t)}
+                          {t.accountType === "RESELLER" && ` · ${t.clients} client${t.clients === 1 ? "" : "s"}`}
+                          {t.category && ` · ${t.category}`}
+                        </p>
+                      </div>
+                      <div className="relative shrink-0">{renderRowMenu(t)}</div>
+                    </div>
+                    <div className="mt-2 flex flex-wrap items-center gap-2 pl-11">
+                      <AdminBadge tone={planTone(t.plan)}>{t.plan ?? "—"}</AdminBadge>
+                      <AdminBadge tone={t.isActive ? "emerald" : "rose"}>
+                        <span className="h-1.5 w-1.5 rounded-full bg-current" />
+                        {t.isActive ? "Active" : "Suspended"}
+                      </AdminBadge>
+                      {t.accountType !== "RESELLER" && <WhatsAppBadge count={t.whatsappNumbers ?? 0} />}
+                      <span className="text-xs text-slate-500">
+                        {t.users ?? 0} user{(t.users ?? 0) === 1 ? "" : "s"} · {formatDate(t.createdAt)}
+                      </span>
+                    </div>
+                    <div className="mt-2 flex items-end gap-2 pl-11">
+                      <UsageBar used={t.messagesThisMonth} limit={t.messageLimit} />
+                      <p className="text-[11px] text-slate-400">
+                        of {unlimited ? "Unlimited" : formatCompact(t.messageLimit)} msgs / mo
+                      </p>
+                    </div>
+                  </li>
+                );
+              })}
+            </ul>
+
+            <div className="hidden md:block">
             <AdminTable>
               <thead className="border-b border-slate-200 bg-slate-50">
                 <tr>
@@ -381,96 +534,27 @@ export default function AdminTenantsPage() {
                         </p>
                       </td>
                       <td className={tdClass}>
-                        <AdminBadge tone={t.isActive ? "emerald" : "rose"}>
-                          <span className="h-1.5 w-1.5 rounded-full bg-current" />
-                          {t.isActive ? "Active" : "Suspended"}
-                        </AdminBadge>
+                        <span className="flex flex-wrap gap-1">
+                          <AdminBadge tone={t.isActive ? "emerald" : "rose"}>
+                            <span className="h-1.5 w-1.5 rounded-full bg-current" />
+                            {t.isActive ? "Active" : "Suspended"}
+                          </AdminBadge>
+                          {t.accountType !== "RESELLER" && <WhatsAppBadge count={t.whatsappNumbers ?? 0} />}
+                        </span>
                       </td>
                       <td className={cn(tdClass, "text-slate-500")}>{formatDate(t.createdAt)}</td>
                       <td className={cn(tdClass, "relative text-right")}>
-                        <button
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            setMenuFor(menuFor === t.id ? null : t.id);
-                          }}
-                          aria-label={`Actions for ${t.name}`}
-                          aria-expanded={menuFor === t.id}
-                          className="rounded-lg p-1.5 text-slate-400 transition hover:bg-slate-100 hover:text-slate-700"
-                        >
-                          <MoreHorizontal className="h-4 w-4" />
-                        </button>
-
-                        {menuFor === t.id && (
-                          <>
-                            <div
-                              className="fixed inset-0 z-10"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                setMenuFor(null);
-                              }}
-                              aria-hidden
-                            />
-                            <div
-                              onClick={(e) => e.stopPropagation()}
-                              className="absolute right-4 top-11 z-20 w-48 overflow-hidden rounded-lg border border-slate-200 bg-white py-1 text-left shadow-lg"
-                            >
-                              <MenuItem
-                                icon={Eye}
-                                label="View details"
-                                onClick={() => {
-                                  setMenuFor(null);
-                                  router.push(`/tenants/${t.id}`);
-                                }}
-                              />
-                              <MenuItem
-                                icon={Pencil}
-                                label="Edit name"
-                                onClick={() => {
-                                  setMenuFor(null);
-                                  setEditTenant(t);
-                                }}
-                              />
-                              <MenuItem
-                                icon={RefreshCcw}
-                                label="Change plan"
-                                onClick={() => {
-                                  setMenuFor(null);
-                                  router.push(`/tenants/${t.id}?tab=plan`);
-                                }}
-                              />
-                              <div className="my-1 border-t border-slate-100" />
-                              {t.isActive ? (
-                                <MenuItem
-                                  icon={Pause}
-                                  label="Suspend"
-                                  danger
-                                  onClick={() => {
-                                    setMenuFor(null);
-                                    setSuspendConfirm(t);
-                                  }}
-                                />
-                              ) : (
-                                <MenuItem
-                                  icon={Play}
-                                  label="Activate"
-                                  onClick={() => {
-                                    setMenuFor(null);
-                                    updateTenant.mutate({ id: t.id, isActive: true });
-                                  }}
-                                />
-                              )}
-                            </div>
-                          </>
-                        )}
+                        {renderRowMenu(t)}
                       </td>
                     </tr>
                   );
                 })}
               </tbody>
             </AdminTable>
+            </div>
 
             {/* Pagination */}
-            <div className="flex items-center justify-between border-t border-slate-100 px-4 py-3">
+            <div className="flex items-center justify-between gap-2 border-t border-slate-100 px-4 py-3">
               <p className="text-xs text-slate-500">
                 {total === 0
                   ? "No results"
@@ -480,7 +564,7 @@ export default function AdminTenantsPage() {
                 <button
                   onClick={() => setPage((p) => Math.max(1, p - 1))}
                   disabled={page <= 1}
-                  className="rounded-lg p-1.5 text-slate-500 transition hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-40"
+                  className="rounded-lg p-2.5 text-slate-500 transition hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-40 sm:p-1.5"
                   aria-label="Previous page"
                 >
                   <ChevronLeft className="h-4 w-4" />
@@ -491,7 +575,7 @@ export default function AdminTenantsPage() {
                 <button
                   onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
                   disabled={page >= totalPages}
-                  className="rounded-lg p-1.5 text-slate-500 transition hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-40"
+                  className="rounded-lg p-2.5 text-slate-500 transition hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-40 sm:p-1.5"
                   aria-label="Next page"
                 >
                   <ChevronRight className="h-4 w-4" />
@@ -524,10 +608,10 @@ export default function AdminTenantsPage() {
               Suspending <strong>{suspendConfirm.name}</strong> will lock out all users immediately. Active conversations will stop. You can reactivate at any time.
             </p>
           </div>
-          <div className="mt-4 flex justify-end gap-2">
+          <div className="mt-4 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
             <button
               onClick={() => setSuspendConfirm(null)}
-              className="rounded-lg px-4 py-2 text-sm font-medium text-slate-600 hover:bg-slate-100"
+              className="min-h-10 rounded-lg px-4 py-2 text-sm font-medium text-slate-600 hover:bg-slate-100 sm:min-h-0"
             >
               Cancel
             </button>
@@ -536,7 +620,7 @@ export default function AdminTenantsPage() {
                 updateTenant.mutate({ id: suspendConfirm.id, isActive: false });
                 setSuspendConfirm(null);
               }}
-              className="rounded-lg bg-rose-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-rose-700"
+              className="min-h-10 rounded-lg bg-rose-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-rose-700 sm:min-h-0"
             >
               Suspend
             </button>
@@ -617,18 +701,18 @@ function EditTenantModal({ tenant, onClose }: { tenant: AdminTenant; onClose: ()
           </p>
         )}
 
-        <div className="flex justify-end gap-2 pt-1">
+        <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end pt-1">
           <button
             type="button"
             onClick={onClose}
-            className="rounded-lg px-4 py-2 text-sm font-medium text-slate-600 hover:bg-slate-100"
+            className="min-h-10 rounded-lg px-4 py-2 text-sm font-medium text-slate-600 hover:bg-slate-100 sm:min-h-0"
           >
             Cancel
           </button>
           <button
             type="submit"
             disabled={update.isPending || !name.trim()}
-            className="rounded-lg bg-[#0B6E4F] px-4 py-2 text-sm font-medium text-white transition hover:bg-[#095c42] disabled:opacity-50"
+            className="min-h-10 rounded-lg bg-[#0B6E4F] px-4 py-2 text-sm font-medium text-white transition hover:bg-[#095c42] disabled:opacity-50 sm:min-h-0"
           >
             {update.isPending ? "Saving…" : "Save changes"}
           </button>
@@ -729,8 +813,8 @@ function ProvisionModal({ open, onClose }: { open: boolean; onClose: () => void 
           </div>
           <div className="rounded-lg border border-slate-200 bg-slate-50 p-4 space-y-2">
             <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Login credentials</p>
-            <div className="flex items-center justify-between gap-2">
-              <div>
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div className="min-w-0 break-all">
                 <p className="font-mono text-sm text-slate-800">{result.user.email}</p>
                 <p className="font-mono text-sm text-slate-800">{result.tempPassword}</p>
               </div>
@@ -746,11 +830,11 @@ function ProvisionModal({ open, onClose }: { open: boolean; onClose: () => void 
           <p className="text-xs text-slate-500">
             An invite email was sent to <strong>{result.user.email}</strong> with these credentials. The client should change their password after first login.
           </p>
-          <div className="flex justify-end pt-1">
+          <div className="flex flex-col pt-1 sm:flex-row sm:justify-end">
             <button
               type="button"
               onClick={handleClose}
-              className="rounded-lg bg-[#0B6E4F] px-4 py-2 text-sm font-medium text-white transition hover:bg-[#095c42]"
+              className="min-h-10 rounded-lg bg-[#0B6E4F] px-4 py-2 text-sm font-medium text-white transition hover:bg-[#095c42] sm:min-h-0"
             >
               Done
             </button>
@@ -839,7 +923,7 @@ function ProvisionModal({ open, onClose }: { open: boolean; onClose: () => void 
               ))}
             </select>
           </Field>
-          <div className="grid grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             <Field label="Plan" htmlFor="t-plan" required>
               <select
                 id="t-plan"
@@ -879,18 +963,18 @@ function ProvisionModal({ open, onClose }: { open: boolean; onClose: () => void 
             </p>
           )}
 
-          <div className="flex justify-end gap-2 pt-2">
+          <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end pt-2">
             <button
               type="button"
               onClick={handleClose}
-              className="rounded-lg px-4 py-2 text-sm font-medium text-slate-600 hover:bg-slate-100"
+              className="min-h-10 rounded-lg px-4 py-2 text-sm font-medium text-slate-600 hover:bg-slate-100 sm:min-h-0"
             >
               Cancel
             </button>
             <button
               type="submit"
               disabled={provision.isPending}
-              className="rounded-lg bg-[#0B6E4F] px-4 py-2 text-sm font-medium text-white transition hover:bg-[#095c42] disabled:opacity-50"
+              className="min-h-10 rounded-lg bg-[#0B6E4F] px-4 py-2 text-sm font-medium text-white transition hover:bg-[#095c42] disabled:opacity-50 sm:min-h-0"
             >
               {provision.isPending ? "Provisioning…" : "Provision Tenant"}
             </button>
@@ -898,5 +982,14 @@ function ProvisionModal({ open, onClose }: { open: boolean; onClose: () => void 
         </form>
       )}
     </Modal>
+  );
+}
+
+/** Whether the account has WhatsApp connected — the first thing support asks. */
+function WhatsAppBadge({ count }: { count: number }) {
+  return (
+    <AdminBadge tone={count > 0 ? "emerald" : "slate"}>
+      {count > 0 ? `WhatsApp · ${count}` : "No WhatsApp"}
+    </AdminBadge>
   );
 }

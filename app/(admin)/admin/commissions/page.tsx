@@ -123,7 +123,7 @@ export default function AdminCommissionsPage() {
         </AdminTable>
       )}
       {data && data.pagination.totalPages > 1 && (
-        <div className="mt-3 flex justify-end gap-1">
+        <div className="mt-3 flex justify-end gap-2 sm:gap-1">
           <AdminButton size="sm" variant="secondary" disabled={page <= 1} onClick={() => setPage(page - 1)}>Previous</AdminButton>
           <AdminButton size="sm" variant="secondary" disabled={page >= data.pagination.totalPages} onClick={() => setPage(page + 1)}>Next</AdminButton>
         </div>

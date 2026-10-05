@@ -47,7 +47,7 @@ export default function ResellerPlansPage() {
       <PageHeader
         title="Plans"
         description="Your own plans for your clients. Each is based on a platform plan: same limits, your name and price."
-        action={<Button onClick={() => setOpen(true)}><Plus className="h-4 w-4" /> New plan</Button>}
+        action={<Button className="h-10 sm:h-9" onClick={() => setOpen(true)}><Plus className="h-4 w-4" /> New plan</Button>}
       />
       {error && (
         <p className="mb-4 flex items-center gap-1.5 rounded-lg bg-rose-50 px-3 py-2 text-xs text-rose-700">
@@ -64,16 +64,16 @@ export default function ResellerPlansPage() {
             icon={CreditCard}
             title="No plans of your own yet"
             description="Until you add one, your clients see and buy the platform's standard plans."
-            action={<Button onClick={() => setOpen(true)}><Plus className="h-4 w-4" /> New plan</Button>}
+            action={<Button className="h-10 sm:h-9" onClick={() => setOpen(true)}><Plus className="h-4 w-4" /> New plan</Button>}
           />
         </Card>
       ) : (
         <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
           {plans.map((p) => (
-            <Card key={p.id} className="flex flex-col p-5">
+            <Card key={p.id} className="flex flex-col p-4 sm:p-5">
               <div className="flex items-start justify-between gap-2">
-                <div>
-                  <h2 className="font-semibold text-slate-900">{p.displayName}</h2>
+                <div className="min-w-0">
+                  <h2 className="break-words font-semibold text-slate-900">{p.displayName}</h2>
                   <p className="text-xs text-slate-500">Based on {baseName(p.basePlanId)}</p>
                 </div>
                 <Badge className={p.isActive ? "bg-emerald-50 text-emerald-700 ring-emerald-600/20" : ""}>
@@ -142,7 +142,7 @@ function ResellerRatesCard() {
   if (!data) return null;
 
   return (
-    <Card className="mt-6 p-5">
+    <Card className="mt-6 p-4 sm:p-5">
       <h2 className="text-sm font-semibold text-slate-900">Message prices for your clients</h2>
       <p className="mt-1 text-xs text-slate-500">
         In paise per message (₹0.25 = 25). Leave blank to use the platform price. You can charge more, never less.
@@ -156,7 +156,7 @@ function ResellerRatesCard() {
               <span className="text-xs text-slate-500 sm:w-40">
                 Platform: {r.platformMinor === null ? "not priced" : `${r.platformMinor} paise`}
               </span>
-              <div className="flex items-center gap-2">
+              <div className="flex flex-wrap items-center gap-2">
                 <input
                   type="number"
                   min={r.platformMinor ?? 0}
@@ -247,9 +247,9 @@ function NewPlanModal({ open, onClose, basePlans, onCreated }: { open: boolean; 
             <AlertCircle className="h-3.5 w-3.5 shrink-0" /> {(create.error as Error).message}
           </p>
         )}
-        <div className="flex justify-end gap-2">
-          <Button type="button" variant="secondary" onClick={close}>Cancel</Button>
-          <Button type="submit" disabled={!form.basePlanId || !form.displayName.trim() || !form.priceMonthly || create.isPending}>
+        <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+          <Button type="button" variant="secondary" className="h-10 sm:h-9" onClick={close}>Cancel</Button>
+          <Button type="submit" className="h-10 sm:h-9" disabled={!form.basePlanId || !form.displayName.trim() || !form.priceMonthly || create.isPending}>
             {create.isPending && <Loader2 className="h-4 w-4 animate-spin" />} Create plan
           </Button>
         </div>

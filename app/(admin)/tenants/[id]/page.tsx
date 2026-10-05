@@ -7,7 +7,6 @@ import {
   AlertTriangle,
   ArrowLeft,
   Building2,
-  CheckCircle2,
   Copy,
   KeyRound,
   Mail,
@@ -31,6 +30,9 @@ import {
   planTone,
   type AdminTone,
 } from "@/components/admin/ui";
+import { TenantContactsPanel } from "@/components/admin/TenantContactsPanel";
+import { TenantWhatsAppPanel } from "@/components/admin/TenantWhatsAppPanel";
+import { ViewAsButton } from "@/components/admin/ViewAsButton";
 import { PlanFormModal, type AdminPlan, type PlanFormMode } from "@/components/admin/PlanFormModal";
 import { planOverages, type UsedCounts } from "@/lib/billing/overage";
 import { cn, formatDate } from "@/lib/utils";
@@ -233,7 +235,7 @@ function CategorySelect({ tenant, update }: { tenant: TenantDetail; update: Retu
       value={tenant.category?.id ?? ""}
       disabled={update.isPending || !categories}
       onChange={(e) => update.mutate({ categoryId: e.target.value || null })}
-      className="h-8 rounded-lg bg-white px-2 text-xs text-slate-700 ring-1 ring-inset ring-slate-200 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+      className="h-9 max-w-full rounded-lg bg-white px-2 text-xs text-slate-700 sm:h-8 ring-1 ring-inset ring-slate-200 focus:outline-none focus:ring-2 focus:ring-emerald-500"
       aria-label="Business category"
     >
       <option value="">No category</option>
@@ -270,7 +272,7 @@ function HierarchyPanel({ tenant, update }: { tenant: TenantDetail; update: Retu
     );
   }
 
-  const selectCls = "h-9 rounded-lg bg-white px-2 text-sm text-slate-700 ring-1 ring-inset ring-slate-200 focus:outline-none focus:ring-2 focus:ring-emerald-500";
+  const selectCls = "h-9 max-w-full min-w-0 rounded-lg bg-white px-2 text-sm text-slate-700 ring-1 ring-inset ring-slate-200 focus:outline-none focus:ring-2 focus:ring-emerald-500";
   const kind = tenant.accountType === "CLIENT" ? "CLIENT" : tenant.resellerType ?? "NORMAL";
 
   return (
@@ -312,7 +314,7 @@ function HierarchyPanel({ tenant, update }: { tenant: TenantDetail; update: Retu
           <>
             <Row label="Clients">{tenant._count.children}</Row>
             <Row label="Commission">
-              <span className="inline-flex items-center gap-2">
+              <span className="inline-flex flex-wrap items-center justify-end gap-2">
                 <input
                   type="number"
                   min={0}
@@ -376,13 +378,13 @@ function WalletPanel({ tenantId }: { tenantId: string }) {
     onSuccess: () => { setAmount(""); setNote(""); qc.invalidateQueries({ queryKey: ["admin", "tenant", tenantId, "wallet"] }); },
   });
 
-  const inputCls = "h-9 rounded-lg bg-white px-3 text-sm ring-1 ring-inset ring-slate-200 focus:outline-none focus:ring-2 focus:ring-emerald-500";
+  const inputCls = "h-10 min-w-0 rounded-lg bg-white px-3 sm:h-9 text-sm ring-1 ring-inset ring-slate-200 focus:outline-none focus:ring-2 focus:ring-emerald-500";
   return (
     <AdminPanel title="Wallet" subtitle={data ? `Balance ${inr(data.balanceMinor)}` : "Message credit"}>
       <div className="flex flex-col gap-2 sm:flex-row">
         <input type="number" value={amount} onChange={(e) => setAmount(e.target.value)} placeholder="₹ (negative to deduct)" className={`${inputCls} sm:w-44`} aria-label="Amount in rupees" />
         <input value={note} onChange={(e) => setNote(e.target.value)} placeholder="Note, e.g. NEFT ref 12345" className={`${inputCls} flex-1`} maxLength={200} aria-label="Note" />
-        <AdminButton size="sm" className="h-9" disabled={!Number(amount) || !note.trim() || adjust.isPending} onClick={() => adjust.mutate()}>
+        <AdminButton size="sm" className="h-10 sm:h-9" disabled={!Number(amount) || !note.trim() || adjust.isPending} onClick={() => adjust.mutate()}>
           {Number(amount) < 0 ? "Deduct" : "Add credit"}
         </AdminButton>
       </div>
@@ -417,7 +419,7 @@ export default function TenantDetailPage({ params }: { params: Promise<{ id: str
     return (
       <div className="space-y-6">
         <AdminSkeleton className="h-10 w-48" />
-        <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
+        <div className="grid grid-cols-2 gap-3 sm:grid-cols-4 sm:gap-4">
           {[...Array(4)].map((_, i) => <AdminSkeleton key={i} className="h-24 rounded-xl" />)}
         </div>
         <AdminSkeleton className="h-48 rounded-xl" />
@@ -460,18 +462,22 @@ export default function TenantDetailPage({ params }: { params: Promise<{ id: str
               <span className="h-1.5 w-1.5 rounded-full bg-current" />
               {tenant.isActive ? "Active" : "Suspended"}
             </AdminBadge>
-            <AdminButton
-              variant={tenant.isActive ? "danger" : "secondary"}
-              size="sm"
-              disabled={update.isPending}
-              onClick={() => update.mutate({ isActive: !tenant.isActive })}
-            >
-              {tenant.isActive ? (
-                <><Pause className="h-3.5 w-3.5" /> Suspend</>
-              ) : (
-                <><Play className="h-3.5 w-3.5" /> Activate</>
-              )}
-            </AdminButton>
+            {/* The platform account is the Super Admin's own: suspending it would lock them out. */}
+            {tenant.accountType !== "PLATFORM" && tenant.isActive && <ViewAsButton tenantId={tenant.id} variant="primary" />}
+            {tenant.accountType !== "PLATFORM" && (
+              <AdminButton
+                variant={tenant.isActive ? "danger" : "secondary"}
+                size="sm"
+                disabled={update.isPending}
+                onClick={() => update.mutate({ isActive: !tenant.isActive })}
+              >
+                {tenant.isActive ? (
+                  <><Pause className="h-3.5 w-3.5" /> Suspend</>
+                ) : (
+                  <><Play className="h-3.5 w-3.5" /> Activate</>
+                )}
+              </AdminButton>
+            )}
           </div>
         }
       />
@@ -483,7 +489,7 @@ export default function TenantDetailPage({ params }: { params: Promise<{ id: str
       )}
 
       {/* Stat tiles */}
-      <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-4 sm:gap-4">
         <StatTile icon={Users} label="Users" value={tenant._count.users} tone="violet" />
         <StatTile icon={UserCheck} label="Contacts" value={tenant._count.contacts} tone="sky" />
         <StatTile icon={TrendingUp} label="Leads" value={tenant._count.leads} tone="emerald" />
@@ -541,32 +547,22 @@ export default function TenantDetailPage({ params }: { params: Promise<{ id: str
         <AssignPlanPanel tenant={tenant} />
       </div>
 
-      {/* WhatsApp config */}
-      <div className="mt-6">
-        <AdminPanel title="WhatsApp Configuration" subtitle="Credentials saved in workspace settings">
-          {tenant.settings ? (
-            <dl className="space-y-3 text-sm">
-              <Row label="Phone Number ID">
-                <code className="rounded bg-slate-100 px-1.5 py-0.5 text-xs text-slate-700">
-                  {tenant.settings.waPhoneNumberId ?? "—"}
-                </code>
-              </Row>
-              <Row label="API Key configured">
-                <AdminBadge tone={tenant.settings.hasWaApiKey ? "emerald" : "slate"}>
-                  {tenant.settings.hasWaApiKey ? <><CheckCircle2 className="h-3 w-3" /> Yes</> : "Not set"}
-                </AdminBadge>
-              </Row>
-              <Row label="Timezone">{tenant.settings.timezone ?? "UTC"}</Row>
-            </dl>
-          ) : (
-            <p className="text-sm text-slate-500">No settings configured yet.</p>
-          )}
-        </AdminPanel>
-      </div>
+      {/* WhatsApp — connected numbers per business, with live check / re-sync / disconnect.
+          Reseller accounts never connect a number, so they have none to show. */}
+      {tenant.accountType !== "RESELLER" && (
+        <div className="mt-6">
+          <TenantWhatsAppPanel tenantId={tenant.id} />
+        </div>
+      )}
 
       {/* Users */}
       <div className="mt-6">
         <UsersPanel tenant={tenant} />
+      </div>
+
+      {/* Contacts — delete, restore, block */}
+      <div className="mt-6">
+        <TenantContactsPanel tenantId={tenant.id} />
       </div>
     </>
   );
@@ -689,7 +685,7 @@ function AssignPlanPanel({ tenant }: { tenant: TenantDetail }) {
           )}
         </select>
 
-        <div className="grid grid-cols-2 gap-3">
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
           <div>
             <label className="mb-1 block text-xs font-medium text-slate-500" htmlFor="ap-status">
               Status
@@ -914,11 +910,11 @@ function StatTile({
     amber: "text-amber-700 bg-amber-50",
   };
   return (
-    <AdminCard className="p-4">
+    <AdminCard className="min-w-0 p-3 sm:p-4">
       <div className={cn("mb-2 inline-flex rounded-lg p-2", colors[tone])}>
         <Icon className="h-4 w-4" />
       </div>
-      <p className="text-2xl font-bold text-slate-900">{value.toLocaleString()}</p>
+      <p className="truncate text-xl font-bold text-slate-900 sm:text-2xl">{value.toLocaleString()}</p>
       <p className="mt-0.5 text-xs text-slate-500">{label}</p>
     </AdminCard>
   );
@@ -926,9 +922,9 @@ function StatTile({
 
 function Row({ label, children }: { label: string; children: React.ReactNode }) {
   return (
-    <div className="flex items-center justify-between gap-3">
+    <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1">
       <dt className="shrink-0 text-slate-500">{label}</dt>
-      <dd className="text-right text-slate-800">{children}</dd>
+      <dd className="min-w-0 break-words text-right text-slate-800">{children}</dd>
     </div>
   );
 }
@@ -982,11 +978,11 @@ function UsersPanel({ tenant }: { tenant: TenantDetail }) {
       {resetResult && (
         <div className="mb-4 rounded-lg border border-emerald-200 bg-emerald-50 p-4">
           <p className="text-sm font-semibold text-emerald-800">Password reset for {resetResult.email}</p>
-          <div className="mt-2 flex items-center justify-between gap-3">
-            <code className="font-mono text-sm text-emerald-900">{resetResult.tempPassword}</code>
+          <div className="mt-2 flex flex-wrap items-center justify-between gap-3">
+            <code className="min-w-0 break-all font-mono text-sm text-emerald-900">{resetResult.tempPassword}</code>
             <button
               onClick={copyCredentials}
-              className="flex items-center gap-1.5 rounded-lg border border-emerald-300 bg-white px-3 py-1.5 text-xs font-medium text-emerald-700 transition hover:bg-emerald-50"
+              className="flex min-h-10 items-center gap-1.5 rounded-lg border border-emerald-300 bg-white px-3 py-1.5 sm:min-h-0 text-xs font-medium text-emerald-700 transition hover:bg-emerald-50"
             >
               <Copy className="h-3.5 w-3.5" />
               {copied ? "Copied!" : "Copy"}
@@ -999,9 +995,9 @@ function UsersPanel({ tenant }: { tenant: TenantDetail }) {
 
       <div className="space-y-3">
         {tenant.users.map((u) => (
-          <div key={u.id} className="flex items-center justify-between gap-3 rounded-lg border border-slate-100 bg-slate-50/50 px-4 py-3">
+          <div key={u.id} className="flex flex-col gap-3 rounded-lg border border-slate-100 bg-slate-50/50 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
             <div className="min-w-0 flex-1">
-              <div className="flex items-center gap-2">
+              <div className="flex flex-wrap items-center gap-2">
                 <p className="truncate text-sm font-medium text-slate-900">{u.name}</p>
                 <AdminBadge tone={ROLE_TONE[u.role] ?? "slate"}>
                   {u.role.replace(/_/g, " ")}
@@ -1009,7 +1005,7 @@ function UsersPanel({ tenant }: { tenant: TenantDetail }) {
                 {!u.isActive && <AdminBadge tone="rose">Inactive</AdminBadge>}
               </div>
               <div className="mt-1 flex flex-wrap items-center gap-x-4 gap-y-0.5 text-xs text-slate-500">
-                <span className="flex items-center gap-1"><Mail className="h-3 w-3" />{u.email}</span>
+                <span className="flex min-w-0 items-center gap-1 break-all"><Mail className="h-3 w-3 shrink-0" />{u.email}</span>
                 {u.phone && <span className="flex items-center gap-1"><Phone className="h-3 w-3" />{u.phone}</span>}
               </div>
               {u.lastLoginAt && (
@@ -1022,7 +1018,7 @@ function UsersPanel({ tenant }: { tenant: TenantDetail }) {
               onClick={() => handleReset(u.id)}
               disabled={reset.isPending}
               title="Reset password"
-              className="flex shrink-0 items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-medium text-slate-600 transition hover:border-amber-300 hover:bg-amber-50 hover:text-amber-700 disabled:opacity-50"
+              className="flex min-h-10 shrink-0 items-center justify-center gap-1.5 rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs sm:min-h-0 font-medium text-slate-600 transition hover:border-amber-300 hover:bg-amber-50 hover:text-amber-700 disabled:opacity-50"
             >
               <KeyRound className="h-3.5 w-3.5" />
               Reset password

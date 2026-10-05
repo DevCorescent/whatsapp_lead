@@ -87,7 +87,8 @@ export function Button({ variant = "primary", size = "md", className, ...props }
   };
   const sizes = {
     sm: "h-8 gap-1.5 px-2.5 text-xs",
-    md: "h-9 gap-2 px-3.5 text-sm",
+    // 40px tall on phones — a comfortable tap target; 36px from `sm` up as before.
+    md: "h-10 gap-2 px-3.5 text-sm sm:h-9",
   };
 
   return (
@@ -206,7 +207,9 @@ export function Modal({
   if (!open) return null;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+    // On phones the dialog is a bottom sheet sized to the visible viewport (dvh), so
+    // its header and buttons never sit under the browser's address bar or keyboard.
+    <div className="fixed inset-0 z-50 flex items-end justify-center sm:items-center sm:p-4">
       <div
         className="absolute inset-0 bg-slate-900/40 backdrop-blur-[2px]"
         onClick={onClose}
@@ -217,13 +220,13 @@ export function Modal({
         aria-modal="true"
         aria-label={title}
         className={cn(
-          "relative z-10 w-full max-w-lg rounded-2xl bg-white shadow-2xl ring-1 ring-slate-900/5",
-          "scrollbar-slim max-h-[90vh] overflow-y-auto",
+          "relative z-10 w-full max-w-lg rounded-t-2xl bg-white shadow-2xl ring-1 ring-slate-900/5 sm:rounded-2xl",
+          "scrollbar-slim max-h-[92dvh] overflow-y-auto overscroll-contain sm:max-h-[90dvh]",
           className,
         )}
       >
-        <div className="flex items-start justify-between gap-4 px-6 pb-4 pt-5">
-          <div>
+        <div className="sticky top-0 z-10 flex items-start justify-between gap-4 bg-white px-4 pb-4 pt-5 sm:px-6">
+          <div className="min-w-0">
             <h2 className="text-base font-semibold tracking-tight text-slate-900">{title}</h2>
             {description && <p className="mt-0.5 text-sm text-slate-500">{description}</p>}
           </div>
@@ -235,7 +238,7 @@ export function Modal({
             <X className="h-4.5 w-4.5" />
           </button>
         </div>
-        <div className="px-6 pb-6">{children}</div>
+        <div className="px-4 pb-[max(1.5rem,env(safe-area-inset-bottom))] sm:px-6 sm:pb-6">{children}</div>
       </div>
     </div>
   );
@@ -269,7 +272,8 @@ export function Field({
 }
 
 const controlBase =
-  "w-full rounded-lg bg-white px-3 py-2 text-sm text-slate-900 shadow-sm " +
+  // 16px text on phones: iOS zooms the page into any focused field smaller than that.
+  "w-full rounded-lg bg-white px-3 py-2 text-base text-slate-900 shadow-sm sm:text-sm " +
   "ring-1 ring-inset ring-slate-200 transition placeholder:text-slate-400 " +
   "focus:outline-none focus:ring-2 focus:ring-inset focus:ring-emerald-500 " +
   "disabled:bg-slate-50 disabled:text-slate-400";

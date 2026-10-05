@@ -71,7 +71,12 @@ export async function GET(req: NextRequest) {
     prisma.tenant.findMany({
       where,
       include: {
-        _count: { select: { users: true, contacts: true, leads: true, children: true } },
+        _count: {
+          select: {
+            users: true, contacts: true, leads: true, children: true,
+            whatsAppIntegrations: { where: { isActive: true } },
+          },
+        },
         // The whole plan row, because planLimits() maps it onto the limit shape the
         // rest of the app enforces. Only the display name and the message limit are
         // put on the response below — no plan internals reach the client.
@@ -117,6 +122,8 @@ export async function GET(req: NextRequest) {
     users: t._count.users,
     contacts: t._count.contacts,
     leads: t._count.leads,
+    /** Connected WhatsApp numbers (WhatsAppIntegration rows that are active). */
+    whatsappNumbers: t._count.whatsAppIntegrations,
     // A tenant with no subscription is on the implicit free tier, exactly as
     // resolveTenantPlan() treats it. 0 or less means unlimited (isUnlimited).
     messagesThisMonth: messagesByTenant.get(t.id) ?? 0,
@@ -176,7 +183,7 @@ export async function POST(req: NextRequest) {
 
     await prisma.auditLog.create({
       data: {
-        tenantId: session.user.tenantId,
+        tenantId: (session.user.viewAs?.homeTenantId ?? session.user.tenantId),
         userId: session.user.id,
         action: "ACCOUNT_CREATED",
         resource: "tenant",

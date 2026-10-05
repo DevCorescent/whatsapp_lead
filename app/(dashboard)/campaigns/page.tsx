@@ -43,6 +43,8 @@ import { cn, formatCompact, formatDate } from "@/lib/utils";
 import {
   detectBodyVarSlots,
   extractBodyVarNames,
+  dynamicUrlButtons,
+  renderButtonUrl,
   unsupportedTemplateReason,
 } from "@/lib/campaigns/templateVars";
 
@@ -100,6 +102,7 @@ interface CampaignPayload {
   templateId?: string;
   segmentId?: string;
   bodyVarMapping: string[];
+  urlButtonMapping: string[];
   all?: boolean;
   contactIds?: string[];
   excludeContactIds?: string[];
@@ -261,13 +264,61 @@ function CampaignsPageInner() {
   const isDuplicating = (id: string) =>
     duplicateMutation.isPending && duplicateMutation.variables === id;
 
+  // Row actions are shared by the desktop table and the phone card list.
+  const renderActions = (c: Campaign) => {
+    const toggling = isToggling(c.id);
+    const duplicating = isDuplicating(c.id);
+    return (
+    <>
+      <Button
+        variant="ghost"
+        size="sm"
+        aria-label={c.status === "RUNNING" ? "Pause campaign" : "Launch campaign"}
+        onClick={() => toggleMutation.mutate({ id: c.id, current: c.status })}
+        disabled={toggling || c.status === "COMPLETED" || c.status === "FAILED" || c.status === "CANCELLED"}
+      >
+        {toggling ? (
+          <Loader2 className="h-4 w-4 animate-spin" />
+        ) : c.status === "RUNNING" ? (
+          <Pause className="h-4 w-4" />
+        ) : (
+          <Play className="h-4 w-4" />
+        )}
+      </Button>
+      <Button
+        variant="ghost"
+        size="sm"
+        aria-label="Duplicate campaign"
+        onClick={() => duplicateMutation.mutate(c.id)}
+        disabled={duplicating}
+      >
+        {duplicating ? (
+          <Loader2 className="h-4 w-4 animate-spin" />
+        ) : (
+          <Copy className="h-4 w-4" />
+        )}
+      </Button>
+      <Button
+        variant="ghost"
+        size="sm"
+        aria-label="Delete campaign"
+        className="text-rose-600 hover:bg-rose-50"
+        onClick={() => setDeletingId(c.id)}
+        disabled={c.status === "RUNNING"}
+      >
+        <Trash2 className="h-4 w-4" />
+      </Button>
+    </>
+    );
+  };
+
   return (
     <div>
       <PageHeader
         title="Campaigns"
         description="Broadcast WhatsApp templates to a segment and track delivery in real time."
         action={
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             <ExportButton resource="campaigns" />
             <Link
               href="/broadcast"
@@ -324,7 +375,54 @@ function CampaignsPageInner() {
             }
           />
         ) : (
-          <div className="scrollbar-slim overflow-x-auto">
+          <>
+          {/* Phones: stacked cards instead of the 11-column table */}
+          <ul className="divide-y divide-slate-100 md:hidden">
+            {campaigns.map((c) => (
+              <li key={c.id} className="p-4">
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <p className="truncate font-medium text-slate-900">{c.name}</p>
+                    {c.scheduledAt ? (
+                      <p className="mt-0.5 flex items-center gap-1 text-xs text-slate-500">
+                        <CalendarClock className="h-3 w-3" />
+                        {formatDate(c.scheduledAt)}
+                      </p>
+                    ) : (
+                      <p className="mt-0.5 text-xs text-slate-500">{formatDate(c.createdAt)}</p>
+                    )}
+                  </div>
+                  <Badge className={STATUS_STYLE[c.status]}>{c.status}</Badge>
+                </div>
+                <div className="mt-3 grid grid-cols-2 gap-x-4 gap-y-3">
+                  {(
+                    [
+                      ["Sent", c.sentCount],
+                      ["Delivered", c.deliveredCount ?? 0],
+                      ["Read", c.readCount ?? 0],
+                      ["Clicked", c.clickedCount ?? 0],
+                    ] as const
+                  ).map(([label, value]) => (
+                    <div key={label}>
+                      <p className="mb-0.5 text-[11px] font-medium uppercase tracking-wide text-slate-400">{label}</p>
+                      <RateBar value={value} total={c.totalCount} />
+                    </div>
+                  ))}
+                </div>
+                <div className="mt-3 flex items-center justify-between gap-2">
+                  <p className="text-xs text-slate-500">
+                    <span className="tabular-nums text-slate-700">{formatCompact(c.totalCount)}</span> recipients ·{" "}
+                    <span className="tabular-nums">{formatCompact(c.repliedCount ?? 0)}</span> replied ·{" "}
+                    <span className="tabular-nums text-rose-600">{formatCompact(c.failedCount)}</span> failed
+                  </p>
+                  <div className="flex shrink-0 items-center gap-1 [&>button]:h-10 [&>button]:w-10">
+                    {renderActions(c)}
+                  </div>
+                </div>
+              </li>
+            ))}
+          </ul>
+          <div className="scrollbar-slim hidden overflow-x-auto md:block">
             <table className="w-full min-w-5xl text-left text-sm">
               <thead className="border-b border-slate-200 bg-slate-50 text-xs uppercase tracking-wide text-slate-500">
                 <tr>
@@ -343,8 +441,6 @@ function CampaignsPageInner() {
               </thead>
               <tbody className="divide-y divide-slate-100">
                 {campaigns.map((c) => {
-                  const toggling = isToggling(c.id);
-                  const duplicating = isDuplicating(c.id);
                   return (
                     <tr key={c.id} className="hover:bg-slate-50">
                       <td className="px-4 py-3">
@@ -386,46 +482,7 @@ function CampaignsPageInner() {
                         {formatDate(c.createdAt)}
                       </td>
                       <td className="px-4 py-3">
-                        <div className="flex items-center justify-end gap-1">
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            aria-label={c.status === "RUNNING" ? "Pause campaign" : "Launch campaign"}
-                            onClick={() => toggleMutation.mutate({ id: c.id, current: c.status })}
-                            disabled={toggling || c.status === "COMPLETED" || c.status === "FAILED" || c.status === "CANCELLED"}
-                          >
-                            {toggling ? (
-                              <Loader2 className="h-4 w-4 animate-spin" />
-                            ) : c.status === "RUNNING" ? (
-                              <Pause className="h-4 w-4" />
-                            ) : (
-                              <Play className="h-4 w-4" />
-                            )}
-                          </Button>
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            aria-label="Duplicate campaign"
-                            onClick={() => duplicateMutation.mutate(c.id)}
-                            disabled={duplicating}
-                          >
-                            {duplicating ? (
-                              <Loader2 className="h-4 w-4 animate-spin" />
-                            ) : (
-                              <Copy className="h-4 w-4" />
-                            )}
-                          </Button>
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            aria-label="Delete campaign"
-                            className="text-rose-600 hover:bg-rose-50"
-                            onClick={() => setDeletingId(c.id)}
-                            disabled={c.status === "RUNNING"}
-                          >
-                            <Trash2 className="h-4 w-4" />
-                          </Button>
-                        </div>
+                        <div className="flex items-center justify-end gap-1">{renderActions(c)}</div>
                       </td>
                     </tr>
                   );
@@ -433,6 +490,7 @@ function CampaignsPageInner() {
               </tbody>
             </table>
           </div>
+          </>
         )}
       </Card>
 
@@ -451,7 +509,7 @@ function CampaignsPageInner() {
             {(deleteMutation.error as Error).message}
           </p>
         )}
-        <div className="flex justify-end gap-2 pt-2">
+        <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end [&>button]:h-10 [&>button]:w-full sm:[&>button]:h-9 sm:[&>button]:w-auto pt-2">
           <Button
             variant="secondary"
             onClick={() => setDeletingId(null)}
@@ -495,6 +553,9 @@ function CreateCampaignModal({
   const [name, setName] = useState("");
   const [templateId, setTemplateId] = useState("");
   const [bodyVarMapping, setBodyVarMapping] = useState<string[]>([]);
+  // Dynamic URL buttons: a contact field ("name" / "phone" / "company") or literal text per link.
+  const [urlSource, setUrlSource] = useState<string[]>([]);
+  const [urlText, setUrlText] = useState<string[]>([]);
   const [audienceMode, setAudienceMode] = useState<"all" | "selected" | "segment">(initialSegmentId ? "segment" : "all");
   const [segmentId, setSegmentId] = useState(initialSegmentId ?? "");
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
@@ -535,6 +596,7 @@ function CreateCampaignModal({
   const selectedTemplateBody = selectedTemplate?.body ?? "";
   const varSlotCount = detectBodyVarSlots(selectedTemplateBody);
   const namedVarLabels = extractBodyVarNames(selectedTemplateBody);
+  const urlButtons = selectedTemplate ? dynamicUrlButtons(selectedTemplate) : [];
 
   // The mapping is the user's to edit, so it is state rather than a derived
   // value — but it must start over when a different template is picked, since
@@ -546,6 +608,8 @@ function CreateCampaignModal({
   if (selectedTemplateId !== mappedTemplateId) {
     setMappedTemplateId(selectedTemplateId);
     setBodyVarMapping(Array.from({ length: varSlotCount }, () => "name"));
+    setUrlSource(urlButtons.map(() => "custom"));
+    setUrlText(urlButtons.map(() => ""));
     setHeaderMediaUrl("");
     setHeaderMediaId("");
   }
@@ -659,6 +723,7 @@ function CreateCampaignModal({
       name,
       templateId,
       bodyVarMapping,
+      urlButtonMapping,
       ...(audienceMode === "all"
         ? { all: true }
         : audienceMode === "segment"
@@ -688,7 +753,11 @@ function CreateCampaignModal({
     selectedTemplate?.headerType === "VIDEO" ||
     selectedTemplate?.headerType === "DOCUMENT";
 
+  const urlButtonMapping = urlSource.map((src, i) => (src === "custom" ? (urlText[i] ?? "").trim() : src));
+  const missingUrl = urlSource.some((src, i) => src === "custom" && !(urlText[i] ?? "").trim());
+
   const canSubmit =
+    !missingUrl &&
     name.trim() &&
     templateId &&
     !create.isPending &&
@@ -859,10 +928,54 @@ function CreateCampaignModal({
           </div>
         )}
 
+        {/* Dynamic URL buttons */}
+        {urlButtons.length > 0 && (
+          <div>
+            <span className="mb-1.5 block text-sm font-medium text-slate-700">Button links</span>
+            <div className="space-y-3">
+              {urlButtons.map((button, i) => (
+                <div key={button.index}>
+                  <p className="mb-1 break-all text-xs text-slate-500">
+                    <span className="font-medium text-slate-700">“{button.text}”</span> opens{" "}
+                    <span className="font-mono text-[11px]">{button.url}</span>
+                  </p>
+                  <div className="flex flex-col gap-2 sm:flex-row">
+                    <select
+                      className={cn(inputClass, "sm:w-48")}
+                      value={urlSource[i] ?? "custom"}
+                      onChange={(e) => setUrlSource((prev) => prev.map((v, j) => (j === i ? e.target.value : v)))}
+                      aria-label={`Source for the ${button.text} link`}
+                    >
+                      <option value="custom">Custom text</option>
+                      {CONTACT_FIELD_OPTIONS.map((f) => (
+                        <option key={f.value} value={f.value}>{f.label}</option>
+                      ))}
+                    </select>
+                    {(urlSource[i] ?? "custom") === "custom" && (
+                      <input
+                        className={inputClass}
+                        value={urlText[i] ?? ""}
+                        onChange={(e) => setUrlText((prev) => prev.map((v, j) => (j === i ? e.target.value : v)))}
+                        placeholder="e.g. ABC123"
+                        aria-label={`Link value for ${button.text}`}
+                      />
+                    )}
+                  </div>
+                  {(urlSource[i] ?? "custom") === "custom" && urlText[i]?.trim() && (
+                    <p className="mt-1 break-all text-[11px] text-slate-400">
+                      Link: {renderButtonUrl(button.url, encodeURIComponent(urlText[i].trim()))}
+                    </p>
+                  )}
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
         {/* Audience */}
         <div>
           <span className="mb-1.5 block text-sm font-medium text-slate-700">Audience</span>
-          <div className="flex gap-2">
+          <div className="grid grid-cols-1 gap-2 sm:flex">
             <button
               type="button"
               onClick={() => setAudienceMode("all")}
@@ -1007,7 +1120,7 @@ function CreateCampaignModal({
           </p>
         )}
 
-        <div className="flex justify-end gap-2 pt-2">
+        <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end [&>button]:h-10 [&>button]:w-full sm:[&>button]:h-9 sm:[&>button]:w-auto pt-2">
           <Button
             type="button"
             variant="secondary"
@@ -1044,7 +1157,7 @@ function CreateCampaignModal({
       {reviewData && (
         <div className="space-y-4">
           {reviewData.cost && reviewData.cost.estimatedCostMinor > 0 && (
-            <p className="flex items-center justify-between gap-3 rounded-lg bg-slate-50 px-3 py-2 text-sm">
+            <p className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1 rounded-lg bg-slate-50 px-3 py-2 text-sm">
               <span className="text-slate-600">
                 Estimated cost · {reviewData.cost.units.toLocaleString()} messages
               </span>
@@ -1060,7 +1173,7 @@ function CreateCampaignModal({
             removed={reviewRemoved}
             onRemovedChange={setReviewRemoved}
           />
-          <div className="flex justify-end gap-2 border-t border-slate-100 pt-4">
+          <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end [&>button]:h-10 [&>button]:w-full sm:[&>button]:h-9 sm:[&>button]:w-auto border-t border-slate-100 pt-4">
             <Button variant="secondary" onClick={() => setReviewData(null)} disabled={create.isPending}>
               Back
             </Button>

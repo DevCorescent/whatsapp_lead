@@ -170,7 +170,7 @@ export function QuickRepliesTab() {
 
             {error && <p className="text-sm text-rose-600">{error}</p>}
 
-            <div className="flex justify-end gap-2">
+            <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end max-sm:[&>button]:h-10 max-sm:[&>button]:w-full">
               <Button variant="secondary" onClick={close} disabled={saving}>
                 Cancel
               </Button>

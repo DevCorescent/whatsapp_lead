@@ -45,6 +45,8 @@ import { findBlacklisted } from "@/lib/blacklist";
 import { queuePendingRecipients } from "@/lib/campaigns/jobs";
 import {
   FIELD_PREFIX,
+  dynamicUrlButtons,
+  hasOtpButton,
   resolveBodyParams,
   unsupportedTemplateReason,
 } from "@/lib/campaigns/templateVars";
@@ -108,6 +110,11 @@ const createCampaignSchema = z.object({
    * "company"), an imported column ("field:Subject1"), or literal text.
    */
   bodyVarMapping: z.array(z.string().max(1000, "A variable value is too long")).max(50).default([]),
+  /**
+   * One entry per dynamic URL button (the link's `{{1}}`), in button order — the same
+   * forms as `bodyVarMapping`.
+   */
+  urlButtonMapping: z.array(z.string().max(1000, "A button link value is too long")).max(10).default([]),
   /** Public URL for a media header (IMAGE / VIDEO / DOCUMENT templates). */
   headerMediaUrl: z.string().url("Header media must be a valid URL").optional(),
   /** Meta media ID from a pre-uploaded asset — alternative to headerMediaUrl. */
@@ -387,7 +394,11 @@ async function createCampaign(
           personalised: Boolean(input.recipientFields),
           excluded: excludedCount,
         },
-        metadata: { ...spec.metadata, bodyVarMapping: input.bodyVarMapping } as Prisma.InputJsonObject,
+        metadata: {
+          ...spec.metadata,
+          bodyVarMapping: input.bodyVarMapping,
+          urlButtonMapping: input.urlButtonMapping,
+        } as Prisma.InputJsonObject,
       },
       select: { id: true },
     });
@@ -442,7 +453,13 @@ async function whatsappSpec(tenantId: string, businessId: string, input: CreateC
     return { ok: false, status: 409, error: "WhatsApp is not connected for this workspace" };
   }
 
-  const buttons = Array.isArray(template.buttons) ? (template.buttons as { type: string }[]) : [];
+  // Every dynamic link needs a value, or Meta rejects each message (#132000).
+  const urlButtons = dynamicUrlButtons(template);
+  const urlValues = input.urlButtonMapping.slice(0, urlButtons.length);
+  if (urlButtons.length && (urlValues.length < urlButtons.length || urlValues.some((v) => !v.trim()))) {
+    return { ok: false, status: 400, error: `Fill in the link for the "${urlButtons[0].text}" button` };
+  }
+
   const rateCategory = whatsappCategory(template.category);
   return {
     ok: true,
@@ -456,7 +473,8 @@ async function whatsappSpec(tenantId: string, businessId: string, input: CreateC
         headerMediaUrl: input.headerMediaUrl ?? null,
         headerMediaId: input.headerMediaId ?? null,
         headerType: template.headerType ?? null,
-        hasOtpButton: buttons.some((b) => b.type === "OTP"),
+        hasOtpButton: hasOtpButton(template),
+        urlButtonIndexes: urlButtons.map((b) => b.index),
         templateBody: template.body,
       },
     },
@@ -520,7 +538,7 @@ export async function POST(req: NextRequest) {
 
     // Imported columns only exist for pasted/imported numbers; a `field:` variable anywhere else
     // would send "-" to everyone.
-    const usesFields = input.bodyVarMapping.some((m) => m.startsWith(FIELD_PREFIX));
+    const usesFields = [...input.bodyVarMapping, ...input.urlButtonMapping].some((m) => m.startsWith(FIELD_PREFIX));
     if (usesFields && !(input.numbers && input.recipientFields)) {
       return NextResponse.json(
         { success: false, error: "Spreadsheet column variables need an imported recipient file" },
@@ -618,6 +636,7 @@ export async function POST(req: NextRequest) {
           sample: {
             phone: first.phone,
             bodyParams: resolveBodyParams(input.bodyVarMapping, first),
+            urlParams: resolveBodyParams(input.urlButtonMapping, first),
           },
           ...(input.includeRecipients && {
             recipients: audience.recipients.map((r) => ({

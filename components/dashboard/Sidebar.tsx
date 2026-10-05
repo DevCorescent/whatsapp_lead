@@ -79,17 +79,17 @@ const RESELLER_NAV = [
     items: [
       { href: "/reseller", label: "Overview", icon: LayoutDashboard, roles: null },
       { href: "/reseller/clients", label: "Clients", icon: Building2, roles: null },
-      { href: "/reseller/plans", label: "Plans", icon: CreditCard, roles: ["TENANT_OWNER", "ADMIN"] },
-      { href: "/reseller/commissions", label: "Commissions", icon: IndianRupee, roles: ["TENANT_OWNER", "ADMIN", "MANAGER"] },
-      { href: "/wallet", label: "Wallet", icon: Wallet, roles: ["TENANT_OWNER", "ADMIN"] },
-      { href: "/reseller/branding", label: "Branding", icon: Palette, roles: ["TENANT_OWNER", "ADMIN"], whiteLabelOnly: true },
+      { href: "/reseller/plans", label: "Plans", icon: CreditCard, roles: ["SUPER_ADMIN", "TENANT_OWNER", "ADMIN"] },
+      { href: "/reseller/commissions", label: "Commissions", icon: IndianRupee, roles: ["SUPER_ADMIN", "TENANT_OWNER", "ADMIN", "MANAGER"] },
+      { href: "/wallet", label: "Wallet", icon: Wallet, roles: ["SUPER_ADMIN", "TENANT_OWNER", "ADMIN"] },
+      { href: "/reseller/branding", label: "Branding", icon: Palette, roles: ["SUPER_ADMIN", "TENANT_OWNER", "ADMIN"], whiteLabelOnly: true },
     ],
   },
   {
     section: "Manage",
     items: [
-      { href: "/team", label: "Team", icon: UserCog, roles: ["TENANT_OWNER", "ADMIN", "MANAGER"] },
-      { href: "/settings", label: "Settings", icon: Settings, roles: ["TENANT_OWNER", "ADMIN"] },
+      { href: "/team", label: "Team", icon: UserCog, roles: ["SUPER_ADMIN", "TENANT_OWNER", "ADMIN", "MANAGER"] },
+      { href: "/settings", label: "Settings", icon: Settings, roles: ["SUPER_ADMIN", "TENANT_OWNER", "ADMIN"] },
     ],
   },
 ];

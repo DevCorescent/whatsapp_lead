@@ -67,8 +67,8 @@ export default function AuditLogsPage() {
         description="Every action across all workspaces, in chronological order."
       />
 
-      <div className="mb-4 flex items-center gap-3">
-        <div className="relative max-w-sm flex-1">
+      <div className="mb-4 flex flex-wrap items-center gap-3">
+        <div className="relative min-w-0 flex-1 basis-56 sm:max-w-sm">
           <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
           <input
             type="search"
@@ -155,12 +155,12 @@ export default function AuditLogsPage() {
       {pages > 1 && (
         <div className="mt-4 flex items-center justify-center gap-2">
           <button onClick={() => setPage((p) => Math.max(1, p - 1))} disabled={page === 1}
-            className="rounded-lg px-3 py-1.5 text-sm text-slate-500 hover:bg-slate-100 disabled:opacity-40">
+            className="min-h-10 rounded-lg px-3 py-1.5 text-sm text-slate-500 hover:bg-slate-100 disabled:opacity-40 sm:min-h-0">
             Previous
           </button>
           <span className="text-sm text-slate-500">Page {page} of {pages}</span>
           <button onClick={() => setPage((p) => Math.min(pages, p + 1))} disabled={page === pages}
-            className="rounded-lg px-3 py-1.5 text-sm text-slate-500 hover:bg-slate-100 disabled:opacity-40">
+            className="min-h-10 rounded-lg px-3 py-1.5 text-sm text-slate-500 hover:bg-slate-100 disabled:opacity-40 sm:min-h-0">
             Next
           </button>
         </div>

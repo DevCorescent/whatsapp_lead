@@ -66,7 +66,7 @@ export default function SettingsPage() {
             aria-selected={activeTab === t.key}
             onClick={() => setTab(t.key)}
             className={cn(
-              "-mb-px flex shrink-0 items-center gap-2 border-b-2 px-4 py-2.5 text-sm font-medium transition",
+              "-mb-px flex shrink-0 items-center gap-2 whitespace-nowrap border-b-2 px-3 py-2.5 text-sm font-medium transition sm:px-4",
               activeTab === t.key
                 ? "border-emerald-600 text-emerald-700"
                 : "border-transparent text-slate-500 hover:border-slate-300 hover:text-slate-800",

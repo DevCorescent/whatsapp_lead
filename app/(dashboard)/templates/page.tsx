@@ -148,6 +148,85 @@ export default function TemplatesPage() {
     }
   };
 
+  // Shared by the desktop table and the phone card list.
+  const renderStatus = (t: TemplateDTO) => (
+    <div className="flex items-center gap-1.5">
+      <Badge className={STATUS_STYLE[t.status] ?? STATUS_STYLE.DRAFT}>
+        {STATUS_LABEL[t.status] ?? t.status}
+      </Badge>
+      {t.status === "REJECTED" && (
+        <button
+          onClick={() => setRejection(t)}
+          className="text-rose-500 hover:text-rose-700"
+          aria-label="View rejection reason"
+          title="View rejection reason"
+        >
+          <AlertCircle className="h-4 w-4" />
+        </button>
+      )}
+    </div>
+  );
+  const renderActions = (t: TemplateDTO) => (
+    <>
+      {EDITABLE.has(t.status) && (
+        <Button
+          variant="ghost"
+          size="sm"
+          title="Submit to Meta"
+          aria-label="Submit to Meta"
+          disabled={submit.isPending && submit.variables === t.id}
+          onClick={() => handleAction(submit.mutateAsync(t.id))}
+        >
+          <Send className="h-4 w-4" />
+        </Button>
+      )}
+      {(t.status === "SUBMITTED" || t.status === "PENDING" || (t.waTemplateId && t.status !== "DRAFT")) && (
+        <Button
+          variant="ghost"
+          size="sm"
+          title="Refresh status"
+          aria-label="Refresh status"
+          disabled={refresh.isPending && refresh.variables === t.id}
+          onClick={() => handleAction(refresh.mutateAsync(t.id))}
+        >
+          <RotateCw className="h-4 w-4" />
+        </Button>
+      )}
+      {EDITABLE.has(t.status) && (
+        <Button
+          variant="ghost"
+          size="sm"
+          title="Edit"
+          aria-label="Edit template"
+          onClick={() => setModal({ open: true, editing: t })}
+        >
+          <Pencil className="h-4 w-4" />
+        </Button>
+      )}
+      <Button
+        variant="ghost"
+        size="sm"
+        title="Duplicate"
+        aria-label="Duplicate template"
+        disabled={duplicate.isPending && duplicate.variables === t.id}
+        onClick={() => handleAction(duplicate.mutateAsync(t.id))}
+      >
+        <Copy className="h-4 w-4" />
+      </Button>
+      <Button
+        variant="ghost"
+        size="sm"
+        title={DELETABLE.has(t.status) ? "Delete" : "Approved/in-review templates can't be deleted"}
+        aria-label="Delete template"
+        className="text-rose-600 hover:bg-rose-50"
+        disabled={!DELETABLE.has(t.status) || (del.isPending && confirmDeleteTemplate?.id === t.id)}
+        onClick={() => { setDeleteError(null); setConfirmDeleteTemplate(t); }}
+      >
+        <Trash2 className="h-4 w-4" />
+      </Button>
+    </>
+  );
+
   return (
     <div>
       <PageHeader
@@ -211,13 +290,13 @@ export default function TemplatesPage() {
         ))}
       </div>
 
-      <div className="mb-4 flex gap-2">
+      <div className="scrollbar-slim mb-4 flex gap-2 overflow-x-auto">
         {CATEGORY_TABS.map((c) => (
           <button
             key={c}
             onClick={() => setCategoryTab(c)}
             className={cn(
-              "rounded-full px-3 py-1 text-xs font-medium transition",
+              "shrink-0 whitespace-nowrap rounded-full px-3 py-1 text-xs font-medium transition",
               categoryTab === c
                 ? "bg-emerald-600 text-white"
                 : "bg-slate-100 text-slate-600 hover:bg-slate-200",
@@ -250,7 +329,29 @@ export default function TemplatesPage() {
             }
           />
         ) : (
-          <div className="scrollbar-slim overflow-x-auto">
+          <>
+          {/* Phones: stacked cards instead of the 7-column table */}
+          <ul className="divide-y divide-slate-100 md:hidden">
+            {templates.map((t) => (
+              <li key={t.id} className="p-4">
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <p className="break-all font-mono text-[13px] font-medium text-slate-900">{t.name}</p>
+                    <p className="mt-0.5 text-xs text-slate-500">
+                      {t.category} · <span className="font-mono">{t.language}</span>
+                      {t.lastSyncedAt && <> · synced {formatDate(t.lastSyncedAt)}</>}
+                    </p>
+                  </div>
+                  <div className="shrink-0">{renderStatus(t)}</div>
+                </div>
+                <p className="mt-2 line-clamp-2 text-xs text-slate-500">{t.body}</p>
+                <div className="mt-2 flex items-center justify-end gap-1 [&>button]:h-10 [&>button]:w-10">
+                  {renderActions(t)}
+                </div>
+              </li>
+            ))}
+          </ul>
+          <div className="scrollbar-slim hidden overflow-x-auto md:block">
             <table className="w-full min-w-[56rem] text-left text-sm">
               <thead className="border-b border-slate-200 bg-slate-50 text-xs uppercase tracking-wide text-slate-500">
                 <tr>
@@ -273,21 +374,7 @@ export default function TemplatesPage() {
                     <td className="px-4 py-3 text-slate-600">{t.category}</td>
                     <td className="px-4 py-3 font-mono text-xs text-slate-600">{t.language}</td>
                     <td className="px-4 py-3">
-                      <div className="flex items-center gap-1.5">
-                        <Badge className={STATUS_STYLE[t.status] ?? STATUS_STYLE.DRAFT}>
-                          {STATUS_LABEL[t.status] ?? t.status}
-                        </Badge>
-                        {t.status === "REJECTED" && (
-                          <button
-                            onClick={() => setRejection(t)}
-                            className="text-rose-500 hover:text-rose-700"
-                            aria-label="View rejection reason"
-                            title="View rejection reason"
-                          >
-                            <AlertCircle className="h-4 w-4" />
-                          </button>
-                        )}
-                      </div>
+                      {renderStatus(t)}
                     </td>
                     <td className="px-4 py-3 whitespace-nowrap text-xs text-slate-500">
                       {t.lastSyncedAt ? formatDate(t.lastSyncedAt) : "—"}
@@ -296,70 +383,14 @@ export default function TemplatesPage() {
                       {t.waTemplateId ? t.waTemplateId.slice(0, 12) + "…" : "—"}
                     </td>
                     <td className="px-4 py-3">
-                      <div className="flex items-center justify-end gap-1">
-                        {EDITABLE.has(t.status) && (
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            title="Submit to Meta"
-                            aria-label="Submit to Meta"
-                            disabled={submit.isPending && submit.variables === t.id}
-                            onClick={() => handleAction(submit.mutateAsync(t.id))}
-                          >
-                            <Send className="h-4 w-4" />
-                          </Button>
-                        )}
-                        {(t.status === "SUBMITTED" || t.status === "PENDING" || (t.waTemplateId && t.status !== "DRAFT")) && (
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            title="Refresh status"
-                            aria-label="Refresh status"
-                            disabled={refresh.isPending && refresh.variables === t.id}
-                            onClick={() => handleAction(refresh.mutateAsync(t.id))}
-                          >
-                            <RotateCw className="h-4 w-4" />
-                          </Button>
-                        )}
-                        {EDITABLE.has(t.status) && (
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            title="Edit"
-                            aria-label="Edit template"
-                            onClick={() => setModal({ open: true, editing: t })}
-                          >
-                            <Pencil className="h-4 w-4" />
-                          </Button>
-                        )}
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          title="Duplicate"
-                          aria-label="Duplicate template"
-                          disabled={duplicate.isPending && duplicate.variables === t.id}
-                          onClick={() => handleAction(duplicate.mutateAsync(t.id))}
-                        >
-                          <Copy className="h-4 w-4" />
-                        </Button>
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          title={DELETABLE.has(t.status) ? "Delete" : "Approved/in-review templates can't be deleted"}
-                          aria-label="Delete template"
-                          className="text-rose-600 hover:bg-rose-50"
-                          disabled={!DELETABLE.has(t.status) || (del.isPending && confirmDeleteTemplate?.id === t.id)}
-                          onClick={() => { setDeleteError(null); setConfirmDeleteTemplate(t); }}
-                        >
-                          <Trash2 className="h-4 w-4" />
-                        </Button>
-                      </div>
+                      <div className="flex items-center justify-end gap-1">{renderActions(t)}</div>
                     </td>
                   </tr>
                 ))}
               </tbody>
             </table>
           </div>
+          </>
         )}
       </Card>
 
@@ -379,7 +410,7 @@ export default function TemplatesPage() {
         <p className="rounded-lg bg-rose-50 px-3 py-2 text-sm text-rose-700">
           {rejection?.rejectionReason || "No reason was provided by Meta."}
         </p>
-        <div className="mt-4 flex justify-end">
+        <div className="mt-4 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end [&>button]:h-10 [&>button]:w-full sm:[&>button]:h-9 sm:[&>button]:w-auto">
           <Button variant="secondary" onClick={() => setRejection(null)}>
             Close
           </Button>
@@ -395,7 +426,7 @@ export default function TemplatesPage() {
         {deleteError && (
           <p className="mb-3 rounded-lg bg-rose-50 px-3 py-2 text-sm text-rose-700">{deleteError}</p>
         )}
-        <div className="flex justify-end gap-2">
+        <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end [&>button]:h-10 [&>button]:w-full sm:[&>button]:h-9 sm:[&>button]:w-auto">
           <Button variant="secondary" onClick={() => { setConfirmDeleteTemplate(null); setDeleteError(null); }} disabled={del.isPending}>
             Cancel
           </Button>
@@ -741,7 +772,7 @@ function TemplateModal({
           <p className="mt-1 text-xs text-slate-500">Lowercase letters, numbers and underscores only.</p>
         </Field>
 
-        <div className="grid grid-cols-2 gap-3">
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
           <Field label="Category" htmlFor="tpl-category" required>
             <select
               id="tpl-category"
@@ -1028,7 +1059,7 @@ function TemplateModal({
                 return (
                   <div key={i} className="space-y-1">
                     <div className="flex items-center gap-2">
-                      <span className="w-24 shrink-0 rounded bg-slate-100 px-2 py-1.5 text-center font-mono text-xs text-slate-600">
+                      <span className="w-20 shrink-0 truncate rounded bg-slate-100 px-2 py-1.5 text-center font-mono text-xs text-slate-600 sm:w-24">
                         {isNamedParams ? `{{${namedParamNames[i] ?? i + 1}}}` : `{{${i + 1}}}`}
                       </span>
                       <input
@@ -1123,7 +1154,7 @@ function TemplateModal({
                           otpType: t === "OTP" ? "COPY_CODE" : undefined,
                         });
                       }}
-                      className={cn(inputClass, "w-44")}
+                      className={cn(inputClass, "w-full sm:w-44")}
                     >
                       {typeOptions.map((t) => (
                         <option key={t.value} value={t.value}>{t.label}</option>
@@ -1138,7 +1169,7 @@ function TemplateModal({
                         maxLength={25}
                       />
                     )}
-                    <button type="button" onClick={() => removeButton(i)} className="text-rose-500 hover:text-rose-700" aria-label="Remove button">
+                    <button type="button" onClick={() => removeButton(i)} className="p-2 text-rose-500 hover:text-rose-700 sm:p-0" aria-label="Remove button">
                       <Trash2 className="h-4 w-4" />
                     </button>
                   </div>
@@ -1263,7 +1294,7 @@ function TemplateModal({
 
         {error && <p className="rounded-lg bg-rose-50 px-3 py-2 text-xs text-rose-700">{error}</p>}
 
-        <div className="flex justify-end gap-2 pt-2">
+        <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end [&>button]:h-10 [&>button]:w-full sm:[&>button]:h-9 sm:[&>button]:w-auto pt-2">
           <Button type="button" variant="secondary" onClick={onClose}>
             Cancel
           </Button>

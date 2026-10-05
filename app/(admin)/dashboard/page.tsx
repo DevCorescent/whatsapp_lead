@@ -181,7 +181,7 @@ export default function AdminDashboardPage() {
       {preview && !isLoading && <PreviewBanner endpoint="GET /api/admin/stats" />}
 
       {/* KPI tiles */}
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+      <div className="grid grid-cols-2 gap-3 sm:gap-4 lg:grid-cols-4">
         <StatTile
           label="Total Tenants"
           value={formatCompact(stats.totalTenants)}
@@ -272,7 +272,7 @@ export default function AdminDashboardPage() {
           className="lg:col-span-2"
           action={<TrendingUp className="h-4 w-4 text-[#0B6E4F]" />}
         >
-          <div className="h-64">
+          <div className="h-56 sm:h-64">
             {isLoading ? (
               <AdminSkeleton className="h-full w-full" />
             ) : signups.length === 0 ? (
@@ -303,7 +303,7 @@ export default function AdminDashboardPage() {
         </AdminPanel>
 
         <AdminPanel title="Plan Distribution" subtitle="Tenants per plan">
-          <div className="h-64">
+          <div className="h-56 sm:h-64">
             {isLoading ? (
               <AdminSkeleton className="h-full w-full" />
             ) : plans.length === 0 ? (

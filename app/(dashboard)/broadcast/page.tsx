@@ -56,6 +56,8 @@ import {
   renderTemplateBody,
   resolveBodyParams,
   unsupportedTemplateReason,
+  dynamicUrlButtons,
+  renderButtonUrl,
 } from "@/lib/campaigns/templateVars";
 import type { RawRow } from "@/lib/import";
 import { cn } from "@/lib/utils";
@@ -84,6 +86,7 @@ interface BroadcastPayload {
   name: string;
   templateId: string;
   bodyVarMapping: string[];
+  urlButtonMapping: string[];
   numbers: string[];
   recipientFields?: Record<string, Record<string, string>>;
   defaultCountryCode: string;
@@ -226,6 +229,9 @@ export default function BroadcastPage() {
   const [templateId, setTemplateId] = useState("");
   const [varSource, setVarSource] = useState<VarSource[]>([]);
   const [varText, setVarText] = useState<string[]>([]);
+  // Dynamic URL buttons: where each link's {{1}} comes from, like the body variables.
+  const [urlSource, setUrlSource] = useState<VarSource[]>([]);
+  const [urlText, setUrlText] = useState<string[]>([]);
   const [media, setMedia] = useState({ mediaId: "", mediaUrl: "" });
 
   // 4. Send
@@ -244,6 +250,9 @@ export default function BroadcastPage() {
 
   const { data: templatesData, isLoading: tplLoading } = useTemplates();
   const approved = (templatesData ?? []).filter((t) => t.status === "APPROVED");
+  // In Meta's review: re-checked each time the list loads, listed here so a missing
+  // template is explained rather than silently absent.
+  const inReview = (templatesData ?? []).filter((t) => t.status === "SUBMITTED" || t.status === "PENDING");
   const template: TemplateDTO | null = approved.find((t) => t.id === templateId) ?? null;
   // What the variable inputs belong to.
   const chosenId = template?.id ?? null;
@@ -251,6 +260,7 @@ export default function BroadcastPage() {
 
   const slotCount = detectBodyVarSlots(template?.body ?? "");
   const slotNames = extractBodyVarNames(template?.body ?? "");
+  const urlButtons = template ? dynamicUrlButtons(template) : [];
   const mediaHeader =
     template?.headerType === "IMAGE" || template?.headerType === "VIDEO" || template?.headerType === "DOCUMENT"
       ? (template.headerType as MediaHeaderType)
@@ -277,12 +287,18 @@ export default function BroadcastPage() {
     setSeededFor(chosenId);
     setVarSource(Array.from({ length: slotCount }, (_, i) => autoSource(slotNames[i], columns)));
     setVarText(Array.from({ length: slotCount }, () => ""));
+    setUrlSource(urlButtons.map(() => "custom"));
+    setUrlText(urlButtons.map(() => ""));
     setMedia({ mediaId: "", mediaUrl: "" });
   }
 
   const bodyVarMapping = varSource.map((src, i) => (src === "custom" ? (varText[i] ?? "").trim() : src));
   const missingVar = varSource.some((src, i) => src === "custom" && !(varText[i] ?? "").trim());
-  const usedColumns = varSource.filter((s) => s.startsWith(FIELD_PREFIX)).map((s) => s.slice(FIELD_PREFIX.length));
+  const urlButtonMapping = urlSource.map((src, i) => (src === "custom" ? (urlText[i] ?? "").trim() : src));
+  const missingUrl = urlSource.some((src, i) => src === "custom" && !(urlText[i] ?? "").trim());
+  const usedColumns = [...varSource, ...urlSource]
+    .filter((s) => s.startsWith(FIELD_PREFIX))
+    .map((s) => s.slice(FIELD_PREFIX.length));
   const withoutSheetData = usedColumns.length ? finalNumbers.filter((p) => !sheet?.rows.has(p)).length : 0;
 
   const scheduleDate = schedule ? new Date(schedule) : null;
@@ -296,6 +312,7 @@ export default function BroadcastPage() {
   if (!template) blockers.push("Select an approved template");
   if (mediaHeader && !media.mediaId && !media.mediaUrl.trim()) blockers.push(`Add the template's ${mediaHeader.toLowerCase()}`);
   if (missingVar) blockers.push("Fill in every template variable");
+  if (missingUrl) blockers.push("Fill in the link for every button");
   if (scheduleInvalid) blockers.push("Pick a date and time to schedule");
 
   // ── Preview values (live, client-side, first recipient) ──
@@ -310,6 +327,17 @@ export default function BroadcastPage() {
       company: "[company]",
       fields: firstFields,
     },
+  );
+
+  const sampleRecipient = {
+    phone: sampleNumber,
+    name: firstFields?.Name ?? firstFields?.name ?? "[contact name]",
+    company: "[company]",
+    fields: firstFields,
+  };
+  const previewLinks = resolveBodyParams(
+    urlButtonMapping.map((m, i) => (urlSource[i] === "custom" && !m ? "{{1}}" : m)),
+    sampleRecipient,
   );
 
   // ── Mutations ──
@@ -332,7 +360,7 @@ export default function BroadcastPage() {
 
   /** Only the columns the template uses (plus Name, the server's name fallback) travel. */
   function recipientFieldsFor(numbers: string[]) {
-    if (!sheet || (usedColumns.length === 0 && !varSource.includes("name"))) return undefined;
+    if (!sheet || (usedColumns.length === 0 && !varSource.includes("name") && !urlSource.includes("name"))) return undefined;
     const keep = [...new Set([...usedColumns, "Name", "name"])];
     const out: Record<string, Record<string, string>> = {};
     for (const p of numbers) {
@@ -355,6 +383,7 @@ export default function BroadcastPage() {
       name: name.trim() || defaultCampaignName(),
       templateId: template.id,
       bodyVarMapping,
+      urlButtonMapping,
       numbers: finalNumbers,
       ...(recipientFields && { recipientFields }),
       defaultCountryCode: countryCode,
@@ -439,7 +468,7 @@ export default function BroadcastPage() {
       <div className="grid items-start gap-5 lg:grid-cols-[minmax(0,1fr)_380px] xl:grid-cols-[minmax(0,1fr)_420px]">
         <div className="min-w-0 space-y-5">
         {/* ── 1. Numbers ─────────────────────────────────────────────────── */}
-        <Card className="p-5">
+        <Card className="p-4 sm:p-5">
           <div className="mb-3 flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
             <SectionTitle step={1} title="Numbers" className="mb-0" />
             <label htmlFor="bc-cc" className="flex items-center gap-2 text-xs font-medium text-slate-600">
@@ -558,7 +587,7 @@ export default function BroadcastPage() {
 
         {/* ── 2. Review ──────────────────────────────────────────────────── */}
         {analysis.valid.length > 0 && (
-          <Card className="p-5">
+          <Card className="p-4 sm:p-5">
             <SectionTitle step={2} title="Review recipients" />
             <RecipientReview
               items={analysis.valid.map((phone) => {
@@ -572,7 +601,7 @@ export default function BroadcastPage() {
         )}
 
         {/* ── 3. Template ────────────────────────────────────────────────── */}
-        <Card className="space-y-4 p-5">
+        <Card className="space-y-4 p-4 sm:p-5">
           <SectionTitle step={3} title="Message" className="mb-0" />
 
           <div className="grid gap-4 md:grid-cols-2">
@@ -630,6 +659,16 @@ export default function BroadcastPage() {
             <Info className="mt-0.5 h-3 w-3 shrink-0" />
             Only Meta-approved templates can be broadcast. Free-text messages are only allowed inside a customer&apos;s 24-hour reply window.
           </p>
+          {inReview.length > 0 && (
+            <p className="-mt-2 flex items-start gap-1 text-xs text-amber-700">
+              <Info className="mt-0.5 h-3 w-3 shrink-0" />
+              <span>
+                {inReview.length} template{inReview.length === 1 ? " is" : "s are"} still waiting for Meta&apos;s approval
+                ({inReview.slice(0, 3).map((t) => t.name).join(", ")}
+                {inReview.length > 3 ? ", …" : ""}). They appear here as soon as Meta approves them.
+              </span>
+            </p>
+          )}
 
           {mediaHeader && template && (
             <HeaderMediaInput
@@ -689,12 +728,55 @@ export default function BroadcastPage() {
               )}
             </div>
           )}
+
+          {urlButtons.length > 0 && (
+            <div>
+              <span className="mb-1.5 block text-sm font-medium text-slate-700">Button links</span>
+              <div className="space-y-3">
+                {urlButtons.map((button, i) => (
+                  <div key={button.index}>
+                    <p className="mb-1 text-xs text-slate-500">
+                      <span className="font-medium text-slate-700">“{button.text}”</span> opens{" "}
+                      <span className="break-all font-mono text-[11px]">{button.url}</span>. Choose what goes in place of{" "}
+                      <span className="font-mono text-[11px]">{"{{1}}"}</span>.
+                    </p>
+                    <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+                      <select
+                        value={urlSource[i] ?? "custom"}
+                        onChange={(e) =>
+                          setUrlSource((prev) => prev.map((v, j) => (j === i ? (e.target.value as VarSource) : v)))
+                        }
+                        className={cn(inputClass, "sm:w-56")}
+                        aria-label={`Source for the ${button.text} link`}
+                      >
+                        {sourceOptions.map((o) => (
+                          <option key={o.value} value={o.value}>{o.label}</option>
+                        ))}
+                      </select>
+                      {(urlSource[i] ?? "custom") === "custom" && (
+                        <input
+                          value={urlText[i] ?? ""}
+                          onChange={(e) => setUrlText((prev) => prev.map((v, j) => (j === i ? e.target.value : v)))}
+                          className={inputClass}
+                          placeholder="e.g. ABC123"
+                          aria-label={`Link value for ${button.text}`}
+                        />
+                      )}
+                    </div>
+                    <p className="mt-1 break-all text-[11px] text-slate-400">
+                      Sample link: {renderButtonUrl(button.url, previewLinks[i] ?? "{{1}}")}
+                    </p>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
         </Card>
         </div>
 
         <div className="min-w-0 space-y-5 lg:sticky lg:top-0">
         {/* ── 3. Preview ─────────────────────────────────────────────────── */}
-        <Card className="p-5">
+        <Card className="p-4 sm:p-5">
           <SectionTitle step={4} title="Preview" />
           {template ? (
             <MessagePreview template={template} values={previewValues} caption={`Sample for ${sampleNumber}`} />
@@ -704,7 +786,7 @@ export default function BroadcastPage() {
         </Card>
 
         {/* ── 4. Send ────────────────────────────────────────────────────── */}
-        <Card className="p-5">
+        <Card className="p-4 sm:p-5">
           <SectionTitle step={5} title="Send" />
 
           <dl className="mb-4 space-y-1.5 rounded-lg bg-slate-50 px-3 py-2.5 text-sm">
@@ -759,7 +841,7 @@ export default function BroadcastPage() {
             </p>
           )}
 
-          <div className="flex flex-col gap-2">
+          <div className="flex flex-col gap-2 [&>button]:h-10 sm:[&>button]:h-9">
             {!scheduling && (
               <Button
                 className="w-full"
@@ -847,7 +929,7 @@ export default function BroadcastPage() {
               Send only to people who agreed to hear from you. Recipients who report or block your number lower its quality rating, and Meta can limit it.
             </p>
 
-            <div className="flex justify-end gap-2">
+            <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end [&>button]:h-10 [&>button]:w-full sm:[&>button]:h-9 sm:[&>button]:w-auto">
               <Button variant="secondary" onClick={() => setConfirm(null)} disabled={send.isPending}>
                 Cancel
               </Button>
@@ -1055,10 +1137,10 @@ function BroadcastProgress({ launch, onNew }: { launch: LaunchResult; onNew: () 
           </details>
         )}
 
-        <div className="mt-6 flex flex-col gap-2 sm:flex-row sm:justify-end">
+        <div className="mt-6 flex flex-col gap-2 sm:flex-row sm:justify-end [&>button]:h-10 sm:[&>button]:h-9">
           <Link
             href="/campaigns"
-            className="inline-flex h-9 items-center justify-center gap-2 rounded-lg bg-white px-3.5 text-sm font-medium text-slate-700 shadow-sm ring-1 ring-inset ring-slate-200 hover:bg-slate-50"
+            className="inline-flex h-10 items-center justify-center gap-2 rounded-lg bg-white px-3.5 text-sm font-medium text-slate-700 shadow-sm ring-1 ring-inset ring-slate-200 hover:bg-slate-50 sm:h-9"
           >
             <Megaphone className="h-4 w-4" />
             View in Campaigns

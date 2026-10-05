@@ -2,7 +2,11 @@
 import { prisma } from "@/lib/prisma";
 import { getBusinessScope } from "@/lib/business";
 import { createContactSchema } from "@/lib/validators/contact";
-import { requirePermission } from "@/lib/permissions";
+import type { Prisma } from "@prisma/client";
+import { can, requirePermission } from "@/lib/permissions";
+import { blacklistedContactPhones } from "@/lib/contactActions";
+import { segmentWhere } from "@/lib/segments";
+import { segmentFiltersSchema } from "@/lib/segmentRules";
 
 /** Keep only tag ids that belong to this business — never link another workspace's tags. */
 async function ownedTagIds(businessId: string, tagIds: string[] | undefined) {
@@ -17,39 +21,71 @@ function normalizeSource(value: unknown) {
   return trimmed.length > 0 ? trimmed : null;
 }
 
+/** Which contacts the list shows: the normal list, blacklisted numbers, or deleted contacts. */
+const STATUSES = ["active", "blocked", "deleted"] as const;
+type ListStatus = (typeof STATUSES)[number];
+
 export async function GET(req: NextRequest) {
   const scope = await getBusinessScope();
   if (!scope) return NextResponse.json({ success: false, error: "Unauthorized" }, { status: 401 });
+  const denied = await requirePermission(scope, "contacts.view");
+  if (denied) return denied;
 
   const { searchParams } = new URL(req.url);
-  const page = Math.max(1, parseInt(searchParams.get("page") ?? "1"));
-  const limit = Math.min(100, parseInt(searchParams.get("limit") ?? "20"));
+  const page = Math.max(1, parseInt(searchParams.get("page") ?? "1") || 1);
+  const limit = Math.min(100, Math.max(1, parseInt(searchParams.get("limit") ?? "20") || 20));
   const search = searchParams.get("search") ?? "";
   // Phones are stored digits-only, so "+91 98765" must search as "9198765".
   const searchDigits = search.replace(/\D/g, "");
   const tagId = searchParams.get("tagId") ?? "";
   const source = searchParams.get("source") ?? "";
+  const segmentId = searchParams.get("segmentId") ?? "";
+  const statusParam = searchParams.get("status") ?? "active";
+  const status: ListStatus = (STATUSES as readonly string[]).includes(statusParam) ? (statusParam as ListStatus) : "active";
 
-  const where = {
+  // A saved segment narrows the list to the contacts its rules match right now.
+  let segmentFilter: Prisma.ContactWhereInput | null = null;
+  if (segmentId) {
+    const segment = await prisma.segment.findFirst({
+      where: { id: segmentId, tenantId: scope.tenantId, businessId: scope.businessId },
+      select: { filters: true },
+    });
+    const rules = segmentFiltersSchema.safeParse(segment?.filters);
+    if (!segment || !rules.success) {
+      return NextResponse.json({ success: false, error: "Segment not found" }, { status: 404 });
+    }
+    segmentFilter = await segmentWhere(scope.tenantId, scope.businessId, rules.data.rules);
+  }
+
+  const blockedPhones = await blacklistedContactPhones(scope.tenantId);
+
+  const where: Prisma.ContactWhereInput = {
     tenantId: scope.tenantId,
     // Contacts are created under the active business (see the `phone_businessId` unique key),
     // so the list must be filtered by it too — otherwise every business in the tenant shows
     // every other business's contacts and switching accounts changes nothing.
     businessId: scope.businessId,
-    isBlocked: false,
-    ...(search && {
-      OR: [
-        { name: { contains: search, mode: "insensitive" as const } },
-        { phone: { contains: searchDigits || search } },
-        { email: { contains: search, mode: "insensitive" as const } },
-        { company: { contains: search, mode: "insensitive" as const } },
-      ],
-    }),
+    // `isBlocked` is the soft-delete flag; blocking a number is the blacklist.
+    isBlocked: status === "deleted",
+    ...(status === "blocked" && { phone: { in: blockedPhones } }),
+    AND: [
+      ...(segmentFilter ? [segmentFilter] : []),
+      ...(search
+        ? [{
+            OR: [
+              { name: { contains: search, mode: "insensitive" as const } },
+              { phone: { contains: searchDigits || search } },
+              { email: { contains: search, mode: "insensitive" as const } },
+              { company: { contains: search, mode: "insensitive" as const } },
+            ],
+          }]
+        : []),
+    ],
     ...(tagId && { tags: { some: { tagId } } }),
     ...(source && { source: { equals: source, mode: "insensitive" as const } }),
   };
 
-  const [total, contacts] = await Promise.all([
+  const [total, contacts, canDelete, canBlock, canManage] = await Promise.all([
     prisma.contact.count({ where }),
     prisma.contact.findMany({
       where,
@@ -61,12 +97,18 @@ export async function GET(req: NextRequest) {
       skip: (page - 1) * limit,
       take: limit,
     }),
+    can(scope, "contacts.delete"),
+    can(scope, "blacklist.manage"),
+    can(scope, "contacts.manage"),
   ]);
 
+  const blocked = new Set(blockedPhones);
   return NextResponse.json({
     success: true,
-    data: contacts,
+    data: contacts.map((c) => ({ ...c, blacklisted: blocked.has(c.phone) })),
     pagination: { page, limit, total, totalPages: Math.ceil(total / limit) },
+    // What this user may do, so the page only offers actions that will succeed.
+    permissions: { delete: canDelete, block: canBlock, manage: canManage },
   });
 }
 

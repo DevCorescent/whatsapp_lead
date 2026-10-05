@@ -131,9 +131,9 @@ export default function ResellerBrandingPage() {
               ? `Your branding is paused${fee.suspendedReason ? ` (${fee.suspendedReason})` : ""}. Your clients currently see the standard branding.`
               : `This month's white-label fee of ${inr(fee.feeMinor)} is unpaid${fee.dueSince ? ` — branding pauses ${fee.graceDays} days after ${new Date(fee.dueSince).toLocaleDateString("en-IN")}` : ""}.`}
           </p>
-          <div className="flex shrink-0 gap-2">
-            <Link href="/wallet" className="inline-flex h-9 items-center rounded-lg px-3 text-sm font-medium text-slate-700 ring-1 ring-inset ring-slate-200 hover:bg-slate-50">Top up</Link>
-            <Button size="sm" className="h-9" disabled={pay.isPending} onClick={() => pay.mutate()}>
+          <div className="flex shrink-0 flex-wrap gap-2">
+            <Link href="/wallet" className="inline-flex h-10 items-center sm:h-9 rounded-lg px-3 text-sm font-medium text-slate-700 ring-1 ring-inset ring-slate-200 hover:bg-slate-50">Top up</Link>
+            <Button size="sm" className="h-10 sm:h-9" disabled={pay.isPending} onClick={() => pay.mutate()}>
               {pay.isPending && <Loader2 className="h-3.5 w-3.5 animate-spin" />} Pay {inr(fee.feeMinor)} now
             </Button>
           </div>
@@ -148,7 +148,7 @@ export default function ResellerBrandingPage() {
 
       <div className="grid items-start gap-5 lg:grid-cols-[minmax(0,1fr)_360px]">
         <form className="space-y-5" onSubmit={(e) => { e.preventDefault(); save.mutate(); }}>
-          <Card className="space-y-4 p-5">
+          <Card className="space-y-4 p-4 sm:p-5">
             <h2 className="text-sm font-semibold text-slate-900">Brand</h2>
             {text("brandName", "Brand name", { required: true, maxLength: 60 })}
             <div className="grid gap-4 sm:grid-cols-2">
@@ -158,7 +158,7 @@ export default function ResellerBrandingPage() {
             <div className="grid gap-4 sm:grid-cols-2">
               <Field label="Primary colour" htmlFor="b-primary">
                 <div className="flex gap-2">
-                  <input type="color" value={color} onChange={set("primaryColor")} className="h-9 w-12 cursor-pointer rounded-lg ring-1 ring-slate-200" aria-label="Pick primary colour" />
+                  <input type="color" value={color} onChange={set("primaryColor")} className="h-9 w-12 shrink-0 cursor-pointer rounded-lg ring-1 ring-slate-200" aria-label="Pick primary colour" />
                   <input id="b-primary" value={form.primaryColor} onChange={set("primaryColor")} className={inputClass} maxLength={7} />
                 </div>
               </Field>
@@ -166,7 +166,7 @@ export default function ResellerBrandingPage() {
             </div>
           </Card>
 
-          <Card className="space-y-4 p-5">
+          <Card className="space-y-4 p-4 sm:p-5">
             <h2 className="flex items-center gap-2 text-sm font-semibold text-slate-900"><Globe className="h-4 w-4" /> Web address</h2>
             {rootDomain && (
               <Field label="Free address" htmlFor="b-subdomain">
@@ -179,7 +179,7 @@ export default function ResellerBrandingPage() {
                     placeholder="yourbrand"
                     maxLength={30}
                   />
-                  <span className="shrink-0 pr-3 text-sm text-slate-400">.{rootDomain}</span>
+                  <span className="max-w-[60%] shrink-0 truncate pr-3 text-sm text-slate-400 sm:max-w-none">.{rootDomain}</span>
                 </div>
                 <p className="mt-1 text-xs text-slate-500">Works straight away — no DNS needed.</p>
               </Field>
@@ -203,7 +203,7 @@ export default function ResellerBrandingPage() {
             )}
           </Card>
 
-          <Card className="space-y-4 p-5">
+          <Card className="space-y-4 p-4 sm:p-5">
             <div className="flex flex-wrap items-center justify-between gap-2">
               <h2 className="flex items-center gap-2 text-sm font-semibold text-slate-900"><LayoutTemplate className="h-4 w-4" /> Landing page</h2>
               <label className="flex items-center gap-2 text-sm text-slate-600">
@@ -235,7 +235,7 @@ export default function ResellerBrandingPage() {
             )}
           </Card>
 
-          <Card className="space-y-4 p-5">
+          <Card className="space-y-4 p-4 sm:p-5">
             <h2 className="flex items-center gap-2 text-sm font-semibold text-slate-900"><FileText className="h-4 w-4" /> Terms &amp; privacy</h2>
             <p className="text-xs text-slate-500">
               Leave empty to use a standard version in your brand&apos;s name. Start a line with # for a heading, and - for a bullet point.
@@ -248,7 +248,7 @@ export default function ResellerBrandingPage() {
             </Field>
           </Card>
 
-          <Card className="space-y-4 p-5">
+          <Card className="space-y-4 p-4 sm:p-5">
             <h2 className="text-sm font-semibold text-slate-900">Login page &amp; contact details</h2>
             {text("loginHeadline", "Login headline", { maxLength: 120, placeholder: `Welcome to ${form.brandName || "your brand"}` })}
             <Field label="Login text" htmlFor="b-sub">
@@ -273,8 +273,8 @@ export default function ResellerBrandingPage() {
               Saved. {save.data?.domainStatus?.message ?? ""}
             </p>
           )}
-          <div className="flex justify-end">
-            <Button type="submit" disabled={!form.brandName.trim() || save.isPending}>
+          <div className="flex flex-col sm:flex-row sm:justify-end">
+            <Button type="submit" className="h-10 sm:h-9" disabled={!form.brandName.trim() || save.isPending}>
               {save.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />} Save branding
             </Button>
           </div>
@@ -282,8 +282,8 @@ export default function ResellerBrandingPage() {
 
         {/* SMTP configuration — send client emails from the reseller's own mail server */}
         {smtpForm && (
-          <Card className="space-y-4 p-5">
-            <div className="flex items-center justify-between">
+          <Card className="space-y-4 p-4 sm:p-5">
+            <div className="flex flex-wrap items-center justify-between gap-2">
               <h2 className="flex items-center gap-2 text-sm font-semibold text-slate-900">
                 <Mail className="h-4 w-4" /> Outbound Email (SMTP)
               </h2>
@@ -331,8 +331,8 @@ export default function ResellerBrandingPage() {
             {saveSMTP.isSuccess && (
               <p className="flex items-center gap-1 text-xs text-emerald-700"><CheckCircle2 className="h-3.5 w-3.5" /> SMTP saved and verified.</p>
             )}
-            <div className="flex justify-end">
-              <Button type="button" variant="secondary" disabled={saveSMTP.isPending} onClick={() => saveSMTP.mutate()}>
+            <div className="flex flex-col sm:flex-row sm:justify-end">
+              <Button type="button" variant="secondary" className="h-10 sm:h-9" disabled={saveSMTP.isPending} onClick={() => saveSMTP.mutate()}>
                 {saveSMTP.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />} Save &amp; test SMTP
               </Button>
             </div>
@@ -341,7 +341,7 @@ export default function ResellerBrandingPage() {
 
         {/* Live preview of the login panel */}
         <Card className="overflow-hidden lg:sticky lg:top-0">
-          <div className="p-6 text-white" style={{ background: `linear-gradient(135deg, ${color}, color-mix(in oklab, ${color} 70%, black))` }}>
+          <div className="p-5 text-white sm:p-6" style={{ background: `linear-gradient(135deg, ${color}, color-mix(in oklab, ${color} 70%, black))` }}>
             <div className="flex items-center gap-2.5">
               {form.logoUrl ? (
                 // eslint-disable-next-line @next/next/no-img-element -- preview of the reseller's own logo URL

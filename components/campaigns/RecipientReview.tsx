@@ -211,7 +211,7 @@ export function RecipientReview({
                 <button
                   type="button"
                   onClick={() => apply([it.key], !showRemoved)}
-                  className="rounded-md p-1 text-slate-400 transition hover:bg-slate-100 hover:text-slate-700"
+                  className="rounded-md p-2 text-slate-400 transition hover:bg-slate-100 hover:text-slate-700 sm:p-1"
                   aria-label={showRemoved ? `Restore +${it.phone}` : `Remove +${it.phone}`}
                   title={showRemoved ? "Restore" : "Remove from this send"}
                 >

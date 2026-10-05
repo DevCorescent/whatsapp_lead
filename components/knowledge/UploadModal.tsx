@@ -202,7 +202,7 @@ export function UploadModal({ open, onClose }: { open: boolean; onClose: () => v
 
         {error && <p className="rounded-lg bg-rose-50 px-3 py-2 text-xs text-rose-700">{error}</p>}
 
-        <div className="flex justify-end gap-2 pt-2">
+        <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end max-sm:[&>button]:h-10 max-sm:[&>button]:w-full pt-2">
           <Button type="button" variant="secondary" onClick={close}>
             Cancel
           </Button>

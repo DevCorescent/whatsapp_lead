@@ -82,7 +82,7 @@ export function Newsletter({ section }: { section: PublicSection<"newsletter"> }
                     aria-invalid={status === "error" || undefined}
                     aria-describedby="newsletter-note"
                     className={cn(
-                      "min-w-0 flex-1 rounded-xl bg-white px-4 py-3 text-sm text-slate-900 shadow-sm ring-1 ring-inset ring-slate-200 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-emerald-500",
+                      "min-w-0 flex-1 rounded-xl bg-white px-4 py-3 text-base text-slate-900 sm:text-sm shadow-sm ring-1 ring-inset ring-slate-200 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-emerald-500",
                       status === "error" && "ring-rose-300",
                     )}
                   />

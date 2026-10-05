@@ -3,6 +3,7 @@ import { z } from "zod";
 import { prisma } from "@/lib/prisma";
 import { guardLimit } from "@/lib/billing/guard";
 import { getBusinessScope } from "@/lib/business";
+import { refreshStaleTemplates } from "@/lib/templates";
 
 const createTemplateSchema = z.object({
   name: z.string().min(1, "Template name is required"),
@@ -30,6 +31,10 @@ export async function GET(req: NextRequest) {
   const scope = await getBusinessScope();
   if (!scope) return NextResponse.json({ success: false, error: "Unauthorized" }, { status: 401 });
   const { tenantId, businessId } = scope;
+
+  // Templates still in Meta's review are re-checked first, so one approved since the
+  // last sync is listed as APPROVED (and can be broadcast) right away.
+  await refreshStaleTemplates(businessId);
 
   try {
     const templates = await prisma.messageTemplate.findMany({

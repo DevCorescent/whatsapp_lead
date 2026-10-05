@@ -15,7 +15,7 @@ const reseller = (role: string, resellerType = "NORMAL") => ({ role, accountType
 const client = (role: string) => ({ role, accountType: "CLIENT" });
 
 const CLIENT_DATA = [
-  "contacts.view", "contacts.manage", "contacts.import", "contacts.export",
+  "contacts.view", "contacts.manage", "contacts.delete", "contacts.import", "contacts.export",
   "conversations.view", "messages.send", "campaigns.view", "campaigns.send",
   "templates.manage", "blacklist.view", "blacklist.manage", "reports.view",
 ] as const;

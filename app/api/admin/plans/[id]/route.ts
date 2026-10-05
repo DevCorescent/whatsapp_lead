@@ -98,7 +98,7 @@ export async function PATCH(req: NextRequest, { params }: Params) {
   });
 
   await recordBillingAudit({
-    tenantId: updated.ownerTenantId ?? plan.ownerTenantId ?? session.user.tenantId,
+    tenantId: updated.ownerTenantId ?? plan.ownerTenantId ?? (session.user.viewAs?.homeTenantId ?? session.user.tenantId),
     userId: session.user.id,
     action: "PLAN_UPDATED",
     resource: "plan",
@@ -135,7 +135,7 @@ export async function DELETE(_req: NextRequest, { params }: Params) {
   await prisma.plan.delete({ where: { id } });
 
   await recordBillingAudit({
-    tenantId: plan.ownerTenantId ?? session.user.tenantId,
+    tenantId: plan.ownerTenantId ?? (session.user.viewAs?.homeTenantId ?? session.user.tenantId),
     userId: session.user.id,
     action: "PLAN_DELETED",
     resource: "plan",

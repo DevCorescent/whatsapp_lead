@@ -89,7 +89,7 @@ export function FaqMenuPicker({
   const loading = docsLoading || setsLoading;
 
   return (
-    <div className="absolute bottom-full left-0 z-20 mb-2 w-80 rounded-xl border border-slate-200 bg-white p-2 shadow-lg">
+    <div className="absolute bottom-full left-0 z-20 mb-2 w-[min(20rem,calc(100vw-2rem))] rounded-xl border border-slate-200 bg-white p-2 shadow-lg">
       <p className="px-2 py-1.5 text-xs font-semibold uppercase tracking-wide text-slate-400">
         Send a question menu
       </p>

@@ -108,10 +108,10 @@ export default function WalletPage() {
         </p>
       )}
 
-      <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_360px]">
+      <div className="grid grid-cols-1 gap-5 lg:grid-cols-[minmax(0,1fr)_360px]">
         <Card className="p-5">
           <p className="text-xs font-medium uppercase tracking-wide text-slate-500">Balance</p>
-          <p className={cn("mt-1 text-4xl font-semibold tabular-nums", low ? "text-amber-700" : "text-slate-900")}>{money(w.balanceMinor)}</p>
+          <p className={cn("mt-1 break-words text-3xl font-semibold tabular-nums sm:text-4xl", low ? "text-amber-700" : "text-slate-900")}>{money(w.balanceMinor)}</p>
           {low && <p className="mt-1 text-sm text-amber-700">Below your alert level — campaigns pause when it runs out.</p>}
 
           {w.canTopUp && (
@@ -124,7 +124,7 @@ export default function WalletPage() {
                     type="button"
                     onClick={() => setAmount(String(p / 100))}
                     className={cn(
-                      "rounded-lg px-3 py-1.5 text-sm font-medium ring-1 ring-inset transition",
+                      "rounded-lg px-3 py-2 text-sm font-medium ring-1 ring-inset transition sm:py-1.5",
                       Number(amount) * 100 === p ? "bg-emerald-50 text-emerald-700 ring-emerald-300" : "bg-white text-slate-600 ring-slate-200 hover:bg-slate-50",
                     )}
                   >
@@ -132,7 +132,7 @@ export default function WalletPage() {
                   </button>
                 ))}
               </div>
-              <div className="mt-3 flex flex-col gap-2 sm:flex-row">
+              <div className="mt-3 flex flex-col gap-2 sm:flex-row max-sm:[&>button]:h-10">
                 <div className="flex items-center rounded-lg bg-white shadow-sm ring-1 ring-inset ring-slate-200 focus-within:ring-2 focus-within:ring-emerald-500 sm:w-48">
                   <span className="pl-3 text-sm text-slate-400">₹</span>
                   <input

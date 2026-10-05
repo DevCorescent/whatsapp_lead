@@ -96,7 +96,7 @@ export async function PUT(req: NextRequest) {
 
   await prisma.auditLog.create({
     data: {
-      tenantId: session!.user.tenantId,
+      tenantId: (session!.user.viewAs?.homeTenantId ?? session!.user.tenantId),
       userId: session!.user.id,
       action: "PERMISSION_CHANGED",
       resource: "role_permission",

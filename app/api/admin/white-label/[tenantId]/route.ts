@@ -59,7 +59,7 @@ export async function PATCH(req: NextRequest, { params }: Params) {
 
   await prisma.auditLog.create({
     data: {
-      tenantId: session.user.tenantId,
+      tenantId: (session.user.viewAs?.homeTenantId ?? session.user.tenantId),
       userId: session.user.id,
       action: "WHITE_LABEL_ADMIN",
       resource: "white_label",

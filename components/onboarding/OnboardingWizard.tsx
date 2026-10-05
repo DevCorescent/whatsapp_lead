@@ -95,8 +95,8 @@ export function OnboardingWizard({ tenantId, tenantName }: { tenantId: string; t
   const { icon: Icon, title, description } = STEP_INFO[step];
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 backdrop-blur-sm p-4">
-      <div className="relative w-full max-w-lg rounded-2xl bg-white shadow-2xl">
+    <div className="fixed inset-0 z-50 flex items-end justify-center bg-slate-900/50 backdrop-blur-sm sm:items-center sm:p-4">
+      <div className="scrollbar-slim relative max-h-dvh w-full max-w-lg overflow-y-auto overscroll-contain rounded-t-2xl bg-white shadow-2xl sm:max-h-[90dvh] sm:rounded-2xl">
         {/* Skip button */}
         <button
           onClick={dismiss}
@@ -119,7 +119,7 @@ export function OnboardingWizard({ tenantId, tenantName }: { tenantId: string; t
           ))}
         </div>
 
-        <div className="p-8">
+        <div className="p-5 pb-[max(1.25rem,env(safe-area-inset-bottom))] sm:p-8">
           {/* Icon + heading */}
           <div className="mb-6 flex flex-col items-center text-center">
             <span className={cn(
@@ -194,7 +194,7 @@ export function OnboardingWizard({ tenantId, tenantName }: { tenantId: string; t
           )}
 
           {/* Actions */}
-          <div className="mt-8 flex items-center justify-between">
+          <div className="mt-8 flex flex-col-reverse gap-3 sm:flex-row sm:items-center sm:justify-between">
             <button
               onClick={() => setStep(STEPS[currentIndex - 1])}
               disabled={currentIndex === 0}
@@ -203,7 +203,7 @@ export function OnboardingWizard({ tenantId, tenantName }: { tenantId: string; t
               ← Back
             </button>
 
-            <div className="flex gap-2">
+            <div className="flex gap-2 max-sm:[&>button]:h-10 max-sm:[&>button]:flex-1">
               {step !== "done" && (
                 <Button variant="secondary" onClick={dismiss}>Skip setup</Button>
               )}

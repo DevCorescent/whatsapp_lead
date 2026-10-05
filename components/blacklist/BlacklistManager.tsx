@@ -132,14 +132,14 @@ export function BlacklistManager({ scope, initialSearch = "" }: { scope: Scope; 
       {/* ── List / history ── */}
       <Card className="min-w-0 overflow-hidden">
         <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 p-4">
-          <div className="flex rounded-lg bg-slate-100 p-0.5 text-sm">
+          <div className="flex max-w-full overflow-x-auto rounded-lg bg-slate-100 p-0.5 text-sm">
             {(["list", "history"] as const).map((v) => (
               <button
                 key={v}
                 type="button"
                 onClick={() => setView(v)}
                 className={cn(
-                  "flex items-center gap-1.5 rounded-md px-3 py-1.5 font-medium transition",
+                  "flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-md px-3 py-1.5 font-medium transition",
                   view === v ? "bg-white text-slate-900 shadow-sm" : "text-slate-500 hover:text-slate-800",
                 )}
               >
@@ -188,7 +188,29 @@ export function BlacklistManager({ scope, initialSearch = "" }: { scope: Scope; 
             />
           ) : (
             <>
-              <div className="scrollbar-slim overflow-x-auto">
+              {/* Phones: one card per number instead of the table */}
+              <ul className="divide-y divide-slate-100 sm:hidden">
+                {entries.map((e) => (
+                  <li key={e.id} className="flex items-start gap-3 px-4 py-3">
+                    <div className="min-w-0 flex-1">
+                      <p className="font-mono text-[13px] text-slate-900">{formatPhone(e.phone)}</p>
+                      {e.contactName && <p className="text-xs text-slate-500">{e.contactName}</p>}
+                      {e.reason && <p className="mt-1 line-clamp-2 text-sm text-slate-600">{e.reason}</p>}
+                      <p className="mt-1 text-xs text-slate-400">
+                        {formatDate(e.createdAt)}
+                        {e.createdBy && <> · by {e.createdBy.name}</>}
+                      </p>
+                    </div>
+                    {canManage && (
+                      <Button variant="ghost" className="shrink-0" onClick={() => setRemoving(e)} aria-label={`Unblock ${formatPhone(e.phone)}`}>
+                        <Trash2 className="h-3.5 w-3.5" />
+                        Unblock
+                      </Button>
+                    )}
+                  </li>
+                ))}
+              </ul>
+              <div className="scrollbar-slim hidden overflow-x-auto sm:block">
                 <table className="w-full min-w-xl text-left text-sm">
                   <thead className="border-b border-slate-200 bg-slate-50 text-xs uppercase tracking-wide text-slate-500">
                     <tr>
@@ -265,8 +287,9 @@ export function BlacklistManager({ scope, initialSearch = "" }: { scope: Scope; 
                       {h.note && <>Note: {h.note}</>}
                     </p>
                   )}
+                  <time className="mt-0.5 block text-xs text-slate-400 sm:hidden">{new Date(h.at).toLocaleString("en-IN", { dateStyle: "medium", timeStyle: "short" })}</time>
                 </div>
-                <time className="shrink-0 text-xs text-slate-400">{new Date(h.at).toLocaleString("en-IN", { dateStyle: "medium", timeStyle: "short" })}</time>
+                <time className="hidden shrink-0 text-xs text-slate-400 sm:block">{new Date(h.at).toLocaleString("en-IN", { dateStyle: "medium", timeStyle: "short" })}</time>
               </li>
             ))}
           </ul>
@@ -276,7 +299,7 @@ export function BlacklistManager({ scope, initialSearch = "" }: { scope: Scope; 
       {/* ── Add ── */}
       <div className="space-y-4 lg:sticky lg:top-0">
         {canManage ? (
-          <Card className="p-5">
+          <Card className="p-4 sm:p-5">
             <h2 className="mb-1 text-sm font-semibold text-slate-900">Block numbers</h2>
             <p className="mb-3 text-xs text-slate-500">
               One per line. Numbers without a country code get +91.
@@ -301,7 +324,7 @@ export function BlacklistManager({ scope, initialSearch = "" }: { scope: Scope; 
               className={inputClass}
               placeholder="e.g. Requested no contact"
             />
-            <Button className="mt-4 w-full" disabled={entered.length === 0 || add.isPending} onClick={() => add.mutate()}>
+            <Button className="mt-4 h-10 w-full sm:h-9" disabled={entered.length === 0 || add.isPending} onClick={() => add.mutate()}>
               {add.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />}
               Block {entered.length > 0 ? entered.length.toLocaleString() : ""} {entered.length === 1 ? "number" : "numbers"}
             </Button>
@@ -345,7 +368,7 @@ export function BlacklistManager({ scope, initialSearch = "" }: { scope: Scope; 
           className={inputClass}
           placeholder="e.g. Customer asked to be contacted again"
         />
-        <div className="mt-4 flex justify-end gap-2">
+        <div className="mt-4 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end [&>button]:h-10 [&>button]:w-full sm:[&>button]:h-9 sm:[&>button]:w-auto">
           <Button variant="secondary" onClick={() => setRemoving(null)} disabled={remove.isPending}>Cancel</Button>
           <Button onClick={() => removing && remove.mutate(removing)} disabled={remove.isPending}>
             {remove.isPending ? "Unblocking…" : "Unblock"}

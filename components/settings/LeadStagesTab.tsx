@@ -152,7 +152,7 @@ function StageManager({
 
   return (
     <div className="space-y-5">
-      <Card className="p-5">
+      <Card className="p-4 sm:p-5">
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div>
             <h2 className="font-semibold text-slate-900">Lead Pipeline Stages</h2>
@@ -161,7 +161,7 @@ function StageManager({
               here drives the pipeline columns and the Add / Edit Lead dropdowns.
             </p>
           </div>
-          <div className="flex gap-2">
+          <div className="flex flex-wrap gap-2">
             <Button variant="ghost" size="sm" onClick={() => setList(DEFAULT_STAGE_DRAFTS.map((s) => ({ ...s })))}>
               <RotateCcw className="h-3.5 w-3.5" />
               Reset to defaults
@@ -189,7 +189,7 @@ function StageManager({
               }}
               onDragEnd={() => setDragIndex(null)}
               className={cn(
-                "flex items-center gap-3 rounded-xl border border-slate-200 bg-white px-3 py-2.5 transition",
+                "flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-2.5 py-2.5 transition sm:gap-3 sm:px-3",
                 dragIndex === index ? "opacity-60 ring-2 ring-emerald-300" : "hover:border-slate-300",
                 !stage.enabled && "bg-slate-50",
               )}
@@ -234,9 +234,9 @@ function StageManager({
                 <Star className={cn("h-4 w-4", stage.isDefault && "fill-amber-400")} />
               </button>
 
-              <Button variant="ghost" size="sm" onClick={() => setEditIndex(index)}>
+              <Button variant="ghost" size="sm" onClick={() => setEditIndex(index)} aria-label={`Edit ${stage.name}`}>
                 <Pencil className="h-3.5 w-3.5" />
-                Edit
+                <span className="hidden sm:inline">Edit</span>
               </Button>
 
               <Toggle
@@ -261,7 +261,7 @@ function StageManager({
 
         {error && <p className="mt-3 text-sm text-rose-600">{error.message}</p>}
 
-        <div className="mt-5 flex items-center justify-between border-t border-slate-100 pt-4">
+        <div className="mt-5 flex flex-col gap-3 border-t border-slate-100 pt-4 sm:flex-row sm:items-center sm:justify-between max-sm:[&>button]:h-10 max-sm:[&>button]:w-full">
           <p className="text-xs text-slate-400">
             {dirty ? "You have unsaved changes." : "All changes saved."}
           </p>
@@ -325,7 +325,7 @@ function StageManager({
               </select>
             </Field>
 
-            <div className="flex justify-end gap-2 border-t border-slate-200 pt-4">
+            <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end max-sm:[&>button]:h-10 max-sm:[&>button]:w-full border-t border-slate-200 pt-4">
               <Button variant="secondary" onClick={() => setEditIndex(null)}>
                 Done
               </Button>
@@ -350,7 +350,7 @@ function StageManager({
                 deleted. You can re-enable it here at any time.
               </span>
             </div>
-            <div className="flex justify-end gap-2 border-t border-slate-200 pt-4">
+            <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end max-sm:[&>button]:h-10 max-sm:[&>button]:w-full border-t border-slate-200 pt-4">
               <Button variant="secondary" onClick={() => setConfirmDisable(null)}>
                 Cancel
               </Button>

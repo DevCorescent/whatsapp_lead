@@ -35,7 +35,7 @@ function UsageBar({ label, used, limit }: Usage) {
 
   return (
     <div>
-      <div className="flex items-baseline justify-between text-sm">
+      <div className="flex items-baseline justify-between gap-2 text-sm">
         <span className="font-medium text-slate-700">{label}</span>
         <span className="tabular-nums text-slate-500">
           {formatCompact(used)} / {limit > 0 ? formatCompact(limit) : "Unlimited"}

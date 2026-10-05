@@ -94,7 +94,7 @@ export function FaqInterest() {
         </p>
       ) : (
         <>
-          <div className="mt-4 grid grid-cols-3 gap-3">
+          <div className="mt-4 grid grid-cols-3 gap-2 sm:gap-3">
             <Stat icon={MousePointerClick} label="Taps" value={data.totalTaps} />
             <Stat icon={Users} label="People" value={data.uniqueContacts} />
             <Stat
@@ -162,7 +162,7 @@ function Stat({
   tone?: "slate" | "emerald";
 }) {
   return (
-    <div className="rounded-lg border border-slate-200 bg-slate-50/60 p-3">
+    <div className="min-w-0 rounded-lg border border-slate-200 bg-slate-50/60 p-2.5 sm:p-3">
       <Icon className={cn("h-4 w-4", tone === "emerald" ? "text-emerald-600" : "text-slate-400")} />
       <p className="mt-1.5 text-xl font-semibold tabular-nums text-slate-900">
         {value.toLocaleString("en-IN")}

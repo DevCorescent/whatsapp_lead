@@ -107,7 +107,7 @@ export async function PUT(req: NextRequest, { params }: Params) {
   publish();
 
   await recordCmsAudit({
-    tenantId: session.user.tenantId,
+    tenantId: (session.user.viewAs?.homeTenantId ?? session.user.tenantId),
     userId: session.user.id,
     action: "CMS_SECTION_UPDATED",
     sectionKey: key,
@@ -198,7 +198,7 @@ export async function DELETE(_req: NextRequest, { params }: Params) {
   publish();
 
   await recordCmsAudit({
-    tenantId: session.user.tenantId,
+    tenantId: (session.user.viewAs?.homeTenantId ?? session.user.tenantId),
     userId: session.user.id,
     action: "CMS_SECTION_RESET",
     sectionKey: key,

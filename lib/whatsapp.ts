@@ -832,18 +832,18 @@ export interface WATemplateListItem {
 /**
  * Fetch all message templates registered on a WABA from Meta.
  *
- * Paginates automatically up to `limit` items (Meta sends 20 per page by default).
+ * Paginates automatically up to `limit` items, 100 per page.
  * Used by the import flow to pull in templates that were created in Meta's console.
  */
 export async function listMessageTemplates(
   businessAccountId: string,
   apiKey: string,
-  limit = 200,
+  limit = 2000,
 ): Promise<WATemplateListItem[]> {
   const GRAPH = `https://graph.facebook.com/${process.env.WHATSAPP_API_VERSION ?? "v19.0"}`;
   const results: WATemplateListItem[] = [];
   let url: string | null =
-    `${GRAPH}/${businessAccountId}/message_templates?fields=id,name,status,category,language,rejection_reason,parameter_format,components&limit=20`;
+    `${GRAPH}/${businessAccountId}/message_templates?fields=id,name,status,category,language,rejection_reason,parameter_format,components&limit=100`;
 
   while (url && results.length < limit) {
     const res = await fetch(url, { headers: { Authorization: `Bearer ${apiKey}` } });
@@ -866,17 +866,28 @@ export async function getMessageTemplate(
   apiKey: string,
   waTemplateId: string
 ): Promise<{ id: string; name: string; status: string; rejection_reason?: string } | null> {
+  // The template node calls it `rejected_reason` ("NONE" when not rejected). Asking for
+  // `rejection_reason` — the list edge's name — fails with #100, which made every status
+  // refresh fail and left approved templates stuck as SUBMITTED.
   const res = await fetch(
-    `https://graph.facebook.com/${process.env.WHATSAPP_API_VERSION ?? "v19.0"}/${waTemplateId}?fields=id,name,status,rejection_reason`,
+    `https://graph.facebook.com/${process.env.WHATSAPP_API_VERSION ?? "v19.0"}/${waTemplateId}?fields=id,name,status,rejected_reason`,
     { headers: { Authorization: `Bearer ${apiKey}` } }
   );
   if (res.status === 404) return null; // template deleted from Meta
   if (!res.ok) {
-    const body = await res.json().catch(() => ({}));
-    throw new Error((body as { error?: { message?: string } }).error?.message ?? "Failed to fetch template");
+    const body = (await res.json().catch(() => ({}))) as { error?: { message?: string; code?: number; error_subcode?: number } };
+    // A deleted template answers 400 "Object with ID … does not exist" (#100, subcode 33).
+    if (body.error?.code === 100 && body.error.error_subcode === 33) return null;
+    throw new Error(body.error?.message ?? "Failed to fetch template");
   }
   void businessAccountId;
-  return res.json();
+  const t = (await res.json()) as { id: string; name: string; status: string; rejected_reason?: string };
+  return {
+    id: t.id,
+    name: t.name,
+    status: t.status,
+    ...(t.rejected_reason && t.rejected_reason !== "NONE" && { rejection_reason: t.rejected_reason }),
+  };
 }
 
 // ─── Phone number details (Meta Graph API) ───────────────────────────────────

@@ -72,7 +72,7 @@ export default async function BrandSiteLayout({ children }: { children: ReactNod
           <nav className="flex flex-wrap gap-x-5 gap-y-2" aria-label="Legal">
             <Link href="/terms" className="hover:text-slate-900">Terms of service</Link>
             <Link href="/privacy-policy" className="hover:text-slate-900">Privacy policy</Link>
-            {brand.supportEmail && <a href={`mailto:${brand.supportEmail}`} className="hover:text-slate-900">{brand.supportEmail}</a>}
+            {brand.supportEmail && <a href={`mailto:${brand.supportEmail}`} className="break-all hover:text-slate-900">{brand.supportEmail}</a>}
           </nav>
         </div>
       </footer>

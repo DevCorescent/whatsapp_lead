@@ -83,6 +83,7 @@ test("templates the sender can't fill are flagged; ordinary ones are not", () =>
   assert.equal(unsupportedTemplateReason({ body: "x", buttons: [{ type: "OTP", text: "Copy" }] }), null);
   assert.equal(unsupportedTemplateReason({ body: "x", buttons: [{ type: "URL", url: "https://a.co", urlType: "STATIC" }] }), null);
   assert.ok(unsupportedTemplateReason({ body: "x", headerType: "TEXT", headerContent: "Hello {{1}}" }));
-  assert.ok(unsupportedTemplateReason({ body: "x", buttons: [{ type: "URL", url: "https://a.co/{{1}}" }] }));
+  // Dynamic URL buttons are filled per send now (the "Button links" inputs).
+  assert.equal(unsupportedTemplateReason({ body: "x", buttons: [{ type: "URL", url: "https://a.co/{{1}}" }] }), null);
   assert.ok(unsupportedTemplateReason({ body: "x", buttons: [{ type: "COPY_CODE" }] }));
 });

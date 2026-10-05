@@ -106,7 +106,7 @@ export default function ChatbotPage() {
           title="Discard unsaved draft?"
           description="This chatbot flow hasn't been saved to the server yet. Closing now will permanently lose all your work."
         >
-          <div className="flex justify-end gap-2">
+          <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end max-sm:[&>button]:h-10 max-sm:[&>button]:w-full">
             <Button variant="secondary" onClick={() => setConfirmCloseLocal(false)}>Keep editing</Button>
             <Button variant="danger" onClick={() => { setConfirmCloseLocal(false); setLocalDraft(null); setEditingId(null); }}>
               Discard
@@ -123,7 +123,7 @@ export default function ChatbotPage() {
         title="Chatbot"
         description="Automate replies with keyword-triggered conversation flows."
         action={
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             {/* Where the flows are is where you want what customers answered in
                 them. Their choices and typed replies live nowhere else — the
                 conversation's own flowVars is cleared the moment a flow ends. */}
@@ -199,7 +199,7 @@ export default function ChatbotPage() {
                     <button
                       onClick={() => setMenuId(menuId === f.id ? null : f.id)}
                       aria-label="Flow actions"
-                      className="rounded-lg p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-600"
+                      className="rounded-lg p-2 text-slate-400 hover:bg-slate-100 hover:text-slate-600 sm:p-1"
                     >
                       <MoreHorizontal className="h-4 w-4" />
                     </button>
@@ -282,7 +282,7 @@ export default function ChatbotPage() {
         title="Delete flow?"
         description="This permanently removes the flow and its nodes. This cannot be undone."
       >
-        <div className="flex justify-end gap-2 pt-2">
+        <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end max-sm:[&>button]:h-10 max-sm:[&>button]:w-full pt-2">
           <Button variant="secondary" onClick={() => setDeletingId(null)}>Cancel</Button>
           <Button
             variant="danger"
@@ -402,7 +402,7 @@ function NewFlowModal({
 
         {error && <p className="rounded-lg bg-rose-50 px-3 py-2 text-sm text-rose-600">{error}</p>}
 
-        <div className="flex justify-end gap-2 pt-2">
+        <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end max-sm:[&>button]:h-10 max-sm:[&>button]:w-full pt-2">
           <Button type="button" variant="secondary" onClick={onClose}>Cancel</Button>
           <Button type="submit" disabled={!name.trim() || create.isPending}>
             {create.isPending ? "Creating…" : "Create & open builder"}

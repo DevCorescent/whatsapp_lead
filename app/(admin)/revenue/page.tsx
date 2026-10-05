@@ -312,7 +312,7 @@ export default function AdminRevenuePage() {
       )}
 
       {/* KPI tiles */}
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+      <div className="grid grid-cols-2 gap-3 sm:gap-4 lg:grid-cols-4">
         <StatTile
           label="MRR"
           value={formatCurrency(rev?.mrr)}
@@ -350,7 +350,7 @@ export default function AdminRevenuePage() {
         className="mt-6"
         action={<TrendingUp className="h-4 w-4 text-[#0B6E4F]" />}
       >
-        <div className="h-72">
+        <div className="h-60 sm:h-72">
           {isLoading ? (
             <AdminSkeleton className="h-full w-full" />
           ) : trend.length === 0 ? (
@@ -379,7 +379,7 @@ export default function AdminRevenuePage() {
       {/* Revenue by plan + failed payments */}
       <div className="mt-6 grid grid-cols-1 gap-6 lg:grid-cols-3">
         <AdminPanel title="Revenue by plan" subtitle="Stacked, per month" className="lg:col-span-2">
-          <div className="h-72">
+          <div className="h-60 sm:h-72">
             {isLoading ? (
               <AdminSkeleton className="h-full w-full" />
             ) : byPlan.length === 0 ? (
@@ -445,7 +445,7 @@ export default function AdminRevenuePage() {
                       {formatCurrency(f.amount)}
                     </span>
                   </div>
-                  <div className="mt-2 flex items-center justify-between gap-2">
+                  <div className="mt-2 flex flex-wrap items-center justify-between gap-2">
                     <AdminBadge tone={f.gateway === "STRIPE" ? "sky" : "violet"}>
                       {f.gateway === "STRIPE" ? "Stripe" : "Razorpay"}
                     </AdminBadge>

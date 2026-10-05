@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
+  Ban,
   ChevronLeft,
   ChevronRight,
   Eye,
@@ -10,6 +11,7 @@ import {
   Pencil,
   Tag as TagIcon,
   Trash2,
+  Undo2,
   UserPlus,
   Users,
 } from "lucide-react";
@@ -33,7 +35,10 @@ export type ContactRow = {
   source?: string | null;
   avatarUrl?: string | null;
   notes?: string | null;
+  /** Soft-deleted. (Blocking a number is the blacklist — see `blacklisted`.) */
   isBlocked?: boolean | null;
+  /** The number is on the account's or the platform's blacklist. */
+  blacklisted?: boolean | null;
   optedOut?: boolean | null;
   createdAt?: string | null;
   updatedAt?: string | null;
@@ -103,6 +108,13 @@ export function StageBadge({ stage }: { stage: ContactStageRef | null }) {
 
 // ─── Table ────────────────────────────────────────────────────────────────────
 
+export type RowAction = "delete" | "restore" | "block" | "unblock" | "addTag";
+export interface ContactPermissions {
+  delete: boolean;
+  block: boolean;
+  manage: boolean;
+}
+
 export function ContactTable({
   contacts,
   isLoading,
@@ -116,6 +128,10 @@ export function ContactTable({
   onAddContact,
   onEditContact,
   onDeleteContact,
+  onAction,
+  permissions,
+  showingDeleted = false,
+  emptyMessage,
 }: {
   contacts: ContactRow[];
   isLoading: boolean;
@@ -131,10 +147,17 @@ export function ContactTable({
   onEditContact: (contact: ContactRow) => void;
   /** Ask to delete a row; the page confirms before anything is sent. */
   onDeleteContact: (contact: ContactRow) => void;
+  /** Block / unblock / restore one row, or act on the selection. The page owns the requests. */
+  onAction: (action: RowAction, contacts: ContactRow[]) => void;
+  /** What the user may do; actions they can't are not offered. */
+  permissions: ContactPermissions;
+  /** Showing deleted contacts: rows offer Restore instead of Edit/Delete. */
+  showingDeleted?: boolean;
+  /** Replaces the "No contacts yet" empty state, e.g. when filters match nothing. */
+  emptyMessage?: { title: string; description: string };
 }) {
   const router = useRouter();
   const [menu, setMenu] = useState<{ id: string; top: number; right: number } | null>(null);
-  const [notice, setNotice] = useState<string | null>(null);
 
   // The dropdown is positioned `fixed` so the horizontally scrollable table
   // cannot clip it — that means it has to close when the page moves under it.
@@ -149,6 +172,8 @@ export function ContactTable({
     };
   }, [menu]);
 
+  const selectedRows = contacts.filter((c) => selected.includes(c.id));
+  const menuContact = menu ? contacts.find((c) => c.id === menu.id) ?? null : null;
   const allSelected = contacts.length > 0 && selected.length === contacts.length;
   const someSelected = selected.length > 0 && !allSelected;
 
@@ -176,45 +201,45 @@ export function ContactTable({
 
   return (
     <Card className="overflow-hidden">
-      {notice && (
-        <div className="border-b border-amber-200 bg-amber-50 px-4 py-2.5 text-xs text-amber-800">
-          {notice}
-        </div>
-      )}
-
       {/* Bulk toolbar */}
       {selected.length > 0 && (
         <div className="flex flex-wrap items-center gap-2 border-b border-slate-200 bg-emerald-50/60 px-4 py-2.5">
           <span className="text-sm font-medium text-emerald-900">
             {selected.length} selected
           </span>
-          <div className="ml-auto flex items-center gap-2">
-            <Button
-              variant="secondary"
-              size="sm"
-              onClick={() =>
-                setNotice(
-                  "Bulk tagging isn't available yet. Open a contact to change its tags.",
-                )
-              }
-            >
-              <TagIcon className="h-3.5 w-3.5" />
-              Add tag
-            </Button>
-            <Button
-              variant="danger"
-              size="sm"
-              onClick={() =>
-                // Per-row delete works; there is no bulk endpoint, and deleting
-                // a selection one request at a time would half-finish on failure.
-                setNotice(
-                  "Bulk delete isn't available yet. Delete contacts one at a time from the row menu.",
-                )
-              }
-            >
-              <Trash2 className="h-3.5 w-3.5" />
-              Delete
-            </Button>
+          <div className="ml-auto flex flex-wrap items-center gap-2">
+            {!showingDeleted && permissions.manage && (
+              <Button variant="secondary" size="sm" onClick={() => onAction("addTag", selectedRows)}>
+                <TagIcon className="h-3.5 w-3.5" />
+                Add tag
+              </Button>
+            )}
+            {permissions.block && (
+              <>
+                <Button variant="secondary" size="sm" onClick={() => onAction("block", selectedRows)}>
+                  <Ban className="h-3.5 w-3.5" />
+                  Block
+                </Button>
+                {selectedRows.some((c) => c.blacklisted) && (
+                  <Button variant="secondary" size="sm" onClick={() => onAction("unblock", selectedRows)}>
+                    <Ban className="h-3.5 w-3.5" />
+                    Unblock
+                  </Button>
+                )}
+              </>
+            )}
+            {permissions.delete &&
+              (showingDeleted ? (
+                <Button variant="secondary" size="sm" onClick={() => onAction("restore", selectedRows)}>
+                  <Undo2 className="h-3.5 w-3.5" />
+                  Restore
+                </Button>
+              ) : (
+                <Button variant="danger" size="sm" onClick={() => onAction("delete", selectedRows)}>
+                  <Trash2 className="h-3.5 w-3.5" />
+                  Delete
+                </Button>
+              ))}
           </div>
         </div>
       )}
@@ -226,21 +251,80 @@ export function ContactTable({
       ) : isEmpty ? (
         <EmptyState
           icon={Users}
-          title="No contacts yet"
+          title={emptyMessage?.title ?? "No contacts yet"}
           description={
-            isError
-              ? "Add your first contact or import from WhatsApp. (GET /api/contacts is not implemented yet.)"
-              : "Add your first contact or import from WhatsApp."
+            emptyMessage?.description ??
+            (isError ? "The contacts could not be loaded. Refresh to try again." : "Add your first contact or import from WhatsApp.")
           }
           action={
-            <Button onClick={onAddContact}>
-              <UserPlus className="h-4 w-4" />
-              Add Contact
-            </Button>
+            emptyMessage ? undefined : (
+              <Button onClick={onAddContact}>
+                <UserPlus className="h-4 w-4" />
+                Add Contact
+              </Button>
+            )
           }
         />
       ) : (
-        <div className="overflow-x-auto">
+        <>
+        {/* Phones: one card per contact instead of a 900px table to swipe through. */}
+        <ul className="divide-y divide-slate-100 md:hidden">
+          {contacts.map((contact) => {
+            const tags = contactTags(contact.tags);
+            const checked = selected.includes(contact.id);
+            return (
+              <li
+                key={contact.id}
+                className={cn("flex items-start gap-3 px-4 py-3", checked && "bg-emerald-50/40")}
+              >
+                <input
+                  type="checkbox"
+                  aria-label={`Select ${contact.name ?? "contact"}`}
+                  className="mt-3 h-5 w-5 shrink-0 cursor-pointer rounded border-slate-300 accent-emerald-600"
+                  checked={checked}
+                  onChange={() => toggleOne(contact.id)}
+                />
+                <button
+                  type="button"
+                  onClick={() => router.push(`/contacts/${contact.id}`)}
+                  className="flex min-w-0 flex-1 items-start gap-3 text-left"
+                >
+                  <Avatar name={contact.name} src={contact.avatarUrl} size="sm" />
+                  <span className="min-w-0 flex-1">
+                    <span className="flex flex-wrap items-center gap-1.5">
+                      <span className="truncate font-medium text-slate-900">{contact.name ?? "Unnamed"}</span>
+                      {contact.blacklisted && (
+                        <Badge className="bg-rose-50 text-rose-700 ring-rose-600/20">Blocked</Badge>
+                      )}
+                      {contact.isBlocked && <Badge>Deleted</Badge>}
+                    </span>
+                    <span className="block text-sm text-slate-600">{contact.phone ?? "—"}</span>
+                    {(tags.length > 0 || contactStage(contact)) && (
+                      <span className="mt-1.5 flex flex-wrap items-center gap-1">
+                        {tags.slice(0, 2).map((tag) => (
+                          <TagPill key={tag.id} tag={tag} />
+                        ))}
+                        {tags.length > 2 && <span className="text-xs text-slate-400">+{tags.length - 2}</span>}
+                        {contactStage(contact) && <StageBadge stage={contactStage(contact)} />}
+                      </span>
+                    )}
+                  </span>
+                </button>
+                <button
+                  type="button"
+                  aria-label="Row actions"
+                  onClick={(e) => openMenu(e, contact.id)}
+                  className="-mr-2 shrink-0 rounded-lg p-2.5 text-slate-400 transition hover:bg-slate-100 hover:text-slate-700"
+                >
+                  <MoreHorizontal className="h-4 w-4" />
+                </button>
+              </li>
+            );
+          })}
+        </ul>
+        {/* `relative` keeps the header's absolutely-positioned sr-only label inside the
+            scroller; without it the label escaped and widened the whole page on phones. */}
+        <div className="relative hidden overflow-x-auto md:block">
           <table className="w-full min-w-225 text-sm">
             <thead className="bg-slate-50 text-left">
               <tr className="border-b border-slate-200">
@@ -297,8 +381,12 @@ export function ContactTable({
                       <div className="flex items-center gap-3">
                         <Avatar name={contact.name} src={contact.avatarUrl} size="sm" />
                         <div className="min-w-0">
-                          <p className="truncate font-medium text-slate-900">
-                            {contact.name ?? "Unnamed"}
+                          <p className="flex items-center gap-1.5 truncate font-medium text-slate-900">
+                            <span className="truncate">{contact.name ?? "Unnamed"}</span>
+                            {contact.blacklisted && (
+                              <Badge className="shrink-0 bg-rose-50 text-rose-700 ring-rose-600/20">Blocked</Badge>
+                            )}
+                            {contact.isBlocked && <Badge className="shrink-0">Deleted</Badge>}
                           </p>
                           {contact.designation && (
                             <p className="truncate text-xs text-slate-500">
@@ -353,6 +441,7 @@ export function ContactTable({
             </tbody>
           </table>
         </div>
+        </>
       )}
 
       {/* Pagination */}
@@ -405,33 +494,51 @@ export function ContactTable({
               <Eye className="h-4 w-4 text-slate-400" />
               View
             </button>
-            <button
-              type="button"
-              className="flex w-full items-center gap-2 px-3 py-2 text-sm text-slate-700 hover:bg-slate-50"
-              onClick={() => {
-                const contact = contacts.find((c) => c.id === menu.id);
-                setMenu(null);
-                if (contact) onEditContact(contact);
-              }}
-            >
-              <Pencil className="h-4 w-4 text-slate-400" />
-              Edit
-            </button>
-            <button
-              type="button"
-              className="flex w-full items-center gap-2 px-3 py-2 text-sm text-rose-600 hover:bg-rose-50"
-              onClick={() => {
-                const contact = contacts.find((c) => c.id === menu.id);
-                setMenu(null);
-                if (contact) onDeleteContact(contact);
-              }}
-            >
-              <Trash2 className="h-4 w-4" />
-              Delete
-            </button>
+            {menuContact && !showingDeleted && permissions.manage && (
+              <MenuItem icon={Pencil} label="Edit" onClick={() => { setMenu(null); onEditContact(menuContact); }} />
+            )}
+            {menuContact && permissions.block && (
+              <MenuItem
+                icon={Ban}
+                label={menuContact.blacklisted ? "Unblock" : "Block"}
+                onClick={() => { setMenu(null); onAction(menuContact.blacklisted ? "unblock" : "block", [menuContact]); }}
+              />
+            )}
+            {menuContact && permissions.delete &&
+              (showingDeleted ? (
+                <MenuItem icon={Undo2} label="Restore" onClick={() => { setMenu(null); onAction("restore", [menuContact]); }} />
+              ) : (
+                <MenuItem icon={Trash2} label="Delete" danger onClick={() => { setMenu(null); onDeleteContact(menuContact); }} />
+              ))}
           </div>
         </>
       )}
     </Card>
+  );
+}
+
+function MenuItem({
+  icon: Icon,
+  label,
+  onClick,
+  danger = false,
+}: {
+  icon: typeof Eye;
+  label: string;
+  onClick: () => void;
+  danger?: boolean;
+}) {
+  return (
+    <button
+      type="button"
+      className={cn(
+        "flex w-full items-center gap-2 px-3 py-2 text-sm",
+        danger ? "text-rose-600 hover:bg-rose-50" : "text-slate-700 hover:bg-slate-50",
+      )}
+      onClick={onClick}
+    >
+      <Icon className={cn("h-4 w-4", !danger && "text-slate-400")} />
+      {label}
+    </button>
   );
 }

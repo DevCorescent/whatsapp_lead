@@ -65,9 +65,12 @@ export default function InboxPage() {
   const [tab, setTab] = useState<InboxTab>("all");
   const [search, setSearch] = useState("");
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  /** Below xl the contact panel is a slide-over drawer rather than a third column. */
+  const [panelOpen, setPanelOpen] = useState(false);
 
   const handleSelect = useCallback((id: string) => {
     setSelectedId(id);
+    setPanelOpen(false);
     markConversationRead(id);
   }, [markConversationRead]);
   /** Optimistically "sent" messages, per conversation, cleared when server confirms. */
@@ -173,8 +176,10 @@ export default function InboxPage() {
 
   return (
     // The dashboard <main> adds p-4/lg:p-6 and the topbar is h-16 — cancel both so
-    // the inbox owns the full viewport and each column scrolls independently.
-    <div className="-m-4 flex h-[calc(100vh-4rem)] overflow-hidden bg-white lg:-m-6">
+    // the inbox owns the full viewport and each column scrolls independently. dvh, not
+    // vh, so the composer stays above the on-screen keyboard and mobile browser chrome.
+    // Phones show the list OR the open thread; md+ shows both side by side.
+    <div className="-m-4 flex h-[calc(100dvh-4rem)] overflow-hidden bg-white lg:-m-6">
       <ConversationList
         conversations={conversations}
         selectedId={selectedId}
@@ -197,16 +202,34 @@ export default function InboxPage() {
         onSend={handleSend}
         isLoading={detailBusy}
         isError={detailError && !detailData}
-        onBack={() => setSelectedId(null)}
+        onBack={() => {
+          setSelectedId(null);
+          setPanelOpen(false);
+        }}
+        onShowContact={() => setPanelOpen(true)}
         className={cn("min-w-0 flex-1", selectedId ? "flex" : "hidden md:flex")}
       />
 
+      {panelOpen && (
+        <div
+          aria-hidden
+          onClick={() => setPanelOpen(false)}
+          className="fixed inset-0 z-40 bg-slate-900/40 xl:hidden"
+        />
+      )}
+      {/* One instance for both modes: a fixed drawer below xl, the static third column at xl+. */}
       <ContactPanel
         key={`panel-${selectedId ?? "empty"}`}
         conversation={selected}
         agents={agents}
         isLoading={detailBusy}
-        className="hidden w-72 shrink-0 xl:flex"
+        onClose={() => setPanelOpen(false)}
+        className={cn(
+          "shrink-0 xl:static xl:z-auto xl:flex xl:w-72 xl:max-w-none xl:shadow-none",
+          panelOpen
+            ? "fixed inset-y-0 right-0 z-50 flex w-full max-w-sm shadow-2xl"
+            : "hidden",
+        )}
       />
     </div>
   );

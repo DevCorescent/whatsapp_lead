@@ -162,7 +162,9 @@ export default auth((req) => {
     return NextResponse.redirect(new URL("/reseller", nextUrl));
   }
   // The reseller panel is for reseller accounts only (its APIs refuse everyone else too).
-  if (!isReseller && matches(pathname, ["/reseller"])) {
+  // The Super Admin may open it while viewing a reseller account (lib/viewAs.ts); the
+  // page layout and the reseller APIs check the account itself.
+  if (!isReseller && session?.user?.role !== "SUPER_ADMIN" && matches(pathname, ["/reseller"])) {
     return NextResponse.redirect(new URL(homeFor(session?.user), nextUrl));
   }
 

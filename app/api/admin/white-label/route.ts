@@ -75,7 +75,7 @@ export async function PUT(req: NextRequest) {
   const updated = await prisma.platformConfig.update({ where: { id: "platform" }, data: parsed.data });
   await prisma.auditLog.create({
     data: {
-      tenantId: session!.user.tenantId,
+      tenantId: (session!.user.viewAs?.homeTenantId ?? session!.user.tenantId),
       userId: session!.user.id,
       action: "WHITE_LABEL_FEE_SETTINGS",
       resource: "platform_config",

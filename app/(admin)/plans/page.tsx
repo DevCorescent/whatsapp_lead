@@ -295,7 +295,7 @@ export default function AdminPlansPage() {
         title="Plans"
         description="Pricing, limits and feature gates for every subscription tier."
         action={
-          <div className="flex items-center gap-3">
+          <div className="flex flex-wrap items-center gap-3">
             <Segmented<Tab>
               value={tab}
               onChange={setTab}
@@ -313,13 +313,13 @@ export default function AdminPlansPage() {
       />
 
       {isLoading ? (
-        <div className="grid grid-cols-1 gap-6 md:grid-cols-3">
+        <div className="grid grid-cols-1 gap-6 md:grid-cols-2 lg:grid-cols-3">
           {[0, 1, 2].map((i) => (
             <AdminSkeleton key={i} className="h-96 w-full rounded-xl" />
           ))}
         </div>
       ) : tab === "public" ? (
-        <div className="grid grid-cols-1 gap-6 md:grid-cols-3">
+        <div className="grid grid-cols-1 gap-6 md:grid-cols-2 lg:grid-cols-3">
           {publicPlans.map((plan) => (
             <PublicPlanCard
               key={plan.id}
@@ -362,7 +362,7 @@ function PublicPlanCard({
   const TierIcon = TIER_ICON[plan.name.toUpperCase()] ?? Sparkles;
 
   return (
-    <AdminCard className={cn("relative flex flex-col p-6", popular && "border-2 border-violet-600")}>
+    <AdminCard className={cn("relative flex flex-col p-5 sm:p-6", popular && "border-2 border-violet-600")}>
       {popular && (
         <span className="absolute -top-3 left-1/2 -translate-x-1/2 rounded-full bg-violet-600 px-3 py-1 text-[11px] font-semibold uppercase tracking-wide text-white shadow-md">
           Most Popular
@@ -370,12 +370,12 @@ function PublicPlanCard({
       )}
 
       <div className="flex items-start justify-between gap-2">
-        <div className="flex items-start gap-3">
+        <div className="flex min-w-0 items-start gap-3">
           <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-emerald-50 text-[#0B6E4F]">
             <TierIcon className="h-4.5 w-4.5" />
           </span>
-          <div>
-            <h3 className="text-lg font-semibold text-slate-900">{plan.displayName}</h3>
+          <div className="min-w-0">
+            <h3 className="break-words text-lg font-semibold text-slate-900">{plan.displayName}</h3>
             <p className="mt-1 text-xs text-slate-500">{plan.description ?? "—"}</p>
           </div>
         </div>
@@ -384,7 +384,7 @@ function PublicPlanCard({
         </AdminBadge>
       </div>
 
-      <p className="mt-5 flex items-baseline gap-1">
+      <p className="mt-5 flex flex-wrap items-baseline gap-1">
         <span className="text-3xl font-bold tracking-tight text-slate-900">
           {formatCurrency(plan.priceMonthly)}
         </span>
@@ -403,8 +403,8 @@ function PublicPlanCard({
       <ul className="mt-5 space-y-2 border-t border-slate-200 pt-5 text-sm">
         {LIMITS.map((l) => (
           <li key={String(l.key)} className="flex items-center justify-between gap-2">
-            <span className="text-slate-500">{l.label}</span>
-            <span className="font-medium text-slate-900">{limitLabel(Number(plan[l.key] ?? 0))}</span>
+            <span className="min-w-0 text-slate-500">{l.label}</span>
+            <span className="shrink-0 font-medium text-slate-900">{limitLabel(Number(plan[l.key] ?? 0))}</span>
           </li>
         ))}
       </ul>
@@ -591,11 +591,11 @@ function DeletePlanModal({ plan, onClose }: { plan: AdminPlan | null; onClose: (
           </p>
         )}
 
-        <div className="flex justify-end gap-2">
+        <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
           <button
             type="button"
             onClick={onClose}
-            className="rounded-lg px-4 py-2 text-sm font-medium text-slate-600 hover:bg-slate-100"
+            className="min-h-10 rounded-lg px-4 py-2 text-sm font-medium text-slate-600 hover:bg-slate-100 sm:min-h-0"
           >
             Cancel
           </button>

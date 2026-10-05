@@ -56,7 +56,7 @@ export function BlogExplorer({ posts }: { posts: Post[] }) {
   const isFiltering = category !== "All" || query.trim() !== "";
 
   return (
-    <div className="grid gap-10 lg:grid-cols-[minmax(0,1fr)_17rem] lg:gap-8">
+    <div className="grid grid-cols-1 gap-10 lg:grid-cols-[minmax(0,1fr)_17rem] lg:gap-8">
       {/* ── Main column ─────────────────────────────────────────────────── */}
       <div className="min-w-0">
         {/* Category chips. flex-wrap rather than a scrolling rail: a rail hides
@@ -178,7 +178,7 @@ export function BlogExplorer({ posts }: { posts: Post[] }) {
                 value={query}
                 onChange={(event) => setQuery(event.target.value)}
                 placeholder="Search articles…"
-                className="w-full rounded-lg bg-slate-50 py-2 pl-9 pr-3 text-sm text-slate-900 shadow-sm ring-1 ring-inset ring-slate-200 transition placeholder:text-slate-400 focus:bg-white focus:outline-none focus:ring-2 focus:ring-inset focus:ring-emerald-500"
+                className="w-full rounded-lg bg-slate-50 py-2 pl-9 pr-3 text-base text-slate-900 sm:text-sm shadow-sm ring-1 ring-inset ring-slate-200 transition placeholder:text-slate-400 focus:bg-white focus:outline-none focus:ring-2 focus:ring-inset focus:ring-emerald-500"
               />
             </div>
           </div>

@@ -173,23 +173,23 @@ export default async function BrandLandingPage() {
           <SectionHeading align="center" eyebrow="Contact" title={`Talk to ${brand.name}`} />
           <div className="mx-auto mt-8 flex max-w-3xl flex-wrap justify-center gap-3">
             {brand.supportEmail && (
-              <a href={`mailto:${brand.supportEmail}`} className="inline-flex items-center gap-2 rounded-xl bg-white px-4 py-3 text-sm text-slate-700 shadow-sm ring-1 ring-slate-900/5 hover:bg-slate-50">
-                <Mail className="h-4 w-4 text-emerald-600" /> {brand.supportEmail}
+              <a href={`mailto:${brand.supportEmail}`} className="inline-flex max-w-full items-center gap-2 break-all rounded-xl bg-white px-4 py-3 text-sm text-slate-700 shadow-sm ring-1 ring-slate-900/5 hover:bg-slate-50">
+                <Mail className="h-4 w-4 shrink-0 text-emerald-600" /> {brand.supportEmail}
               </a>
             )}
             {brand.supportPhone && (
-              <a href={`tel:${brand.supportPhone.replace(/\s/g, "")}`} className="inline-flex items-center gap-2 rounded-xl bg-white px-4 py-3 text-sm text-slate-700 shadow-sm ring-1 ring-slate-900/5 hover:bg-slate-50">
-                <Phone className="h-4 w-4 text-emerald-600" /> {brand.supportPhone}
+              <a href={`tel:${brand.supportPhone.replace(/\s/g, "")}`} className="inline-flex max-w-full items-center gap-2 break-all rounded-xl bg-white px-4 py-3 text-sm text-slate-700 shadow-sm ring-1 ring-slate-900/5 hover:bg-slate-50">
+                <Phone className="h-4 w-4 shrink-0 text-emerald-600" /> {brand.supportPhone}
               </a>
             )}
             {brand.website && (
-              <a href={brand.website} rel="noopener noreferrer" target="_blank" className="inline-flex items-center gap-2 rounded-xl bg-white px-4 py-3 text-sm text-slate-700 shadow-sm ring-1 ring-slate-900/5 hover:bg-slate-50">
-                <Globe className="h-4 w-4 text-emerald-600" /> {brand.website.replace(/^https?:\/\//, "")}
+              <a href={brand.website} rel="noopener noreferrer" target="_blank" className="inline-flex max-w-full items-center gap-2 break-all rounded-xl bg-white px-4 py-3 text-sm text-slate-700 shadow-sm ring-1 ring-slate-900/5 hover:bg-slate-50">
+                <Globe className="h-4 w-4 shrink-0 text-emerald-600" /> {brand.website.replace(/^https?:\/\//, "")}
               </a>
             )}
             {brand.address && (
-              <span className="inline-flex items-center gap-2 rounded-xl bg-white px-4 py-3 text-sm text-slate-700 shadow-sm ring-1 ring-slate-900/5">
-                <MapPin className="h-4 w-4 text-emerald-600" /> {brand.address}
+              <span className="inline-flex max-w-full items-center gap-2 break-words rounded-xl bg-white px-4 py-3 text-sm text-slate-700 shadow-sm ring-1 ring-slate-900/5">
+                <MapPin className="h-4 w-4 shrink-0 text-emerald-600" /> {brand.address}
               </span>
             )}
           </div>

@@ -105,6 +105,20 @@ export async function PATCH(req: NextRequest, { params }: Params) {
   }
   const { isActive, name, planId, categoryId, accountType, resellerType, parentId, referredById, commissionRate } = parsed.data;
 
+  // ── The Super Admin's own account ──
+  // Suspending it, or turning it into a reseller (which has no workspace), would lock
+  // every Super Admin out — so neither is allowed, from the UI or the API.
+  const homeTenantId = session.user.viewAs?.homeTenantId ?? session.user.tenantId;
+  const ownsSuperAdmins =
+    tenant.id === homeTenantId ||
+    (await prisma.user.count({ where: { tenantId: tenant.id, role: "SUPER_ADMIN" } })) > 0;
+  if ((tenant.accountType === "PLATFORM" || ownsSuperAdmins) && (isActive === false || accountType === "RESELLER")) {
+    return NextResponse.json(
+      { success: false, error: "This is the platform's own account — it can't be suspended or made a reseller" },
+      { status: 400 },
+    );
+  }
+
   // ── Hierarchy rules ──
   if (tenant.accountType === "PLATFORM" && (accountType || parentId || resellerType)) {
     return NextResponse.json({ success: false, error: "The platform account's type can't be changed" }, { status: 400 });

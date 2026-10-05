@@ -174,7 +174,7 @@ export default function AnalyticsPage() {
             <div
               role="group"
               aria-label="Date range"
-              className="inline-flex rounded-lg bg-slate-100 p-0.5"
+              className="scrollbar-slim inline-flex max-w-full overflow-x-auto rounded-lg bg-slate-100 p-0.5"
             >
               {PERIODS.map((p) => {
                 const active = p.value === period;
@@ -185,7 +185,7 @@ export default function AnalyticsPage() {
                     onClick={() => setPeriod(p.value)}
                     aria-pressed={active}
                     className={cn(
-                      "rounded-md px-3 py-1.5 text-xs font-medium transition",
+                      "shrink-0 whitespace-nowrap rounded-md px-3 py-1.5 text-xs font-medium transition",
                       "focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-600",
                       active
                         ? "bg-white text-slate-900 shadow-sm"
@@ -209,11 +209,11 @@ export default function AnalyticsPage() {
       {/* Refetching dims rather than collapsing to skeletons — no layout jump. */}
       <div
         className={cn(
-          "space-y-6 transition-opacity",
+          "space-y-4 transition-opacity sm:space-y-6",
           isFetching && !isLoading && "opacity-60",
         )}
       >
-        <div className="grid grid-cols-2 gap-4 md:grid-cols-4">
+        <div className="grid grid-cols-2 gap-3 sm:gap-4 md:grid-cols-4">
           {kpis.map((k) => (
             <KpiCard
               key={k.label}
@@ -228,7 +228,7 @@ export default function AnalyticsPage() {
           ))}
         </div>
 
-        <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
+        <div className="grid grid-cols-1 gap-4 sm:gap-6 lg:grid-cols-2">
           <MessagesOverTimeChart data={data?.messagesChart} loading={isLoading} />
           <LeadPipelineChart data={data?.leadsByStage} loading={isLoading} />
           <LeadScoreDonut data={data?.scoreDistribution} loading={isLoading} />

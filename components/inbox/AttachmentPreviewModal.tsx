@@ -114,7 +114,7 @@ function AttachmentCard({
           disabled={disabled}
           onClick={() => onRemove(item.id)}
           aria-label={`Remove ${item.file.name}`}
-          className="rounded-lg p-1.5 text-slate-400 transition hover:bg-rose-50 hover:text-rose-600 disabled:opacity-40"
+          className="rounded-lg p-2.5 text-slate-400 sm:p-1.5 transition hover:bg-rose-50 hover:text-rose-600 disabled:opacity-40"
         >
           <Trash2 className="h-4 w-4" />
         </button>
@@ -201,7 +201,7 @@ export function AttachmentPreviewModal({
           </div>
         )}
 
-        <ul className="scrollbar-slim max-h-[45vh] space-y-2 overflow-y-auto">
+        <ul className="scrollbar-slim max-h-[45dvh] space-y-2 overflow-y-auto">
           {items.map((item, index) => (
             <AttachmentCard
               key={item.id}
@@ -232,7 +232,7 @@ export function AttachmentPreviewModal({
             }}
             disabled={isUploading}
             placeholder="Add a caption…"
-            className={inputClass}
+            className={cn(inputClass, "text-base sm:text-sm")}
           />
         </div>
 

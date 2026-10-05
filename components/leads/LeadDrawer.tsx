@@ -212,9 +212,9 @@ function LeadDrawerPanel({
         aria-hidden
       />
 
-      <aside className="scrollbar-slim absolute inset-y-0 right-0 flex w-96 max-w-full flex-col overflow-y-auto bg-white shadow-2xl">
+      <aside className="scrollbar-slim absolute inset-y-0 right-0 flex w-full flex-col sm:w-96 sm:max-w-full overflow-y-auto bg-white shadow-2xl">
         {/* Header */}
-        <div className="sticky top-0 z-10 border-b border-slate-200 bg-white px-5 py-4">
+        <div className="sticky top-0 z-10 border-b border-slate-200 bg-white px-4 py-4 sm:px-5">
           <div className="flex items-start justify-between gap-3">
             <div className="min-w-0">
               <h2 className="truncate text-base font-semibold text-slate-900">{full.title}</h2>
@@ -226,14 +226,14 @@ function LeadDrawerPanel({
             <button
               onClick={onClose}
               aria-label="Close"
-              className="rounded-lg p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-600"
+              className="-m-1.5 shrink-0 rounded-lg p-2.5 text-slate-400 sm:m-0 sm:p-1 hover:bg-slate-100 hover:text-slate-600"
             >
               <X className="h-5 w-5" />
             </button>
           </div>
         </div>
 
-        <div className="flex-1 space-y-6 px-5 py-5">
+        <div className="flex-1 space-y-6 px-4 pb-[max(1.25rem,env(safe-area-inset-bottom))] pt-5 sm:px-5 sm:pb-5">
           {banner && (
             <div
               role="alert"
@@ -268,7 +268,7 @@ function LeadDrawerPanel({
                 id="drawer-stage"
                 value={full.stage?.id ?? ""}
                 onChange={(e) => onStageChange(full, e.target.value)}
-                className="w-full rounded-lg border border-slate-300 px-2.5 py-2 text-sm text-slate-900 focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-500/20"
+                className="w-full rounded-lg border border-slate-300 px-2.5 py-2 text-base text-slate-900 focus:border-emerald-500 sm:text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500/20"
               >
                 {/* Keep the lead's current stage selectable even if it's been hidden. */}
                 {full.stage?.id && !stages.some((s) => s.id === full.stage?.id) && (
@@ -357,7 +357,7 @@ function LeadDrawerPanel({
               {!editingNotes && (
                 <button
                   onClick={startEditNotes}
-                  className="flex items-center gap-1 rounded-md p-1 text-xs text-slate-400 hover:bg-slate-100 hover:text-slate-600"
+                  className="-my-2 flex items-center gap-1 rounded-md px-2 py-2.5 text-xs text-slate-400 hover:bg-slate-100 hover:text-slate-600 sm:my-0 sm:p-1"
                 >
                   <PenLine className="h-3 w-3" />
                   Edit
@@ -371,7 +371,7 @@ function LeadDrawerPanel({
                   rows={4}
                   value={noteDraft}
                   onChange={(e) => setNoteDraft(e.target.value)}
-                  className={cn(inputClass, "resize-y")}
+                  className={cn(inputClass, "resize-y text-base sm:text-sm")}
                   placeholder="Add notes about this lead…"
                 />
                 <div className="flex gap-2">
@@ -389,7 +389,7 @@ function LeadDrawerPanel({
                 </div>
               </div>
             ) : (
-              <p className="whitespace-pre-wrap rounded-xl bg-slate-50 p-3 text-sm text-slate-600">
+              <p className="whitespace-pre-wrap wrap-anywhere rounded-xl bg-slate-50 p-3 text-sm text-slate-600">
                 {full.notes?.trim() || "No notes yet."}
               </p>
             )}
@@ -404,7 +404,7 @@ function LeadDrawerPanel({
               </p>
               <button
                 onClick={() => setShowLog((v) => !v)}
-                className="flex items-center gap-1 rounded-md p-1 text-xs text-slate-400 hover:bg-slate-100 hover:text-slate-600"
+                className="-my-2 flex items-center gap-1 rounded-md px-2 py-2.5 text-xs text-slate-400 hover:bg-slate-100 hover:text-slate-600 sm:my-0 sm:p-1"
               >
                 <Plus className="h-3 w-3" />
                 Log
@@ -413,14 +413,14 @@ function LeadDrawerPanel({
 
             {showLog && (
               <form onSubmit={submitActivityLog} className="mb-4 space-y-2 rounded-xl border border-slate-200 p-3">
-                <div className="flex gap-2">
+                <div className="flex flex-wrap gap-2">
                   {ACTIVITY_TYPES.map((t) => (
                     <button
                       key={t.value}
                       type="button"
                       onClick={() => setLogType(t.value)}
                       className={cn(
-                        "rounded-md px-2.5 py-1 text-xs font-medium transition",
+                        "rounded-md px-2.5 py-2 text-xs font-medium transition sm:py-1",
                         logType === t.value
                           ? "bg-emerald-600 text-white"
                           : "bg-slate-100 text-slate-600 hover:bg-slate-200",
@@ -436,7 +436,7 @@ function LeadDrawerPanel({
                   value={logContent}
                   onChange={(e) => setLogContent(e.target.value)}
                   placeholder={logType === "CALL" ? "Summary of the call…" : logType === "EMAIL" ? "Subject or summary…" : logType === "MEETING" ? "Meeting notes…" : "Add a note…"}
-                  className={cn(inputClass, "resize-none")}
+                  className={cn(inputClass, "resize-none text-base sm:text-sm")}
                 />
                 <div className="flex gap-2">
                   <Button size="sm" type="submit" disabled={!logContent.trim()}>Log</Button>
@@ -463,7 +463,7 @@ function LeadDrawerPanel({
                     <p className="text-xs font-medium text-slate-800">
                       {ACTIVITY_LABEL[a.type] ?? a.type}
                     </p>
-                    {a.content && <p className="mt-0.5 text-xs text-slate-500">{a.content}</p>}
+                    {a.content && <p className="mt-0.5 wrap-anywhere text-xs text-slate-500">{a.content}</p>}
                     <p className="mt-0.5 text-[11px] text-slate-400">
                       {a.user?.name ? `${a.user.name} · ` : ""}
                       {timeAgo(a.createdAt)}

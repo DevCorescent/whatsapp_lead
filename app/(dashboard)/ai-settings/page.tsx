@@ -96,7 +96,7 @@ function SettingsCard({
   children: ReactNode;
 }) {
   return (
-    <Card className="p-5">
+    <Card className="p-4 sm:p-5">
       <div className="flex items-start gap-3 border-b border-slate-100 pb-4">
         <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-emerald-50 text-emerald-600">
           <Icon className="h-5 w-5" />
@@ -384,7 +384,7 @@ export default function AISettingsPage() {
     }));
 
   return (
-    <div className="pb-24">
+    <div className="pb-36 sm:pb-24">
       <PageHeader
         title="AI Settings"
         description="Control how the AI assistant replies to customers on WhatsApp."
@@ -393,7 +393,7 @@ export default function AISettingsPage() {
       {/* ── Initial Instructions (mandatory) ─────────────────────────────────
           Full width and first on the page: these are the rules every reply is
           checked against, and the cards below only tune how they are delivered. */}
-      <Card className="mb-5 p-5">
+      <Card className="mb-5 p-4 sm:p-5">
         <div className="flex items-start gap-3 border-b border-slate-100 pb-4">
           <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-emerald-50 text-emerald-600">
             <ListChecks className="h-5 w-5" />
@@ -786,7 +786,7 @@ export default function AISettingsPage() {
 
           <div>
             <p className="mb-1.5 block text-sm font-medium text-slate-700">Working days</p>
-            <div className="flex gap-1.5">
+            <div className="flex flex-wrap gap-1.5">
               {WEEKDAYS.map((d, i) => {
                 const on = form.businessDays.includes(d.value);
                 return (
@@ -824,8 +824,8 @@ export default function AISettingsPage() {
 
       {/* ── Sticky save bar ────────────────────────────────────────────────── */}
       {/* lg:left-64 matches the sidebar's w-64 (16 rem). Both must change together if the sidebar width ever changes. */}
-      <div className="fixed inset-x-0 bottom-0 z-30 border-t border-slate-200 bg-white/95 px-4 py-3 backdrop-blur lg:left-64">
-        <div className="flex items-center justify-between gap-3">
+      <div className="fixed inset-x-0 bottom-0 z-30 border-t border-slate-200 bg-white/95 px-4 pb-[max(0.75rem,env(safe-area-inset-bottom))] pt-3 backdrop-blur lg:left-64">
+        <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between sm:gap-3">
           <p className="text-xs">
             {saveMutation.isError ? (
               <span className="text-rose-600">
@@ -844,7 +844,7 @@ export default function AISettingsPage() {
               <span className="text-emerald-600">All changes saved.</span>
             )}
           </p>
-          <div className="flex gap-2">
+          <div className="flex gap-2 max-sm:[&>button]:h-10 max-sm:[&>button]:flex-1">
             <Button
               variant="secondary"
               disabled={!dirty}
@@ -1016,7 +1016,7 @@ function TestPromptModal({
         /api/ai/reply.
       </p>
 
-      <div className="mt-4 flex gap-2">
+      <div className="mt-4 flex gap-2 [&>button]:shrink-0">
         <input
           value={draft}
           onChange={(e) => setDraft(e.target.value)}
@@ -1029,7 +1029,7 @@ function TestPromptModal({
         </Button>
       </div>
 
-      <div className="mt-4 flex items-center justify-between border-t border-slate-100 pt-4">
+      <div className="mt-4 flex flex-col gap-3 border-t border-slate-100 pt-4 sm:flex-row sm:items-center sm:justify-between max-sm:[&>button]:h-10 max-sm:[&>button]:w-full">
         <span className="flex items-center gap-2 text-xs text-slate-500">
           <Avatar name="AI Assistant" size="xs" />
           Replies as your workspace assistant

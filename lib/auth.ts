@@ -3,6 +3,17 @@ import Credentials from "next-auth/providers/credentials";
 import { prisma } from "@/lib/prisma";
 import bcrypt from "bcryptjs";
 import { z } from "zod";
+import { cookies } from "next/headers";
+import { VIEW_AS_COOKIE, decodeViewAs } from "@/lib/viewAs";
+
+/** The view-as cookie of this request, or undefined outside a request (or when unset). */
+async function viewAsCookie(): Promise<string | undefined> {
+  try {
+    return (await cookies()).get(VIEW_AS_COOKIE)?.value;
+  } catch {
+    return undefined;
+  }
+}
 
 /**
  * How long session claims (role, account type, active flags) are trusted before they
@@ -137,6 +148,22 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
       session.user.resellerType = token.resellerType ?? null;
       session.user.parentTenantId = token.parentTenantId ?? null;
       session.user.avatar = token.avatar;
+      session.user.viewAs = null;
+
+      // Super Admin "view as" (lib/viewAs.ts): the account claims become the viewed
+      // account's; the user — id and role — stays the Super Admin.
+      if (token.role === "SUPER_ADMIN") {
+        const target = decodeViewAs(await viewAsCookie(), token.id);
+        if (target && target.tenantId !== token.tenantId) {
+          session.user.viewAs = { homeTenantId: token.tenantId, homeTenantName: token.tenantName };
+          session.user.tenantId = target.tenantId;
+          session.user.tenantSlug = target.tenantSlug;
+          session.user.tenantName = target.tenantName;
+          session.user.accountType = target.accountType;
+          session.user.resellerType = target.resellerType;
+          session.user.parentTenantId = target.parentTenantId;
+        }
+      }
       return session;
     },
   },

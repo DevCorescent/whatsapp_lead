@@ -27,6 +27,8 @@ export const PERMISSIONS = [
   // Client (business) features
   "contacts.view",
   "contacts.manage",
+  /** Delete and restore contacts. Owners and admins by default. */
+  "contacts.delete",
   "contacts.import",
   "contacts.export",
   "conversations.view",
@@ -62,7 +64,7 @@ export interface Principal {
 const ALL: readonly Permission[] = PERMISSIONS;
 
 const CLIENT_FEATURES: Permission[] = [
-  "contacts.view", "contacts.manage", "contacts.import", "contacts.export",
+  "contacts.view", "contacts.manage", "contacts.delete", "contacts.import", "contacts.export",
   "conversations.view", "messages.send",
   "campaigns.view", "campaigns.send", "templates.manage",
   "blacklist.view", "blacklist.manage", "reports.view",

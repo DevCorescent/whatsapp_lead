@@ -56,7 +56,7 @@ export async function PUT(req: NextRequest) {
 
   await prisma.auditLog.create({
     data: {
-      tenantId: session!.user.tenantId,
+      tenantId: (session!.user.viewAs?.homeTenantId ?? session!.user.tenantId),
       userId: session!.user.id,
       action: "RATE_CHANGED",
       resource: "message_rate",

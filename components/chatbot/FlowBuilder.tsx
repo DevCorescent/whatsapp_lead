@@ -34,6 +34,7 @@ import {
   FileEdit,
   Rows3,
   Save,
+  Plus,
 } from "lucide-react";
 import { Button } from "@/components/ui";
 import { cn } from "@/lib/utils";
@@ -136,6 +137,8 @@ function FlowCanvas({
   const [ready, setReady] = useState(false);
   const [validation, setValidation] = useState<ValidationResult | null>(null);
   const [previewOpen, setPreviewOpen] = useState(false);
+  // Phones: the node palette is an off-canvas drawer instead of a fixed column.
+  const [paletteOpen, setPaletteOpen] = useState(false);
   const [isActive, setIsActive] = useState(false);
 
   // `savedSig` drives the dirty indicator in render; `savedSigRef` is the same value
@@ -492,45 +495,46 @@ function FlowCanvas({
   return (
     <div ref={wrapperRef} className="fixed inset-0 z-50 flex flex-col bg-white">
       {/* Toolbar */}
-      <header className="flex items-center gap-3 border-b border-slate-200 px-4 py-2.5">
-        <button onClick={onClose} aria-label="Back to flows" className="rounded-lg p-1.5 text-slate-500 hover:bg-slate-100 hover:text-slate-800">
+      <header className="flex items-center gap-2 border-b border-slate-200 px-2 pb-2.5 pt-[max(0.625rem,env(safe-area-inset-top))] sm:gap-3 sm:px-4">
+        <button onClick={onClose} aria-label="Back to flows" className="shrink-0 rounded-lg p-2 text-slate-500 hover:bg-slate-100 hover:text-slate-800 sm:p-1.5">
           <X className="h-5 w-5" />
         </button>
-        <div className="min-w-0">
+        <div className="min-w-0 flex-1 sm:flex-none">
           <p className="truncate text-sm font-semibold text-slate-900">{flow?.name ?? "Flow"}{localOnly ? " (local draft)" : ""}</p>
           <SaveIndicator state={saveState} />
         </div>
 
-        <div className="ml-auto flex items-center gap-1.5">
+        <div className="scrollbar-slim ml-auto flex min-w-0 items-center gap-1 overflow-x-auto sm:gap-1.5">
+          <ToolbarIcon onClick={() => setPaletteOpen(true)} label="Add node" icon={Plus} className="md:hidden" />
           <ToolbarIcon onClick={undo} disabled={!canUndo} label="Undo" icon={Undo2} />
           <ToolbarIcon onClick={redo} disabled={!canRedo} label="Redo" icon={Redo2} />
-          <span className="mx-1 h-5 w-px bg-slate-200" />
-          <ToolbarIcon onClick={() => zoomOut()} label="Zoom out" icon={ZoomOut} />
-          <ToolbarIcon onClick={() => zoomIn()} label="Zoom in" icon={ZoomIn} />
-          <ToolbarIcon onClick={() => fitView({ padding: 0.2 })} label="Fit view" icon={Maximize} />
-          <ToolbarIcon onClick={autoLayout} label="Auto layout" icon={Rows3} />
-          <span className="mx-1 h-5 w-px bg-slate-200" />
-          <Button variant="secondary" size="sm" onClick={() => setPreviewOpen(true)}>
+          <span className="mx-1 hidden h-5 w-px bg-slate-200 sm:block" />
+          <ToolbarIcon onClick={() => zoomOut()} label="Zoom out" icon={ZoomOut} className="hidden sm:inline-flex" />
+          <ToolbarIcon onClick={() => zoomIn()} label="Zoom in" icon={ZoomIn} className="hidden sm:inline-flex" />
+          <ToolbarIcon onClick={() => fitView({ padding: 0.2 })} label="Fit view" icon={Maximize} className="hidden sm:inline-flex" />
+          <ToolbarIcon onClick={autoLayout} label="Auto layout" icon={Rows3} className="hidden sm:inline-flex" />
+          <span className="mx-1 hidden h-5 w-px bg-slate-200 sm:block" />
+          <Button variant="secondary" size="sm" aria-label="Test" onClick={() => setPreviewOpen(true)}>
             <Play className="h-4 w-4" />
-            Test
+            <span className="hidden sm:inline">Test</span>
           </Button>
-          <Button variant="secondary" size="sm" onClick={() => void saveNow()} disabled={!dirty || autosave.isPending}>
+          <Button variant="secondary" size="sm" aria-label="Save" onClick={() => void saveNow()} disabled={!dirty || autosave.isPending}>
             <Save className="h-4 w-4" />
-            Save
+            <span className="hidden sm:inline">Save</span>
           </Button>
-          <Button variant="secondary" size="sm" onClick={runValidation} disabled={validateMutation.isPending}>
+          <Button variant="secondary" size="sm" aria-label="Validate" onClick={runValidation} disabled={validateMutation.isPending}>
             {validateMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <CheckCircle2 className="h-4 w-4" />}
-            Validate
+            <span className="hidden sm:inline">Validate</span>
           </Button>
           {isActive ? (
-            <Button variant="secondary" size="sm" onClick={() => setPublished(false)} disabled={autosave.isPending || draft.isPending}>
+            <Button variant="secondary" size="sm" aria-label="Unpublish" onClick={() => setPublished(false)} disabled={autosave.isPending || draft.isPending}>
               <FileEdit className="h-4 w-4" />
-              Unpublish
+              <span className="hidden sm:inline">Unpublish</span>
             </Button>
           ) : (
-            <Button size="sm" onClick={() => setPublished(true)} disabled={autosave.isPending || publish.isPending}>
+            <Button size="sm" aria-label="Publish" onClick={() => setPublished(true)} disabled={autosave.isPending || publish.isPending}>
               <Rocket className="h-4 w-4" />
-              Publish
+              <span className="hidden sm:inline">Publish</span>
             </Button>
           )}
         </div>
@@ -558,8 +562,31 @@ function FlowCanvas({
       )}
 
       {/* Body */}
-      <div className="flex min-h-0 flex-1">
-        <NodePalette onAdd={(kind) => addNode(kind, { x: 260 + Math.random() * 80, y: 140 + Math.random() * 80 })} />
+      <div className="relative flex min-h-0 flex-1 pb-[env(safe-area-inset-bottom)] md:pb-0">
+        <NodePalette
+          className="hidden md:flex"
+          onAdd={(kind) => addNode(kind, { x: 260 + Math.random() * 80, y: 140 + Math.random() * 80 })}
+        />
+
+        {/* Phone palette drawer */}
+        {paletteOpen && (
+          <div className="absolute inset-0 z-30 flex md:hidden">
+            <NodePalette
+              tapToAdd
+              className="w-64 max-w-[85%] shadow-2xl"
+              onAdd={(kind) => {
+                addNode(kind, { x: 260 + Math.random() * 80, y: 140 + Math.random() * 80 });
+                setPaletteOpen(false);
+              }}
+            />
+            <button
+              type="button"
+              aria-label="Close node palette"
+              className="flex-1 bg-slate-900/30"
+              onClick={() => setPaletteOpen(false)}
+            />
+          </div>
+        )}
 
         <div className="relative min-w-0 flex-1" onDrop={onDrop} onDragOver={onDragOver}>
           {(isLoading && !flow) || !ready ? (
@@ -594,7 +621,7 @@ function FlowCanvas({
             >
               <Background variant={BackgroundVariant.Dots} gap={18} size={1} color="rgb(203 213 225)" />
               <Controls className="shadow-md!" />
-              <MiniMap pannable zoomable className="rounded-lg! border! border-slate-200!" nodeStrokeWidth={2} />
+              <MiniMap pannable zoomable className="rounded-lg! border! border-slate-200! max-sm:hidden!" nodeStrokeWidth={2} />
             </ReactFlow>
           )}
         </div>
@@ -638,11 +665,13 @@ function ToolbarIcon({
   disabled,
   label,
   icon: Icon,
+  className,
 }: {
   onClick: () => void;
   disabled?: boolean;
   label: string;
   icon: React.ComponentType<{ className?: string }>;
+  className?: string;
 }) {
   return (
     <button
@@ -651,7 +680,10 @@ function ToolbarIcon({
       disabled={disabled}
       aria-label={label}
       title={label}
-      className="rounded-lg p-1.5 text-slate-500 transition hover:bg-slate-100 hover:text-slate-800 disabled:pointer-events-none disabled:opacity-40"
+      className={cn(
+        "shrink-0 rounded-lg p-2 text-slate-500 transition hover:bg-slate-100 hover:text-slate-800 disabled:pointer-events-none disabled:opacity-40 sm:p-1.5",
+        className,
+      )}
     >
       <Icon className="h-4 w-4" />
     </button>

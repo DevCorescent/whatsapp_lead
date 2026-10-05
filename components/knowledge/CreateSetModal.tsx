@@ -98,7 +98,7 @@ export function CreateSetModal({
           </p>
         )}
 
-        <div className="flex justify-end gap-2">
+        <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end max-sm:[&>button]:h-10 max-sm:[&>button]:w-full">
           <Button type="button" variant="secondary" onClick={onClose} disabled={create.isPending}>
             Cancel
           </Button>

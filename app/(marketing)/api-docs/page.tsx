@@ -214,7 +214,7 @@ export default function ApiDocsPage() {
       </Section>
 
       <Section id="quickstart" tone="plain">
-        <div className="grid gap-10 lg:grid-cols-[0.9fr_1.1fr] lg:gap-12">
+        <div className="grid grid-cols-1 gap-10 lg:grid-cols-[0.9fr_1.1fr] lg:gap-12">
           <div>
             <SectionHeading
               eyebrow="Quickstart"

@@ -16,7 +16,7 @@ import {
 } from "lucide-react";
 import type { LeadScoreLabel } from "@prisma/client";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { useContact, useDeleteContact } from "@/hooks/useContacts";
+import { useBulkContactAction, useContact, useDeleteContact } from "@/hooks/useContacts";
 import { Avatar, Badge, Button, Card, EmptyState, Modal, Skeleton } from "@/components/ui";
 import { EditContactModal } from "@/components/contacts/EditContactModal";
 import {
@@ -92,6 +92,7 @@ export default function ContactDetailPage() {
   const [editOpen, setEditOpen] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const deleteContact = useDeleteContact();
+  const bulk = useBulkContactAction();
   const queryClient = useQueryClient();
   const [blacklistOpen, setBlacklistOpen] = useState(false);
   const [blacklistReason, setBlacklistReason] = useState("");
@@ -177,7 +178,7 @@ export default function ContactDetailPage() {
           <div className="flex flex-col gap-4 sm:flex-row sm:items-center">
             <Avatar name={contact.name} src={contact.avatarUrl} size="xl" />
             <div className="min-w-0">
-              <h1 className="flex flex-wrap items-center gap-2 text-xl font-bold tracking-tight text-slate-900">
+              <h1 className="flex flex-wrap items-center gap-2 wrap-anywhere text-xl font-bold tracking-tight text-slate-900">
                 {contact.name ?? "Unnamed contact"}
                 {contact.blacklisted && (
                   <Badge className="bg-rose-50 text-rose-700 ring-rose-600/20">
@@ -192,7 +193,7 @@ export default function ContactDetailPage() {
               </p>
               <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-sm text-slate-600">
                 <span>{contact.phone ?? "—"}</span>
-                {contact.email && <span className="truncate">{contact.email}</span>}
+                {contact.email && <span className="min-w-0 max-w-full truncate">{contact.email}</span>}
                 {contact.location && <span>{contact.location}</span>}
               </div>
               {tags.length > 0 && (
@@ -215,23 +216,54 @@ export default function ContactDetailPage() {
               Edit
             </Button>
             {contact.blacklisted ? (
-              <Link
-                href={`/blacklist?search=${encodeURIComponent(contact.phone ?? "")}`}
-                className="inline-flex h-9 items-center gap-2 rounded-lg px-3.5 text-sm font-medium text-rose-700 ring-1 ring-inset ring-rose-200 hover:bg-rose-50"
+              <Button
+                variant="secondary"
+                disabled={bulk.isPending}
+                onClick={() =>
+                  bulk.mutate(
+                    { action: "unblock", ids: [contact.id] },
+                    {
+                      onSuccess: (r) => {
+                        queryClient.invalidateQueries({ queryKey: ["contacts", id] });
+                        if (r.platformBlocked) setNotice("This number is also blocked platform-wide. Only the platform admin can lift that.");
+                      },
+                      onError: (err) => setNotice(err.message),
+                    },
+                  )
+                }
               >
                 <Ban className="h-4 w-4" />
-                Manage block
-              </Link>
+                Unblock
+              </Button>
             ) : (
               <Button variant="secondary" onClick={() => setBlacklistOpen(true)}>
                 <Ban className="h-4 w-4" />
-                Blacklist
+                Block
               </Button>
             )}
-            <Button variant="danger" onClick={() => setConfirmDelete(true)}>
-              <Trash2 className="h-4 w-4" />
-              Delete
-            </Button>
+            {contact.isBlocked ? (
+              <Button
+                variant="secondary"
+                disabled={bulk.isPending}
+                onClick={() =>
+                  bulk.mutate(
+                    { action: "restore", ids: [contact.id] },
+                    {
+                      onSuccess: () => queryClient.invalidateQueries({ queryKey: ["contacts", id] }),
+                      onError: (err) => setNotice(err.message),
+                    },
+                  )
+                }
+              >
+                <UserX className="h-4 w-4" />
+                Restore
+              </Button>
+            ) : (
+              <Button variant="danger" onClick={() => setConfirmDelete(true)}>
+                <Trash2 className="h-4 w-4" />
+                Delete
+              </Button>
+            )}
           </div>
         </div>
       </Card>
@@ -318,7 +350,7 @@ export default function ContactDetailPage() {
           value={blacklistReason}
           onChange={(e) => setBlacklistReason(e.target.value)}
           maxLength={500}
-          className="w-full rounded-lg bg-white px-3 py-2 text-sm text-slate-900 shadow-sm ring-1 ring-inset ring-slate-200 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+          className="w-full rounded-lg bg-white px-3 py-2 text-base text-slate-900 shadow-sm sm:text-sm ring-1 ring-inset ring-slate-200 focus:outline-none focus:ring-2 focus:ring-emerald-500"
           placeholder="e.g. Asked not to be contacted"
         />
         <div className="mt-4 flex justify-end gap-2">
@@ -388,7 +420,7 @@ function OverviewTab({ contact }: { contact: ContactDetail }) {
       <Card className="p-5">
         <h2 className="mb-2 text-sm font-semibold text-slate-900">Notes</h2>
         {contact.notes ? (
-          <p className="whitespace-pre-wrap text-sm leading-relaxed text-slate-600">
+          <p className="whitespace-pre-wrap wrap-anywhere text-sm leading-relaxed text-slate-600">
             {contact.notes}
           </p>
         ) : (
@@ -468,8 +500,8 @@ function LeadsTab({ leads }: { leads: LeadLite[] }) {
         return (
           <Card key={lead.id} className="p-4">
             <div className="flex items-start justify-between gap-3">
-              <p className="font-medium text-slate-900">{lead.title || "Untitled lead"}</p>
-              <Badge className={SCORE_STYLE[label]}>
+              <p className="min-w-0 wrap-anywhere font-medium text-slate-900">{lead.title || "Untitled lead"}</p>
+              <Badge className={cn("shrink-0", SCORE_STYLE[label])}>
                 {label} · {score}
               </Badge>
             </div>
@@ -514,7 +546,7 @@ function ActivityTab({ activities }: { activities: ActivityLite[] }) {
               {(activity.type ?? "ACTIVITY").replace(/_/g, " ")}
             </p>
             {activity.content && (
-              <p className="mt-0.5 text-sm text-slate-600">{activity.content}</p>
+              <p className="mt-0.5 wrap-anywhere text-sm text-slate-600">{activity.content}</p>
             )}
             <p className="mt-1 text-xs text-slate-400">
               {[activity.user?.name, timeAgo(activity.createdAt)].filter(Boolean).join(" · ") ||
@@ -536,14 +568,14 @@ function DetailSkeleton() {
       <Card className="p-6">
         <div className="flex flex-col gap-5 lg:flex-row lg:items-start lg:justify-between">
           <div className="flex items-center gap-4">
-            <Skeleton className="h-20 w-20 rounded-full" />
-            <div className="space-y-2">
-              <Skeleton className="h-5 w-48" />
-              <Skeleton className="h-4 w-32" />
-              <Skeleton className="h-4 w-64" />
+            <Skeleton className="h-20 w-20 shrink-0 rounded-full" />
+            <div className="min-w-0 flex-1 space-y-2">
+              <Skeleton className="h-5 w-48 max-w-full" />
+              <Skeleton className="h-4 w-32 max-w-full" />
+              <Skeleton className="h-4 w-64 max-w-full" />
             </div>
           </div>
-          <div className="flex gap-2">
+          <div className="flex flex-wrap gap-2">
             <Skeleton className="h-9 w-28" />
             <Skeleton className="h-9 w-20" />
             <Skeleton className="h-9 w-24" />

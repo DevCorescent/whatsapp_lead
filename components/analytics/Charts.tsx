@@ -42,6 +42,12 @@ const AXIS_PROPS = {
   axisLine: { stroke: GRID },
 } as const;
 
+/** Long category names (campaigns, stages) would collide on narrow screens. */
+const shortTick = (v: unknown) => {
+  const s = String(v ?? "");
+  return s.length > 12 ? `${s.slice(0, 11)}…` : s;
+};
+
 const TOOLTIP_PROPS = {
   contentStyle: {
     borderRadius: 12,
@@ -122,7 +128,8 @@ function hasRows<T>(rows?: T[] | null): rows is T[] {
 
 // ─── Card shell ───────────────────────────────────────────────────────────────
 
-const CHART_BODY_H = "h-[300px]";
+// Slightly shorter on phones so a chart and its title fit on screen together.
+const CHART_BODY_H = "h-[260px] sm:h-[300px]";
 
 /** Bars of varying height read as "a chart is loading", not "a box is loading". */
 function ChartSkeleton() {
@@ -154,7 +161,7 @@ function ChartCard({
 }) {
   return (
     <Card className="flex flex-col overflow-hidden">
-      <div className="border-b border-slate-100 px-5 py-4">
+      <div className="border-b border-slate-100 px-4 py-4 sm:px-5">
         <h2 className="text-sm font-semibold text-slate-900">{title}</h2>
         <p className="mt-0.5 text-xs text-slate-500">{subtitle}</p>
       </div>
@@ -199,7 +206,7 @@ export function MessagesOverTimeChart({
       <ResponsiveContainer width="100%" height="100%">
         <LineChart data={rows} margin={{ top: 8, right: 12, bottom: 0, left: -12 }}>
           <CartesianGrid strokeDasharray="3 3" stroke={GRID} vertical={false} />
-          <XAxis dataKey="date" {...AXIS_PROPS} />
+          <XAxis dataKey="date" minTickGap={12} {...AXIS_PROPS} />
           <YAxis allowDecimals={false} {...AXIS_PROPS} />
           <Tooltip cursor={{ stroke: GRID, strokeWidth: 1 }} {...TOOLTIP_PROPS} />
           <Legend {...LEGEND_PROPS} />
@@ -253,6 +260,7 @@ export function LeadPipelineChart({
           <XAxis
             dataKey="name"
             interval={0}
+            tickFormatter={shortTick}
             angle={-25}
             textAnchor="end"
             height={52}
@@ -339,7 +347,7 @@ export function LeadScoreDonut({
         </div>
 
         {/* Custom legend: identity is never colour-alone — label + count too. */}
-        <ul className="w-32 shrink-0 space-y-2 pr-3">
+        <ul className="w-28 shrink-0 space-y-2 pr-2 sm:w-32 sm:pr-3">
           {rows.map((r) => (
             <li key={r.label} className="flex items-center gap-2 text-xs">
               <span
@@ -378,7 +386,7 @@ export function CampaignPerformanceChart({
       <ResponsiveContainer width="100%" height="100%">
         <BarChart data={rows} margin={{ top: 8, right: 12, bottom: 0, left: -12 }} barGap={2}>
           <CartesianGrid strokeDasharray="3 3" stroke={GRID} vertical={false} />
-          <XAxis dataKey="campaign" {...AXIS_PROPS} />
+          <XAxis dataKey="campaign" minTickGap={8} tickFormatter={shortTick} {...AXIS_PROPS} />
           <YAxis allowDecimals={false} {...AXIS_PROPS} />
           <Tooltip cursor={{ fill: "#f8fafc" }} {...TOOLTIP_PROPS} />
           <Legend {...LEGEND_PROPS} />
@@ -411,7 +419,7 @@ export function AgentPerformanceTable({
 
   return (
     <Card className="overflow-hidden">
-      <div className="border-b border-slate-100 px-5 py-4">
+      <div className="border-b border-slate-100 px-4 py-4 sm:px-5">
         <h2 className="text-sm font-semibold text-slate-900">Agent Performance</h2>
         <p className="mt-0.5 text-xs text-slate-500">
           Conversation load and resolution rate per agent

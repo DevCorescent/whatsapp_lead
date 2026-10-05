@@ -77,7 +77,7 @@ function StatTile({
   tone: string;
 }) {
   return (
-    <Card className="flex items-center gap-3 p-4">
+    <Card className="flex items-center gap-3 p-3 sm:p-4">
       <span className={cn("flex h-10 w-10 shrink-0 items-center justify-center rounded-lg", tone)}>
         <Icon className="h-5 w-5" />
       </span>
@@ -166,7 +166,65 @@ export default function TeamPage() {
             }
           />
         ) : (
-          <div className="scrollbar-slim overflow-x-auto">
+          <>
+          {/* Phones: one stacked card per member instead of the 8-column table. */}
+          <ul className="divide-y divide-slate-100 md:hidden">
+            {members.map((m) => (
+              <li key={m.id} className="space-y-3 p-4">
+                <div className="flex items-start gap-3">
+                  <Avatar name={m.name} src={m.avatar} size="sm" />
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate font-medium text-slate-900">{m.name}</p>
+                    <p className="truncate text-sm text-slate-500">{m.email}</p>
+                  </div>
+                  <Badge className={ROLE_STYLE[m.role]}>{ROLE_LABEL[m.role]}</Badge>
+                </div>
+                <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5 text-xs text-slate-500">
+                  <span className="inline-flex items-center gap-1.5 text-slate-600">
+                    <span
+                      className={cn(
+                        "h-2 w-2 rounded-full",
+                        m.isActive ? "bg-emerald-500" : "bg-slate-300",
+                      )}
+                    />
+                    {m.isActive ? "Active" : "Inactive"}
+                  </span>
+                  <span>Last login: {m.lastLoginAt ? timeAgo(m.lastLoginAt) : "Never"}</span>
+                  <span className="inline-flex items-center gap-1.5 tabular-nums text-slate-700">
+                    <MessagesSquare className="h-3.5 w-3.5 text-slate-400" />
+                    {formatCompact(m._count?.assignedConvs ?? 0)}
+                  </span>
+                </div>
+                <div className="text-sm">
+                  <AiAllowance limit={m.aiCreditLimit} used={m.aiCreditsUsed} />
+                </div>
+                <div className="grid grid-cols-2 gap-2">
+                  <Button variant="secondary" className="h-10" onClick={() => setEditingMember(m)}>
+                    <UserCog className="h-4 w-4" />
+                    Change role
+                  </Button>
+                  <Button
+                    variant="secondary"
+                    className={cn("h-10", m.isActive && "text-rose-600 hover:bg-rose-50")}
+                    onClick={() => { setToggleError(null); setConfirmToggle(m); }}
+                  >
+                    {m.isActive ? (
+                      <>
+                        <ShieldOff className="h-4 w-4" />
+                        Deactivate
+                      </>
+                    ) : (
+                      <>
+                        <ShieldCheck className="h-4 w-4" />
+                        Activate
+                      </>
+                    )}
+                  </Button>
+                </div>
+              </li>
+            ))}
+          </ul>
+          <div className="scrollbar-slim hidden overflow-x-auto md:block">
             <table className="w-full min-w-[56rem] text-left text-sm">
               <thead className="border-b border-slate-200 bg-slate-50 text-xs uppercase tracking-wide text-slate-500">
                 <tr>
@@ -247,6 +305,7 @@ export default function TeamPage() {
               </tbody>
             </table>
           </div>
+          </>
         )}
       </Card>
 
@@ -267,7 +326,7 @@ export default function TeamPage() {
         {toggleError && (
           <p className="mb-3 rounded-lg bg-rose-50 px-3 py-2 text-sm text-rose-700">{toggleError}</p>
         )}
-        <div className="flex justify-end gap-2">
+        <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end max-sm:[&>button]:h-10 max-sm:[&>button]:w-full">
           <Button
             variant="secondary"
             onClick={() => { setConfirmToggle(null); setToggleError(null); }}
@@ -391,7 +450,7 @@ function InviteModal({ open, onClose }: { open: boolean; onClose: () => void }) 
         {error && <p className="rounded-lg bg-rose-50 px-3 py-2 text-xs text-rose-700">{error}</p>}
         {success && <p className="rounded-lg bg-emerald-50 px-3 py-2 text-xs text-emerald-700">{success}</p>}
 
-        <div className="flex justify-end gap-2 pt-2">
+        <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end max-sm:[&>button]:h-10 max-sm:[&>button]:w-full pt-2">
           <Button type="button" variant="secondary" onClick={close}>
             Cancel
           </Button>
@@ -476,7 +535,7 @@ function ChangeRoleModal({ member, onClose }: { member: Member | null; onClose: 
         </Field>
 
         {error && <p className="rounded-lg bg-rose-50 px-3 py-2 text-xs text-rose-700">{error}</p>}
-        <div className="flex justify-end gap-2">
+        <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end max-sm:[&>button]:h-10 max-sm:[&>button]:w-full">
           <Button variant="secondary" onClick={onClose}>Cancel</Button>
           <Button onClick={() => save.mutate()} disabled={save.isPending}>{save.isPending ? "Saving…" : "Save"}</Button>
         </div>

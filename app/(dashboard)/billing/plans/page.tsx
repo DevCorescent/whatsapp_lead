@@ -265,7 +265,7 @@ export default function PlansPage() {
             )}
           </p>
 
-          <div className="mt-4 flex flex-wrap justify-end gap-2 border-t border-slate-100 pt-4">
+          <div className="mt-4 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end max-sm:[&>button]:h-10 max-sm:[&>button]:w-full border-t border-slate-100 pt-4">
             <Button variant="secondary" onClick={() => setQuote(null)} disabled={confirming}>
               Cancel
             </Button>
@@ -305,8 +305,8 @@ export default function PlansPage() {
 
             return (
               <Card key={plan.id} className={cn("flex flex-col p-5", isCurrent && "ring-2 ring-emerald-500")}>
-                <div className="flex items-center justify-between">
-                  <h3 className="text-lg font-semibold text-slate-900">{plan.displayName || plan.name}</h3>
+                <div className="flex items-center justify-between gap-2">
+                  <h3 className="min-w-0 truncate text-lg font-semibold text-slate-900">{plan.displayName || plan.name}</h3>
                   <span className="flex items-center gap-1.5">
                     {plan.visibility === "PRIVATE" && (
                       <Badge className="bg-violet-50 text-violet-700 ring-violet-600/20">Custom</Badge>
@@ -338,7 +338,7 @@ export default function PlansPage() {
                 </ul>
 
                 <Button
-                  className="mt-5 w-full justify-center"
+                  className="mt-5 h-10 w-full justify-center sm:h-9"
                   variant={isCurrent ? "secondary" : "primary"}
                   disabled={isCurrent || busyId === plan.id || (plan.priceMonthly > 0 && !data?.billingEnabled)}
                   onClick={() => choose(plan)}

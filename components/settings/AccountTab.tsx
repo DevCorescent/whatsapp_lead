@@ -46,7 +46,7 @@ export function AccountTab() {
           </div>
           <div>
             <dt className="text-xs font-medium uppercase tracking-wide text-slate-500">Email</dt>
-            <dd className="mt-0.5 text-sm text-slate-900">{session?.user?.email ?? "—"}</dd>
+            <dd className="mt-0.5 break-all text-sm text-slate-900">{session?.user?.email ?? "—"}</dd>
           </div>
           <div>
             <dt className="text-xs font-medium uppercase tracking-wide text-slate-500">Role</dt>
@@ -81,7 +81,7 @@ export function AccountTab() {
               Loading…
             </div>
           ) : (
-            <div className="flex items-center gap-3">
+            <div className="flex flex-wrap items-center gap-3">
               <span className="rounded-lg border border-slate-200 bg-slate-50 px-4 py-2.5 font-mono text-lg font-semibold tracking-[0.2em] text-slate-900">
                 {inviteCode ?? "—"}
               </span>

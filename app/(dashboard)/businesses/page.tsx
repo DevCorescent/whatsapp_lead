@@ -164,7 +164,7 @@ export default function BusinessesPage() {
                     <Building2 className="h-5 w-5" />
                   </span>
                   <div className="min-w-0 flex-1">
-                    <div className="flex items-center gap-2">
+                    <div className="flex min-w-0 items-center gap-2">
                       <p className="truncate text-sm font-semibold text-slate-900">{b.name}</p>
                       {isCurrent && (
                         <Badge className="bg-emerald-50 text-emerald-700 ring-emerald-600/20">
@@ -206,7 +206,7 @@ export default function BusinessesPage() {
                   </div>
                 </div>
 
-                <div className="mt-4 flex items-center gap-2">
+                <div className="mt-4 flex flex-wrap items-center gap-2">
                   {!isCurrent && (
                     <Button
                       size="sm"
@@ -264,7 +264,7 @@ export default function BusinessesPage() {
             />
           </Field>
 
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid gap-3 sm:grid-cols-2">
             <Field label="Timezone" htmlFor="b-tz">
               <input
                 id="b-tz"
@@ -348,7 +348,7 @@ export default function BusinessesPage() {
                   className={inputClass}
                 />
               </Field>
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid gap-3 sm:grid-cols-2">
                 <Field label="Temperature" htmlFor="b-temp">
                   <input
                     id="b-temp"
@@ -378,7 +378,7 @@ export default function BusinessesPage() {
 
           {error && <p className="text-sm text-rose-600">{error}</p>}
 
-          <div className="flex justify-end gap-2">
+          <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end max-sm:[&>button]:h-10 max-sm:[&>button]:w-full">
             <Button type="button" variant="secondary" onClick={() => setShowForm(false)}>
               Cancel
             </Button>
@@ -403,7 +403,7 @@ export default function BusinessesPage() {
         {deleteError && (
           <p className="mb-3 rounded-lg bg-rose-50 px-3 py-2 text-sm text-rose-700">{deleteError}</p>
         )}
-        <div className="flex justify-end gap-2">
+        <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end max-sm:[&>button]:h-10 max-sm:[&>button]:w-full">
           <Button variant="secondary" onClick={() => { setConfirmDelete(null); setDeleteError(null); }} disabled={deleteBusiness.isPending}>
             Cancel
           </Button>

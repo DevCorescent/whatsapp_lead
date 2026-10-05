@@ -17,6 +17,8 @@ function normalizeSource(value: unknown) {
 export async function GET(req: NextRequest, { params }: Params) {
   const session = await auth();
   if (!session?.user) return NextResponse.json({ success: false, error: "Unauthorized" }, { status: 401 });
+  const forbidden = await requirePermission(session.user, "contacts.view");
+  if (forbidden) return forbidden;
 
   const { id } = await params;
 
@@ -132,7 +134,7 @@ export async function DELETE(req: NextRequest, { params }: Params) {
   // business's contact by id.
   const scope = await getBusinessScope();
   if (!scope) return NextResponse.json({ success: false, error: "Unauthorized" }, { status: 401 });
-  const denied = await requirePermission(scope, "contacts.manage");
+  const denied = await requirePermission(scope, "contacts.delete");
   if (denied) return denied;
 
   const contact = await prisma.contact.findFirst({

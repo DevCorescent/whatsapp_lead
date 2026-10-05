@@ -117,7 +117,9 @@ export function KanbanBoard({
 
   return (
     <div className="flex flex-col gap-4">
-      <div className="scrollbar-slim flex gap-4 overflow-x-auto pb-4">
+      {/* Phones swipe one column at a time (snap); drag-and-drop is mouse-only, so touch users
+          move stages from the lead drawer instead. */}
+      <div className="scrollbar-slim flex snap-x snap-mandatory gap-4 overflow-x-auto overscroll-x-contain pb-4 md:snap-none">
         {stages.map(({ id: stageId, name, accent, dot }) => {
           const items = board[stageId] ?? [];
           const total = items.reduce((sum, l) => sum + (l.value ?? 0), 0);
@@ -143,7 +145,7 @@ export function KanbanBoard({
                 handleDrop(stageId);
               }}
               className={cn(
-                "flex w-72 shrink-0 flex-col rounded-xl border border-t-4 border-slate-200 bg-slate-100/70",
+                "flex w-[min(18rem,calc(100vw-4.5rem))] shrink-0 snap-start flex-col rounded-xl sm:w-72 border border-t-4 border-slate-200 bg-slate-100/70",
                 accent,
                 isOver && "bg-emerald-50 ring-2 ring-emerald-300",
                 "transition-colors",
@@ -201,7 +203,7 @@ export function KanbanBoard({
                 type="button"
                 onClick={() => onAddLead(stageId)}
                 className={cn(
-                  "m-3 mt-0 inline-flex items-center justify-center gap-1.5 rounded-lg py-2",
+                  "m-3 mt-0 inline-flex min-h-10 items-center justify-center gap-1.5 rounded-lg py-2 md:min-h-0",
                   "text-xs font-medium text-slate-500 transition",
                   "hover:bg-white hover:text-emerald-700",
                   "focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-600",

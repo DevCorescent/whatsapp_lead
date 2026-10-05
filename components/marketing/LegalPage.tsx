@@ -105,7 +105,7 @@ export default function LegalPage({
             </ol>
           </nav>
 
-          <div className="min-w-0">
+          <div className="min-w-0 break-words">
             <Stage className="space-y-10">
               {sections.map((section, index) => (
                 <div

@@ -219,7 +219,7 @@ export function FaqWorkbench() {
         title="FAQs"
         description="The questions your AI can answer, and the answers it will give."
         action={
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             {/* Where the questions live is where you want to know which ones
                 customers actually tapped. */}
             <ExportButton resource="faq-interest" label="Export interest" />
@@ -232,7 +232,7 @@ export function FaqWorkbench() {
       />
 
       {loading ? (
-        <div className="grid gap-6 lg:grid-cols-[18rem_1fr]">
+        <div className="grid grid-cols-1 gap-6 lg:grid-cols-[18rem_1fr]">
           <Skeleton className="h-64 rounded-xl" />
           <Skeleton className="h-96 rounded-xl" />
         </div>
@@ -293,7 +293,7 @@ export function FaqWorkbench() {
             {(removeSet.error as Error).message}
           </p>
         )}
-        <div className="flex justify-end gap-2">
+        <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end max-sm:[&>button]:h-10 max-sm:[&>button]:w-full">
           <Button variant="secondary" onClick={() => setConfirmDelete(null)} disabled={removeSet.isPending}>
             Cancel
           </Button>
@@ -465,7 +465,7 @@ function CollectionEditor({
   const ops = collectionOps(collection, onWrite);
 
   return (
-    <Card className="p-6">
+    <Card className="p-4 sm:p-6">
       <div className="flex items-start justify-between gap-4 border-b border-slate-100 pb-4">
         <div className="min-w-0">
           <h2 className="truncate text-lg font-semibold text-slate-900" title={collection.title}>

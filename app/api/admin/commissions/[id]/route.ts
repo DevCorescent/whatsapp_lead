@@ -39,7 +39,7 @@ export async function PATCH(req: NextRequest, { params }: Params) {
   });
   await prisma.auditLog.create({
     data: {
-      tenantId: session.user.tenantId,
+      tenantId: (session.user.viewAs?.homeTenantId ?? session.user.tenantId),
       userId: session.user.id,
       action: "COMMISSION_STATUS_CHANGED",
       resource: "reseller_commission",

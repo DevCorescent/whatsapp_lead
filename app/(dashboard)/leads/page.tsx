@@ -146,13 +146,13 @@ export default function LeadsPage() {
             : `${leads.length} lead${leads.length === 1 ? "" : "s"} · ${formatCurrency(pipelineValue)} in play`
         }
         action={
-          <div className="flex gap-2">
-            <Button variant="secondary" onClick={() => setImportOpen(true)}>
+          <div className="flex w-full flex-wrap gap-2 sm:w-auto">
+            <Button variant="secondary" onClick={() => setImportOpen(true)} className="flex-1 sm:flex-none">
               <Upload className="h-4 w-4" />
               Import
             </Button>
             <ExportButton resource="leads" />
-            <Button onClick={() => openAddModal(defaultStageId)}>
+            <Button onClick={() => openAddModal(defaultStageId)} className="flex-1 sm:flex-none">
               <Plus className="h-4 w-4" />
               Add Lead
             </Button>
@@ -162,13 +162,13 @@ export default function LeadsPage() {
 
       {/* Filter bar */}
       <div className="mb-5 flex flex-wrap items-center gap-3">
-        <div className="relative min-w-56 flex-1 sm:max-w-xs">
+        <div className="relative min-w-full flex-1 sm:min-w-56 sm:max-w-xs">
           <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
           <input
             type="search"
             aria-label="Search leads"
             placeholder="Search leads or contacts…"
-            className={cn(inputClass, "pl-9")}
+            className={cn(inputClass, "pl-9 text-base sm:text-sm")}
             value={search}
             onChange={(e) => setSearch(e.target.value)}
           />
@@ -176,7 +176,7 @@ export default function LeadsPage() {
 
         <select
           aria-label="Filter by assignee"
-          className={cn(inputClass, "w-auto min-w-40")}
+          className={cn(inputClass, "min-w-0 flex-1 text-base sm:w-auto sm:min-w-40 sm:flex-none sm:text-sm")}
           value={assignee}
           onChange={(e) => setAssignee(e.target.value)}
           disabled={agents.length === 0}
@@ -191,7 +191,7 @@ export default function LeadsPage() {
 
         <select
           aria-label="Filter by score"
-          className={cn(inputClass, "w-auto min-w-32")}
+          className={cn(inputClass, "min-w-0 flex-1 text-base sm:w-auto sm:min-w-32 sm:flex-none sm:text-sm")}
           value={score}
           onChange={(e) => setScore(e.target.value)}
         >
@@ -232,7 +232,7 @@ export default function LeadsPage() {
               onClick={() => setView(key)}
               aria-pressed={view === key}
               className={cn(
-                "inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-medium transition",
+                "inline-flex items-center gap-1.5 rounded-md px-3 py-2 text-xs font-medium transition sm:py-1.5",
                 view === key
                   ? "bg-white text-slate-900 shadow-sm"
                   : "text-slate-500 hover:text-slate-700",
@@ -267,14 +267,14 @@ export default function LeadsPage() {
       {toast && (
         <div
           role="status"
-          className="fixed bottom-6 left-1/2 z-50 flex -translate-x-1/2 items-start gap-2 rounded-xl bg-slate-900 px-4 py-3 text-sm text-white shadow-xl"
+          className="fixed bottom-6 left-1/2 z-50 flex w-[calc(100%-2rem)] -translate-x-1/2 items-start gap-2 rounded-xl bg-slate-900 px-4 py-3 text-sm text-white shadow-xl sm:w-auto"
         >
           <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-400" />
-          <span className="max-w-xs">{toast}</span>
+          <span className="min-w-0 flex-1 sm:max-w-xs">{toast}</span>
           <button
             onClick={() => setToast(null)}
             aria-label="Dismiss"
-            className="ml-2 rounded p-0.5 text-slate-400 hover:text-white"
+            className="-my-1.5 ml-2 shrink-0 rounded p-1.5 text-slate-400 hover:text-white sm:my-0 sm:p-0.5"
           >
             <X className="h-4 w-4" />
           </button>
@@ -340,7 +340,41 @@ function LeadTable({
 
   return (
     <Card className="overflow-hidden">
-      <div className="scrollbar-slim overflow-x-auto">
+      {/* Phones: a stacked list — seven columns at 832px are unusable at 360px. */}
+      <ul className="divide-y divide-slate-100 md:hidden">
+        {leads.map((lead) => (
+          <li key={lead.id}>
+            <button
+              type="button"
+              onClick={() => onSelectLead(lead)}
+              className="flex w-full flex-col gap-2 px-4 py-3 text-left transition hover:bg-slate-50"
+            >
+              <span className="flex w-full items-start gap-2">
+                <span className="min-w-0 flex-1 truncate font-medium text-slate-900">{lead.title}</span>
+                <span className="shrink-0 text-sm font-semibold text-slate-900">
+                  {formatCurrency(lead.value, lead.currency || "INR")}
+                </span>
+              </span>
+              <span className="flex w-full items-center gap-2 text-sm">
+                <Avatar name={lead.contact?.name} src={lead.contact?.avatarUrl} size="xs" />
+                <span className="min-w-0 flex-1 truncate text-slate-600">
+                  {lead.contact?.name ?? "Unknown"}
+                </span>
+                <span className="shrink-0 text-xs text-slate-400">{daysBetween(lead.updatedAt)}d</span>
+              </span>
+              <span className="flex flex-wrap items-center gap-1.5">
+                <Badge>{lead.stage?.name ?? "—"}</Badge>
+                <Badge className={SCORE_STYLE[lead.scoreLabel]}>{lead.scoreLabel}</Badge>
+                <span className="ml-auto truncate text-xs text-slate-500">
+                  {lead.assignedTo?.name ?? "Unassigned"}
+                </span>
+              </span>
+            </button>
+          </li>
+        ))}
+      </ul>
+
+      <div className="scrollbar-slim hidden overflow-x-auto md:block">
         <table className="w-full min-w-208 text-left text-sm">
           <thead className="border-b border-slate-200 bg-slate-50 text-xs uppercase tracking-wide text-slate-500">
             <tr>

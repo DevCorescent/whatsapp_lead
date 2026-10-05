@@ -15,6 +15,11 @@ declare module "next-auth" {
       /** The reseller account this client belongs to, if any. */
       parentTenantId: string | null;
       avatar?: string;
+      /**
+       * Set while a Super Admin is viewing another account (lib/viewAs.ts): the claims
+       * above are that account's, and this is the admin's own. Null otherwise.
+       */
+      viewAs?: { homeTenantId: string; homeTenantName: string } | null;
     } & DefaultSession["user"];
   }
 

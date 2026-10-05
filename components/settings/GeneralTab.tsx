@@ -173,7 +173,7 @@ export function GeneralTab() {
           <p className="mt-3 text-sm text-rose-600">{(save.error as Error).message}</p>
         )}
 
-        <div className="mt-5 flex justify-end border-t border-slate-100 pt-4">
+        <div className="mt-5 flex justify-end max-sm:[&>button]:h-10 max-sm:[&>button]:w-full border-t border-slate-100 pt-4">
           <Button onClick={() => save.mutate()} disabled={save.isPending || !name.trim()}>
             <Save className="h-4 w-4" />
             {save.isPending ? "Saving…" : saved ? "Saved!" : "Save Changes"}

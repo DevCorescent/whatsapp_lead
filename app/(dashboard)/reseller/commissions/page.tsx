@@ -38,21 +38,21 @@ export default function ResellerCommissionsPage() {
     <div className="space-y-5">
       <PageHeader title="Commissions" description="Earned on every payment made by clients you referred." />
 
-      <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
         <Tile label="Pending payout" value={money(totals.PENDING)} tone="amber" />
         <Tile label="Paid to you" value={money(totals.PAID)} tone="emerald" />
         <Tile label="Cancelled" value={money(totals.CANCELLED)} hint="e.g. refunded payments" />
       </div>
 
       <Card className="overflow-hidden">
-        <div className="flex gap-1 border-b border-slate-100 p-3">
+        <div className="scrollbar-slim flex gap-1 overflow-x-auto border-b border-slate-100 p-3">
           {FILTERS.map((f) => (
             <button
               key={f}
               type="button"
               onClick={() => { setStatus(f); setPage(1); }}
               className={cn(
-                "rounded-md px-3 py-1.5 text-xs font-medium transition",
+                "shrink-0 rounded-md px-3 py-2 text-xs font-medium transition sm:py-1.5",
                 status === f ? "bg-emerald-50 text-emerald-700" : "text-slate-500 hover:bg-slate-50",
               )}
             >

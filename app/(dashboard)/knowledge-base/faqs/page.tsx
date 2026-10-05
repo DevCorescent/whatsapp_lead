@@ -11,7 +11,7 @@ export default function FaqsPage() {
   return (
     <Suspense
       fallback={
-        <div className="grid gap-6 lg:grid-cols-[18rem_1fr]">
+        <div className="grid grid-cols-1 gap-6 lg:grid-cols-[18rem_1fr]">
           <Skeleton className="h-64 rounded-xl" />
           <Skeleton className="h-96 rounded-xl" />
         </div>

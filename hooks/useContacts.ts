@@ -6,6 +6,9 @@ interface ContactFilters {
   search?: string;
   tagId?: string;
   source?: string;
+  segmentId?: string;
+  /** "active" (default), "blocked" (blacklisted numbers) or "deleted". */
+  status?: "active" | "blocked" | "deleted";
   page?: number;
   limit?: number;
 }
@@ -18,11 +21,62 @@ export function useContacts(filters?: ContactFilters) {
       if (filters?.search) params.set("search", filters.search);
       if (filters?.tagId) params.set("tagId", filters.tagId);
       if (filters?.source) params.set("source", filters.source);
+      if (filters?.segmentId) params.set("segmentId", filters.segmentId);
+      if (filters?.status) params.set("status", filters.status);
       if (filters?.page) params.set("page", String(filters.page));
       if (filters?.limit) params.set("limit", String(filters.limit));
       const res = await fetch(`/api/contacts?${params}`);
       if (!res.ok) throw new Error("Failed to fetch contacts");
       return res.json();
+    },
+  });
+}
+
+export interface ContactTagOption {
+  id: string;
+  name: string;
+  color: string;
+  count: number;
+}
+
+/** The active business's tags, for the filter and the bulk tag picker. */
+export function useContactTags() {
+  return useQuery<ContactTagOption[]>({
+    queryKey: ["contacts", "tags"],
+    queryFn: async () => {
+      const res = await fetch("/api/contacts/tags");
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(json.error ?? "Failed to fetch tags");
+      return Array.isArray(json.data) ? json.data : [];
+    },
+  });
+}
+
+export type ContactBulkAction = "delete" | "restore" | "block" | "unblock" | "addTag" | "removeTag";
+
+export interface ContactBulkResult {
+  affected: number;
+  unchanged: number;
+  platformBlocked?: number;
+}
+
+/** Delete / restore / block / unblock / tag many contacts at once (POST /api/contacts/bulk). */
+export function useBulkContactAction() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (body: { action: ContactBulkAction; ids: string[]; reason?: string; tag?: string }) => {
+      const res = await fetch("/api/contacts/bulk", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(json.error ?? "Failed to update the contacts");
+      return json.data as ContactBulkResult;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["contacts"] });
+      queryClient.invalidateQueries({ queryKey: ["blacklist"] });
     },
   });
 }

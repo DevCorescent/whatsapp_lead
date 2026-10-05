@@ -92,26 +92,67 @@ export function renderTemplateBody(body: string, values: string[]): string {
   return body.replace(POSITIONAL_RE, (whole, n: string) => values[parseInt(n, 10) - 1] ?? whole);
 }
 
+// ─── Buttons ─────────────────────────────────────────────────────────────────
+
+interface TemplateButton {
+  type?: string;
+  text?: string;
+  url?: string;
+  urlType?: string;
+}
+
+function templateButtons(t: TemplateShape): TemplateButton[] {
+  return Array.isArray(t.buttons) ? (t.buttons as TemplateButton[]) : [];
+}
+
+/**
+ * An authentication template's copy-code button. Created here it is `OTP`; imported
+ * from Meta it arrives as a URL button pointing at whatsapp.com/otp — which must not
+ * be mistaken for a link the user has to fill in.
+ */
+export function isOtpButton(b: TemplateButton): boolean {
+  return b.type === "OTP" || (b.type === "URL" && /whatsapp\.com\/otp\//i.test(b.url ?? ""));
+}
+
+export function hasOtpButton(t: TemplateShape): boolean {
+  return templateButtons(t).some(isOtpButton);
+}
+
+/** A URL button whose link ends in a variable, which every send must fill. */
+export interface UrlButtonSlot {
+  /** Position among ALL the template's buttons — what Meta's `index` refers to. */
+  index: number;
+  text: string;
+  url: string;
+}
+
+export function dynamicUrlButtons(t: TemplateShape): UrlButtonSlot[] {
+  return templateButtons(t).flatMap((b, index) =>
+    b.type === "URL" && !isOtpButton(b) && (b.urlType === "DYNAMIC" || /\{\{/.test(b.url ?? ""))
+      ? [{ index, text: b.text ?? "Link", url: b.url ?? "" }]
+      : [],
+  );
+}
+
+/** The link a recipient gets: the button's URL with its `{{1}}` replaced by their value. */
+export function renderButtonUrl(url: string, value: string): string {
+  return url.replace(/\{\{\w+\}\}/, value);
+}
+
 /**
  * Why the campaign sender cannot deliver this template, or null when it can.
  *
- * The send worker fills media headers, body parameters and the OTP copy-code
- * button — nothing else. Meta rejects a template send whose component parameters
- * don't match the template (#132000), so a template with a variable text header,
- * a dynamic URL button or a coupon-code button would fail for every recipient.
- * Refusing it up front is better than a campaign that is 100% FAILED.
+ * The send worker fills media headers, body parameters, dynamic URL buttons and the
+ * OTP copy-code button. Meta rejects a template send whose component parameters
+ * don't match the template (#132000), so a template with a variable text header or
+ * a coupon-code button would fail for every recipient. Refusing it up front is
+ * better than a campaign that is 100% FAILED.
  */
 export function unsupportedTemplateReason(t: TemplateShape): string | null {
   if (t.headerType === "TEXT" && /\{\{/.test(t.headerContent ?? "")) {
     return "Its header has a variable, which broadcasts can't fill yet.";
   }
-  const buttons = Array.isArray(t.buttons)
-    ? (t.buttons as { type?: string; url?: string; urlType?: string }[])
-    : [];
-  if (buttons.some((b) => b.type === "URL" && (b.urlType === "DYNAMIC" || /\{\{/.test(b.url ?? "")))) {
-    return "It has a dynamic URL button, which broadcasts can't fill yet.";
-  }
-  if (buttons.some((b) => b.type === "COPY_CODE")) {
+  if (templateButtons(t).some((b) => b.type === "COPY_CODE")) {
     return "It has a coupon-code button, which broadcasts can't fill yet.";
   }
   return null;

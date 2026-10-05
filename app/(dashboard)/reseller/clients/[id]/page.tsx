@@ -1,7 +1,7 @@
 "use client";
 
-// Reseller → one client: account, plan, usage counts and commission — never its
-// chats or messages. Managed clients can be suspended or moved to another plan.
+// Reseller → one client: account, plan, usage counts, activity reports and
+// commission — never its contacts, chats or messages. Managed clients can be suspended or moved to another plan.
 
 import { use, useState } from "react";
 import Link from "next/link";
@@ -9,6 +9,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { AlertCircle, ArrowLeft, Loader2, Pause, Play } from "lucide-react";
 import { Badge, Button, Card, SkeletonRows, inputClass } from "@/components/ui";
 import { api, money, rupees, STATUS_TONE, Tile } from "@/components/reseller/shared";
+import { ClientReport } from "@/components/reseller/ClientReport";
 import { formatDate } from "@/lib/utils";
 
 interface Metric { used: number; limit: number }
@@ -73,9 +74,9 @@ export default function ResellerClientPage({ params }: { params: Promise<{ id: s
         <ArrowLeft className="h-4 w-4" /> Clients
       </Link>
 
-      <Card className="flex flex-col gap-4 p-5 sm:flex-row sm:items-center sm:justify-between">
-        <div>
-          <h1 className="flex flex-wrap items-center gap-2 text-xl font-semibold text-slate-900">
+      <Card className="flex flex-col gap-4 p-4 sm:flex-row sm:items-center sm:justify-between sm:p-5">
+        <div className="min-w-0">
+          <h1 className="flex flex-wrap items-center gap-2 break-words text-lg font-semibold text-slate-900 sm:text-xl">
             {c.name} <Badge className={STATUS_TONE[status] ?? ""}>{status}</Badge>
           </h1>
           <p className="mt-0.5 text-sm text-slate-500">
@@ -87,6 +88,7 @@ export default function ResellerClientPage({ params }: { params: Promise<{ id: s
         </div>
         {c.managed && (
           <Button
+            className="h-10 sm:h-9"
             variant={c.isActive ? "danger" : "secondary"}
             disabled={update.isPending}
             onClick={() => update.mutate({ isActive: !c.isActive })}
@@ -111,9 +113,11 @@ export default function ResellerClientPage({ params }: { params: Promise<{ id: s
         <Tile label="Campaigns this period" value={limitText(c.usage.campaigns)} />
       </div>
 
+      <ClientReport clientId={c.id} />
+
       <div className="grid gap-5 lg:grid-cols-2">
         {c.managed && (
-          <Card className="p-5">
+          <Card className="p-4 sm:p-5">
             <h2 className="text-sm font-semibold text-slate-900">Change plan</h2>
             <p className="mt-1 text-xs text-slate-500">The current billing period is kept; the new plan&apos;s limits apply immediately.</p>
             <div className="mt-3 flex flex-col gap-2 sm:flex-row">
@@ -123,7 +127,7 @@ export default function ResellerClientPage({ params }: { params: Promise<{ id: s
                   <option key={p.id} value={p.id}>{p.displayName} · {rupees(p.priceMonthly)}/mo</option>
                 ))}
               </select>
-              <Button disabled={!planId || update.isPending} onClick={() => update.mutate({ planId })}>
+              <Button className="h-10 sm:h-9" disabled={!planId || update.isPending} onClick={() => update.mutate({ planId })}>
                 {update.isPending && <Loader2 className="h-4 w-4 animate-spin" />} Apply
               </Button>
             </div>
@@ -131,7 +135,7 @@ export default function ResellerClientPage({ params }: { params: Promise<{ id: s
         )}
 
         {c.managed && (
-          <Card className="p-5">
+          <Card className="p-4 sm:p-5">
             <h2 className="text-sm font-semibold text-slate-900">Add message credit</h2>
             <p className="mt-1 text-xs text-slate-500">Moves credit from your wallet to this client&apos;s.</p>
             <div className="mt-3 flex flex-col gap-2 sm:flex-row">
@@ -139,7 +143,7 @@ export default function ResellerClientPage({ params }: { params: Promise<{ id: s
                 <span className="pl-3 text-sm text-slate-400">₹</span>
                 <input type="number" min={1} value={credit} onChange={(e) => setCredit(e.target.value)} className="w-full rounded-lg bg-transparent px-2 py-2 text-sm focus:outline-none" aria-label="Credit to transfer" />
               </div>
-              <Button disabled={!(Number(credit) >= 1) || transfer.isPending} onClick={() => transfer.mutate()}>
+              <Button className="h-10 sm:h-9" disabled={!(Number(credit) >= 1) || transfer.isPending} onClick={() => transfer.mutate()}>
                 {transfer.isPending && <Loader2 className="h-4 w-4 animate-spin" />} Transfer
               </Button>
             </div>
@@ -147,11 +151,11 @@ export default function ResellerClientPage({ params }: { params: Promise<{ id: s
           </Card>
         )}
 
-        <Card className="p-5">
+        <Card className="p-4 sm:p-5">
           <h2 className="text-sm font-semibold text-slate-900">Users</h2>
           <ul className="mt-2 divide-y divide-slate-100 text-sm">
             {c.users.map((u) => (
-              <li key={u.email} className="flex items-center justify-between gap-3 py-2">
+              <li key={u.email} className="flex flex-col gap-1 py-2 sm:flex-row sm:items-center sm:justify-between sm:gap-3">
                 <span className="min-w-0">
                   <span className="block truncate font-medium text-slate-800">{u.name}</span>
                   <span className="block truncate text-xs text-slate-500">{u.email} · {u.role.replace("_", " ").toLowerCase()}</span>
@@ -172,7 +176,7 @@ export default function ResellerClientPage({ params }: { params: Promise<{ id: s
         ) : (
           <ul className="divide-y divide-slate-100 text-sm">
             {c.commissions.map((m) => (
-              <li key={m.id} className="flex items-center justify-between gap-3 px-5 py-2.5">
+              <li key={m.id} className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1 px-4 py-2.5 sm:px-5">
                 <span className="text-slate-600">
                   {formatDate(m.createdAt)} · {m.rate}% of {money(m.baseMinor, m.currency)}
                 </span>

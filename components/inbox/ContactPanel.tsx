@@ -13,6 +13,7 @@ import {
   StickyNote,
   Ticket as TicketIcon,
   UserRound,
+  X,
 } from "lucide-react";
 import { Avatar, Badge, Button, Skeleton, inputClass } from "@/components/ui";
 import {
@@ -51,11 +52,14 @@ export function ContactPanel({
   conversation,
   agents,
   isLoading,
+  onClose,
   className,
 }: {
   conversation: InboxConversation | null;
   agents: InboxAgent[];
   isLoading?: boolean;
+  /** Shown below xl, where the panel is a drawer that needs its own way out. */
+  onClose?: () => void;
   className?: string;
 }) {
   const [tab, setTab] = useState<PanelTab>("notes");
@@ -104,11 +108,21 @@ export function ContactPanel({
       )}
     >
       {/* Identity */}
-      <div className="flex flex-col items-center border-b border-slate-100 px-4 py-6 text-center">
+      <div className="relative flex flex-col items-center border-b border-slate-100 px-4 py-6 text-center">
+        {onClose && (
+          <button
+            type="button"
+            onClick={onClose}
+            aria-label="Close contact details"
+            className="absolute right-2 top-2 rounded-lg p-2.5 text-slate-400 transition hover:bg-slate-100 hover:text-slate-600 xl:hidden"
+          >
+            <X className="h-5 w-5" />
+          </button>
+        )}
         <Avatar name={name} src={contact?.avatarUrl} size="lg" />
         <p className="mt-3 w-full truncate text-sm font-semibold text-slate-900">{name}</p>
 
-        <div className="mt-1 space-y-0.5 text-xs text-slate-500">
+        <div className="mt-1 w-full min-w-0 space-y-0.5 text-xs text-slate-500">
           {contact?.phone && (
             <p className="flex items-center justify-center gap-1.5">
               <Phone className="h-3.5 w-3.5 shrink-0" />
@@ -310,7 +324,7 @@ export function ContactPanel({
           }}
           disabled={update.isPending}
           aria-label="Assign agent"
-          className={cn(inputClass, "bg-white")}
+          className={cn(inputClass, "bg-white text-base sm:text-sm")}
         >
           <option value="">Unassigned</option>
           {agents.map((agent) => (
@@ -353,7 +367,7 @@ export function ContactPanel({
                 aria-selected={active}
                 onClick={() => setTab(t.id)}
                 className={cn(
-                  "flex-1 border-b-2 px-2 py-2.5 text-xs font-medium transition",
+                  "min-h-10 flex-1 border-b-2 px-2 py-2.5 text-xs font-medium transition",
                   active
                     ? "border-emerald-600 text-emerald-700"
                     : "border-transparent text-slate-500 hover:text-slate-700",

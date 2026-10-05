@@ -86,17 +86,17 @@ function OnboardingWizard({ data, onDismiss }: { data: OnboardingState; onDismis
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+    <div className="fixed inset-0 z-50 flex items-end justify-center sm:items-center sm:p-4">
       <div className="absolute inset-0 bg-slate-900/50 backdrop-blur-[2px]" aria-hidden />
 
       <div
         role="dialog"
         aria-modal="true"
         aria-label="Set up your workspace"
-        className="relative z-10 flex max-h-[90vh] w-full max-w-lg flex-col overflow-hidden rounded-2xl bg-white shadow-2xl ring-1 ring-slate-900/5"
+        className="relative z-10 flex h-dvh max-h-dvh w-full max-w-lg flex-col overflow-hidden bg-white shadow-2xl ring-1 ring-slate-900/5 sm:h-auto sm:max-h-[90dvh] sm:rounded-2xl"
       >
         {/* Header + progress */}
-        <div className="border-b border-slate-100 bg-gradient-to-br from-emerald-50 to-white px-6 pb-5 pt-6">
+        <div className="border-b border-slate-100 bg-gradient-to-br from-emerald-50 to-white px-4 pb-5 pt-[max(1.5rem,env(safe-area-inset-top))] sm:px-6 sm:pt-6">
           <div className="flex items-center gap-2 text-emerald-700">
             <Sparkles className="h-5 w-5" />
             <span className="text-sm font-semibold">Welcome to {brandName}</span>
@@ -122,7 +122,7 @@ function OnboardingWizard({ data, onDismiss }: { data: OnboardingState; onDismis
         </div>
 
         {/* Body */}
-        <div className="scrollbar-slim flex-1 overflow-y-auto px-6 py-6">
+        <div className="scrollbar-slim flex-1 overflow-y-auto overscroll-contain px-4 py-6 sm:px-6">
           {isReview ? (
             <ReviewStep steps={data.steps} />
           ) : stepIndex === 0 ? (
@@ -135,16 +135,16 @@ function OnboardingWizard({ data, onDismiss }: { data: OnboardingState; onDismis
         </div>
 
         {/* Footer nav */}
-        <div className="flex items-center justify-between gap-2 border-t border-slate-100 px-6 py-4">
+        <div className="flex flex-col-reverse gap-2 border-t border-slate-100 px-4 pb-[max(1rem,env(safe-area-inset-bottom))] pt-4 sm:flex-row sm:items-center sm:justify-between sm:px-6 sm:pb-4">
           <button
             type="button"
             onClick={onDismiss}
-            className="text-sm text-slate-400 transition hover:text-slate-600"
+            className="py-2 text-sm text-slate-400 transition hover:text-slate-600 sm:py-0"
           >
             Skip for now
           </button>
 
-          <div className="flex gap-2">
+          <div className="flex gap-2 max-sm:[&>button]:h-10 max-sm:[&>button]:flex-1">
             {stepIndex > 0 && (
               <Button variant="secondary" onClick={() => setStepIndex((i) => i - 1)}>
                 <ArrowLeft className="h-4 w-4" />

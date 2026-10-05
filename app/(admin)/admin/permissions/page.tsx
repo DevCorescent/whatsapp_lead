@@ -72,18 +72,19 @@ export default function AdminPermissionsPage() {
       {isLoading || !view ? (
         <AdminSkeletonRows rows={10} />
       ) : (
-        <div className="overflow-x-auto rounded-xl bg-white ring-1 ring-slate-200">
+        <div className="overflow-hidden rounded-xl bg-white ring-1 ring-slate-200">
+          <div className="scrollbar-slim overflow-x-auto">
           <table className="w-full min-w-2xl text-sm">
             <thead className="border-b border-slate-200 bg-slate-50 text-xs uppercase tracking-wide text-slate-500">
               <tr>
-                <th className="px-4 py-2.5 text-left font-medium">Permission</th>
+                <th className="sticky left-0 z-10 bg-slate-50 px-4 py-2.5 text-left font-medium shadow-[1px_0_0_0_var(--color-slate-200)]">Permission</th>
                 {view.roles.map((r) => <th key={r.role} className="px-3 py-2.5 font-medium">{ROLE_LABEL[r.role] ?? r.role}</th>)}
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
               {rows.map((permission) => (
                 <tr key={permission}>
-                  <td className="px-4 py-2 font-mono text-xs text-slate-700">{permission}</td>
+                  <td className="sticky left-0 z-10 max-w-[45vw] break-all bg-white px-3 py-2 font-mono text-xs text-slate-700 shadow-[1px_0_0_0_var(--color-slate-200)] sm:max-w-none sm:break-normal sm:px-4">{permission}</td>
                   {view.roles.map((r) => {
                     const cell = r.permissions.find((c) => c.permission === permission)!;
                     // default → allowed → denied → default
@@ -111,6 +112,7 @@ export default function AdminPermissionsPage() {
               ))}
             </tbody>
           </table>
+          </div>
           <p className="border-t border-slate-100 px-4 py-2 text-[11px] text-slate-400">Amber outline = changed from the default. Changes apply within 30 seconds.</p>
         </div>
       )}

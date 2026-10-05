@@ -69,7 +69,7 @@ export default function VerifyEmailPage() {
               placeholder="your@email.com"
               value={email}
               onChange={(e) => setEmail(e.target.value)}
-              className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500"
+              className="w-full rounded-lg border border-slate-300 px-3 py-2 text-base sm:text-sm focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500"
             />
             <Button onClick={handleResend} disabled={resending || !email.trim()}>
               {resending ? <><Loader2 className="h-4 w-4 animate-spin" /> Sending…</> : "Resend verification email"}

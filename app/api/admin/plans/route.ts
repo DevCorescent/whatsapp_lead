@@ -179,7 +179,7 @@ export async function POST(req: NextRequest) {
   });
 
   await recordBillingAudit({
-    tenantId: plan.ownerTenantId ?? session.user.tenantId,
+    tenantId: plan.ownerTenantId ?? (session.user.viewAs?.homeTenantId ?? session.user.tenantId),
     userId: session.user.id,
     action: "PLAN_CREATED",
     resource: "plan",

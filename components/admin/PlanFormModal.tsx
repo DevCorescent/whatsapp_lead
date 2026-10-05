@@ -436,7 +436,7 @@ export function PlanFormModal({
         </div>
 
         {/* ── Price ─────────────────────────────────────────────────────── */}
-        <div className="grid grid-cols-2 gap-4">
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
           {priceFields.map((n) => (
             <Field key={n.key} label={n.label} htmlFor={`pf-${n.key}`}>
               <input
@@ -457,7 +457,7 @@ export function PlanFormModal({
           <legend className="px-1 text-xs font-semibold uppercase tracking-wide text-slate-500">
             Limits
           </legend>
-          <div className="grid grid-cols-2 gap-4 sm:grid-cols-3">
+          <div className="grid grid-cols-1 gap-4 min-[400px]:grid-cols-2 sm:grid-cols-3">
             {capFields.map((n) => (
               <Field key={n.key} label={n.label} htmlFor={`pf-${n.key}`}>
                 <input
@@ -504,7 +504,7 @@ export function PlanFormModal({
         </div>
 
         {/* ── Retention, ordering, models, Stripe ───────────────────────── */}
-        <div className="grid grid-cols-2 gap-4">
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
           {metaFields.map((n) => (
             <Field key={n.key} label={n.label} htmlFor={`pf-${n.key}`}>
               <input
@@ -616,18 +616,18 @@ export function PlanFormModal({
           </p>
         )}
 
-        <div className="flex justify-end gap-2 pt-2">
+        <div className="flex flex-col-reverse gap-2 pt-2 sm:flex-row sm:justify-end">
           <button
             type="button"
             onClick={onClose}
-            className="rounded-lg px-4 py-2 text-sm font-medium text-slate-600 hover:bg-slate-100"
+            className="min-h-10 rounded-lg px-4 py-2 text-sm font-medium text-slate-600 hover:bg-slate-100 sm:min-h-0"
           >
             Cancel
           </button>
           <button
             type="submit"
             disabled={save.isPending}
-            className="rounded-lg bg-[#0B6E4F] px-4 py-2 text-sm font-medium text-white transition hover:bg-[#095c42] disabled:opacity-50"
+            className="min-h-10 rounded-lg bg-[#0B6E4F] px-4 py-2 text-sm font-medium text-white transition hover:bg-[#095c42] disabled:opacity-50 sm:min-h-0"
           >
             {save.isPending ? "Saving…" : editing ? "Save changes" : "Create plan"}
           </button>

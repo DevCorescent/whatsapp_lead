@@ -45,15 +45,15 @@ export function Tile({
   return (
     <div
       className={cn(
-        "rounded-2xl p-4 ring-1 ring-inset",
+        "min-w-0 rounded-2xl p-3 ring-1 ring-inset sm:p-4",
         tone === "emerald" && "bg-emerald-50 ring-emerald-100",
         tone === "amber" && "bg-amber-50 ring-amber-100",
         tone === "sky" && "bg-sky-50 ring-sky-100",
         tone === "slate" && "bg-white ring-slate-900/5 shadow-sm",
       )}
     >
-      <p className="text-xs font-medium uppercase tracking-wide text-slate-500">{label}</p>
-      <p className="mt-1 text-2xl font-semibold tabular-nums text-slate-900">{value}</p>
+      <p className="break-words text-xs font-medium uppercase tracking-wide text-slate-500">{label}</p>
+      <p className="mt-1 break-words text-lg font-semibold tabular-nums text-slate-900 sm:text-2xl">{value}</p>
       {hint && <p className="mt-0.5 text-xs text-slate-500">{hint}</p>}
     </div>
   );

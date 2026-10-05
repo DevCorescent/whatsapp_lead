@@ -276,7 +276,7 @@ export function IndustryPage({ industry }: { industry: Industry }) {
 
       {/* ── Outcomes ─────────────────────────────────────────────────────── */}
       <Section tone="soft">
-        <div className="grid gap-8 lg:grid-cols-[1fr_1.15fr] lg:gap-12">
+        <div className="grid grid-cols-1 gap-8 lg:grid-cols-[1fr_1.15fr] lg:gap-12">
           <SectionHeading
             eyebrow="The outcome"
             title="What changes in the first week"

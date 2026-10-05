@@ -656,8 +656,8 @@ export function WhatsAppConnectCard({ businessId }: { businessId?: string }) {
     return (
       <Card className="p-5">
         <Skeleton className="h-5 w-48" />
-        <Skeleton className="mt-3 h-4 w-72" />
-        <Skeleton className="mt-5 h-10 w-56" />
+        <Skeleton className="mt-3 h-4 w-full max-w-72" />
+        <Skeleton className="mt-5 h-10 w-full max-w-56" />
       </Card>
     );
   }
@@ -821,7 +821,7 @@ export function WhatsAppConnectCard({ businessId }: { businessId?: string }) {
                 />
               </Field>
 
-              <div className="flex justify-end gap-2">
+              <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end max-sm:[&>button]:h-10 max-sm:[&>button]:w-full">
                 <Button
                   type="button"
                   variant="secondary"
@@ -884,7 +884,7 @@ export function WhatsAppConnectCard({ businessId }: { businessId?: string }) {
         {target && integrations.length > 0 && (
           <div className="mt-5 space-y-3">
             <div className="flex items-center justify-between gap-3">
-              <div>
+              <div className="min-w-0">
                 <h3 className="text-sm font-semibold text-slate-900">Connected WhatsApp Numbers</h3>
                 <p className="mt-0.5 text-xs text-slate-500">
                   {activeCount} active number{activeCount === 1 ? "" : "s"} on this business.
@@ -972,7 +972,7 @@ export function WhatsAppConnectCard({ businessId }: { businessId?: string }) {
               placeholder="Support line"
             />
           </Field>
-          <div className="mt-4 flex justify-end gap-2">
+          <div className="mt-4 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end max-sm:[&>button]:h-10 max-sm:[&>button]:w-full">
             <Button
               type="button"
               variant="secondary"
@@ -1002,7 +1002,7 @@ export function WhatsAppConnectCard({ businessId }: { businessId?: string }) {
             : ""
         }
       >
-        <div className="flex justify-end gap-2">
+        <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end max-sm:[&>button]:h-10 max-sm:[&>button]:w-full">
           <Button
             variant="secondary"
             onClick={() => setConfirmDisconnect(null)}

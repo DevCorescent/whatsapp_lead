@@ -9,8 +9,9 @@
 // the audience is re-evaluated when a campaign is created.
 // ============================================================================
 
-import { useEffect, useMemo, useState } from "react";
+import { Suspense, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
+import { useSearchParams } from "next/navigation";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Filter, Loader2, Megaphone, Plus, Save, Trash2, Users, X } from "lucide-react";
 import { Badge, Button, Card, EmptyState, Field, PageHeader, SkeletonRows, inputClass } from "@/components/ui";
@@ -103,13 +104,32 @@ async function json<T>(res: Response): Promise<T> {
 
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
+/** Filters handed over from Contacts ("Save as segment"): /segments?tag=<id>&source=<name>. */
+function rulesFromQuery(params: URLSearchParams): DraftRule[] | null {
+  const prefilled: DraftRule[] = [];
+  const tag = params.get("tag");
+  const source = params.get("source");
+  if (tag) prefilled.push({ field: "tags", op: "any", values: [tag] });
+  if (source) prefilled.push({ field: "source", op: "is", values: [source] });
+  return prefilled.length ? prefilled : null;
+}
+
 export default function SegmentsPage() {
+  return (
+    <Suspense>
+      <SegmentsPageInner />
+    </Suspense>
+  );
+}
+
+function SegmentsPageInner() {
   const queryClient = useQueryClient();
+  const searchParams = useSearchParams();
 
   const [editingId, setEditingId] = useState<string | null>(null);
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
-  const [rules, setRules] = useState<DraftRule[]>([newRule("location")]);
+  const [rules, setRules] = useState<DraftRule[]>(() => rulesFromQuery(searchParams) ?? [newRule("location")]);
   const [error, setError] = useState<string | null>(null);
   // What the builder held when last loaded or saved — anything else is unsaved work.
   const [snapshot, setSnapshot] = useState(() => draftKey("", "", [newRule("location")]));
@@ -224,7 +244,7 @@ export default function SegmentsPage() {
         }
       />
 
-      <div className="grid gap-6 lg:grid-cols-[280px_minmax(0,1fr)]">
+      <div className="grid grid-cols-1 gap-6 lg:grid-cols-[280px_minmax(0,1fr)]">
         {/* Saved segments */}
         <Card className="h-fit p-3 lg:sticky lg:top-6">
           <p className="px-2 pb-2 text-xs font-semibold uppercase tracking-wide text-slate-400">Saved segments</p>
@@ -268,7 +288,7 @@ export default function SegmentsPage() {
 
         {/* Builder */}
         <div className="min-w-0 space-y-6">
-          <Card className="space-y-6 p-6">
+          <Card className="space-y-6 p-4 sm:p-6">
             <div className="grid gap-4 sm:grid-cols-2">
               <Field label="Segment name" htmlFor="seg-name" required>
                 <input id="seg-name" value={name} onChange={(e) => setName(e.target.value)} maxLength={80} placeholder="e.g. Delhi students" className={inputClass} />
@@ -330,7 +350,7 @@ export default function SegmentsPage() {
                   )}
                 </p>
               </div>
-              <div className="flex flex-wrap items-center gap-2">
+              <div className="flex flex-wrap items-center gap-2 [&>*]:h-10 sm:[&>*]:h-9">
                 {editingId && (
                   <Button
                     variant="ghost"
@@ -368,7 +388,7 @@ export default function SegmentsPage() {
 
           {/* Sample */}
           <Card className="overflow-hidden">
-            <p className="border-b border-slate-100 px-6 py-3.5 text-sm font-medium text-slate-700">
+            <p className="border-b border-slate-100 px-4 py-3.5 text-sm font-medium text-slate-700 sm:px-6">
               Preview {preview && preview.count > preview.sample.length && <span className="font-normal text-slate-500">· first {preview.sample.length}</span>}
             </p>
             {!preview ? (
@@ -380,7 +400,7 @@ export default function SegmentsPage() {
                 <table className="w-full text-sm">
                   <thead className="bg-slate-50 text-left text-xs uppercase tracking-wide text-slate-500">
                     <tr>
-                      <th className="px-6 py-2.5 font-medium">Name</th>
+                      <th className="px-4 py-2.5 font-medium sm:px-6">Name</th>
                       <th className="px-3 py-2 font-medium">Phone</th>
                       <th className="px-3 py-2 font-medium">City</th>
                       <th className="px-3 py-2 font-medium">Tags</th>
@@ -389,11 +409,11 @@ export default function SegmentsPage() {
                   <tbody className="divide-y divide-slate-100">
                     {preview.sample.map((c) => (
                       <tr key={c.id}>
-                        <td className="px-6 py-2.5 text-slate-800">
+                        <td className="px-4 py-2.5 text-slate-800 sm:px-6">
                           {c.name || "—"}
                           {c.optedOut && <Badge className="ml-2 bg-amber-50 text-amber-700 ring-amber-600/20">opted out</Badge>}
                         </td>
-                        <td className="px-3 py-2 tabular-nums text-slate-600">{c.phone}</td>
+                        <td className="whitespace-nowrap px-3 py-2 tabular-nums text-slate-600">{c.phone}</td>
                         <td className="px-3 py-2 text-slate-600">{c.location || "—"}</td>
                         <td className="px-3 py-2">
                           <div className="flex flex-wrap gap-1">
@@ -457,7 +477,7 @@ function RuleRow({
             <option key={f} value={f}>{FIELD_LABEL[f]}</option>
           ))}
         </select>
-        <select value={rule.op} onChange={(e) => onChange({ op: e.target.value })} className={cn(inputClass, "w-36 shrink-0")} aria-label="Operator">
+        <select value={rule.op} onChange={(e) => onChange({ op: e.target.value })} className={cn(inputClass, "w-32 shrink-0 sm:w-36")} aria-label="Operator">
           {OPS[rule.field].map((o) => (
             <option key={o.value} value={o.value}>{o.label}</option>
           ))}

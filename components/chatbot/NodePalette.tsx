@@ -11,7 +11,16 @@ export const DND_MIME = "application/x-flow-node";
 
 /** Left palette — searchable, draggable node types. Dragging carries the kind via
  *  the dataTransfer; FlowBuilder's onDrop places a new node at the cursor. */
-export function NodePalette({ onAdd }: { onAdd: (kind: NodeKind) => void }) {
+export function NodePalette({
+  onAdd,
+  className,
+  tapToAdd,
+}: {
+  onAdd: (kind: NodeKind) => void;
+  className?: string;
+  /** Touch layouts: a single tap adds the node (drag/double-click are awkward on phones). */
+  tapToAdd?: boolean;
+}) {
   const [query, setQuery] = useState("");
 
   const items = useMemo(() => {
@@ -22,7 +31,7 @@ export function NodePalette({ onAdd }: { onAdd: (kind: NodeKind) => void }) {
   }, [query]);
 
   return (
-    <aside className="flex w-56 shrink-0 flex-col border-r border-slate-200 bg-slate-50/60">
+    <aside className={cn("flex w-56 shrink-0 flex-col border-r border-slate-200 bg-slate-50/60", className)}>
       <div className="border-b border-slate-200 p-3">
         <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">Node types</p>
         <div className="relative">
@@ -53,8 +62,9 @@ export function NodePalette({ onAdd }: { onAdd: (kind: NodeKind) => void }) {
                   e.dataTransfer.setData(DND_MIME, m.kind);
                   e.dataTransfer.effectAllowed = "move";
                 }}
-                onDoubleClick={() => onAdd(m.kind)}
-                title="Drag onto the canvas, or double-click to add"
+                onClick={tapToAdd ? () => onAdd(m.kind) : undefined}
+                onDoubleClick={tapToAdd ? undefined : () => onAdd(m.kind)}
+                title={tapToAdd ? "Tap to add" : "Drag onto the canvas, or double-click to add"}
                 className="flex w-full cursor-grab items-center gap-2.5 rounded-lg border border-slate-200 bg-white px-2.5 py-2 text-left shadow-sm transition hover:border-emerald-300 hover:shadow active:cursor-grabbing"
               >
                 <span className={cn("flex h-7 w-7 shrink-0 items-center justify-center rounded-md", m.chip)}>
@@ -71,7 +81,9 @@ export function NodePalette({ onAdd }: { onAdd: (kind: NodeKind) => void }) {
       </div>
 
       <p className="border-t border-slate-200 p-3 text-[11px] leading-relaxed text-slate-500">
-        Drag a node onto the canvas, then connect nodes by dragging between the dots on their edges.
+        {tapToAdd
+          ? "Tap a node to add it, then connect nodes by dragging between the dots on their edges."
+          : "Drag a node onto the canvas, then connect nodes by dragging between the dots on their edges."}
       </p>
     </aside>
   );

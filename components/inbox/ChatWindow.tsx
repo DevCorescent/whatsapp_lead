@@ -23,6 +23,7 @@ import {
   Sparkles,
   StickyNote,
   Trash2,
+  UserRound,
   X,
 } from "lucide-react";
 import type { MessageStatus } from "@prisma/client";
@@ -57,6 +58,7 @@ export function ChatWindow({
   isLoading,
   isError,
   onBack,
+  onShowContact,
   className,
 }: {
   conversation: InboxConversation | null;
@@ -66,6 +68,8 @@ export function ChatWindow({
   isLoading?: boolean;
   isError?: boolean;
   onBack?: () => void;
+  /** Opens the contact drawer — only rendered below xl, where the panel isn't a column. */
+  onShowContact?: () => void;
   className?: string;
 }) {
   const conversationId = conversation?.id ?? null;
@@ -338,7 +342,7 @@ export function ChatWindow({
             type="button"
             onClick={onBack}
             aria-label="Back to conversations"
-            className="-ml-1 rounded-lg p-1.5 text-slate-500 hover:bg-slate-100 md:hidden"
+            className="-ml-1.5 rounded-lg p-2.5 text-slate-500 hover:bg-slate-100 md:hidden"
           >
             <ArrowLeft className="h-5 w-5" />
           </button>
@@ -368,6 +372,17 @@ export function ChatWindow({
             onChange={handleAiToggle}
             label="Toggle AI auto-reply for this conversation"
           />
+          {onShowContact && (
+            <button
+              type="button"
+              onClick={onShowContact}
+              aria-label="Show contact details"
+              title="Contact details"
+              className="-mr-1.5 rounded-lg p-2.5 text-slate-500 hover:bg-slate-100 xl:hidden"
+            >
+              <UserRound className="h-5 w-5" />
+            </button>
+          )}
         </div>
       </header>
 
@@ -437,7 +452,7 @@ export function ChatWindow({
 
       {/* Composer — `relative` so the drop overlay highlights only this region. */}
       <div
-        className="relative shrink-0 border-t border-slate-200 bg-white px-3 py-3 lg:px-4"
+        className="relative shrink-0 border-t border-slate-200 bg-white px-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] pt-3 lg:px-4"
         onDragEnter={attach.dragHandlers.onDragEnter}
         onDragOver={attach.dragHandlers.onDragOver}
         onDragLeave={attach.dragHandlers.onDragLeave}
@@ -461,7 +476,7 @@ export function ChatWindow({
               type="button"
               onClick={() => setReplyTo(null)}
               aria-label="Cancel reply"
-              className="rounded p-0.5 text-slate-400 hover:text-slate-600"
+              className="-my-1 rounded p-2 text-slate-400 hover:text-slate-600 sm:my-0 sm:p-0.5"
             >
               <X className="h-3.5 w-3.5" />
             </button>
@@ -470,10 +485,11 @@ export function ChatWindow({
 
         {/* Interactive message composer */}
         {showInteractive && (
-          <div className="mb-3 space-y-3 rounded-xl border border-emerald-200 bg-emerald-50/50 p-3">
+          // Capped on phones so a long button/list form can't push the input off a short viewport.
+          <div className="scrollbar-slim mb-3 max-h-[45dvh] space-y-3 overflow-y-auto rounded-xl border border-emerald-200 bg-emerald-50/50 p-3 sm:max-h-none sm:overflow-visible">
             <div className="flex items-center justify-between">
               <p className="text-xs font-semibold text-emerald-800">Interactive Message</p>
-              <button type="button" onClick={() => setShowInteractive(false)} className="rounded p-0.5 text-slate-400 hover:text-slate-600">
+              <button type="button" onClick={() => setShowInteractive(false)} aria-label="Close interactive message" className="-my-1 rounded p-2 text-slate-400 hover:text-slate-600 sm:my-0 sm:p-0.5">
                 <X className="h-3.5 w-3.5" />
               </button>
             </div>
@@ -490,7 +506,7 @@ export function ChatWindow({
               value={interactiveBody}
               onChange={(e) => setInteractiveBody(e.target.value)}
               placeholder="Body text sent to the customer…"
-              className={cn(inputClass, "resize-none")}
+              className={cn(inputClass, "resize-none text-base sm:text-sm")}
             />
             {interactiveType === "button" ? (
               <div className="space-y-1.5">
@@ -502,7 +518,7 @@ export function ChatWindow({
                       maxLength={20}
                       onChange={(e) => setInteractiveButtons((prev) => prev.map((b, j) => j === i ? e.target.value : b))}
                       placeholder={`Button ${i + 1}`}
-                      className={cn(inputClass, "flex-1 py-1.5 text-sm")}
+                      className={cn(inputClass, "flex-1 py-1.5 text-base sm:text-sm")}
                     />
                     {interactiveButtons.length > 1 && (
                       <button type="button" onClick={() => setInteractiveButtons((prev) => prev.filter((_, j) => j !== i))}
@@ -523,15 +539,15 @@ export function ChatWindow({
               <div className="space-y-1.5">
                 <p className="text-[11px] font-medium text-slate-500">Menu button label</p>
                 <input value={interactiveListBtn} maxLength={20} onChange={(e) => setInteractiveListBtn(e.target.value)}
-                  placeholder="Select an option" className={cn(inputClass, "py-1.5 text-sm")} />
+                  placeholder="Select an option" className={cn(inputClass, "py-1.5 text-base sm:text-sm")} />
                 <p className="text-[11px] font-medium text-slate-500">List options</p>
                 {interactiveRows.map((row, i) => (
                   <div key={i} className="flex items-start gap-1.5">
                     <div className="flex-1 space-y-1">
                       <input value={row.title} maxLength={24} onChange={(e) => setInteractiveRows((prev) => prev.map((r, j) => j === i ? {...r, title: e.target.value} : r))}
-                        placeholder={`Option ${i + 1} title`} className={cn(inputClass, "py-1.5 text-sm")} />
+                        placeholder={`Option ${i + 1} title`} className={cn(inputClass, "py-1.5 text-base sm:text-sm")} />
                       <input value={row.description} maxLength={72} onChange={(e) => setInteractiveRows((prev) => prev.map((r, j) => j === i ? {...r, description: e.target.value} : r))}
-                        placeholder="Description (optional)" className={cn(inputClass, "py-1.5 text-sm")} />
+                        placeholder="Description (optional)" className={cn(inputClass, "py-1.5 text-base sm:text-sm")} />
                     </div>
                     {interactiveRows.length > 1 && (
                       <button type="button" onClick={() => setInteractiveRows((prev) => prev.filter((_, j) => j !== i))}
@@ -579,8 +595,10 @@ export function ChatWindow({
           )}
         </div>
 
-        <form onSubmit={handleSend} className="relative flex items-end gap-2">
-          <div className="relative flex shrink-0 items-center gap-0.5">
+        {/* Five tool icons + input + send don't fit a 360px row, so phones put the tools on
+            their own line above the input; sm+ keeps the single row. */}
+        <form onSubmit={handleSend} className="relative flex flex-wrap items-end gap-2 sm:flex-nowrap">
+          <div className="relative flex w-full shrink-0 items-center gap-0.5 sm:w-auto">
             <input
               ref={fileRef}
               type="file"
@@ -674,7 +692,7 @@ export function ChatWindow({
           )}
 
           {aiSources.length > 0 && draft && (
-            <p className="mb-1.5 flex items-center gap-1.5 text-[11px] text-slate-500">
+            <p className="mb-1.5 flex w-full items-center gap-1.5 text-[11px] text-slate-500 sm:w-auto">
               <BookOpen className="h-3 w-3 shrink-0 text-emerald-600" />
               Drafted from {aiSources.join(", ")}
             </p>
@@ -712,7 +730,7 @@ export function ChatWindow({
             placeholder={isNote ? "Write an internal note…" : "Type a message"}
             aria-label={isNote ? "Internal note" : "Message"}
             className={cn(
-              "min-w-0 flex-1 rounded-full border px-4 py-2.5 text-sm text-slate-900 placeholder:text-slate-400 focus:outline-none focus:ring-2",
+              "min-w-0 flex-1 rounded-full border px-4 py-2.5 text-base text-slate-900 sm:text-sm placeholder:text-slate-400 focus:outline-none focus:ring-2",
               isNote
                 ? "border-amber-300 bg-amber-50 placeholder:text-amber-600/70 focus:border-amber-400 focus:ring-amber-500/20"
                 : "border-slate-200 bg-slate-50 focus:border-emerald-500 focus:bg-white focus:ring-emerald-500/20",
@@ -813,7 +831,8 @@ function MessageBubble({
       onClick={onReply}
       title="Reply"
       aria-label="Reply to this message"
-      className="mb-1 shrink-0 rounded-full p-1.5 text-slate-400 opacity-0 transition hover:bg-slate-100 hover:text-slate-600 group-hover:opacity-100"
+      // Touch screens have no hover, so the button stays faintly visible there instead.
+      className="mb-1 shrink-0 rounded-full p-1.5 text-slate-400 opacity-0 transition hover:bg-slate-100 hover:text-slate-600 group-hover:opacity-100 pointer-coarse:opacity-70"
     >
       <Reply className="h-3.5 w-3.5" />
     </button>
@@ -824,7 +843,7 @@ function MessageBubble({
       {!outbound && replyBtn}
       <div
         className={cn(
-          "max-w-[85%] rounded-2xl px-3 py-2 shadow-sm sm:max-w-[70%]",
+          "min-w-0 max-w-[85%] rounded-2xl px-3 py-2 shadow-sm sm:max-w-[70%]",
           outbound
             ? "rounded-br-sm bg-emerald-600 text-white"
             : "rounded-bl-sm border border-slate-200 bg-white text-slate-800",
@@ -911,7 +930,7 @@ function KnowledgeCitation({
   return (
     <p
       className={cn(
-        "mt-1.5 border-t pt-1.5 text-[10px] leading-relaxed",
+        "mt-1.5 border-t pt-1.5 text-[10px] leading-relaxed wrap-anywhere",
         outbound ? "border-white/20 text-white/70" : "border-slate-100 text-slate-400",
       )}
       title={names.join(", ")}
@@ -943,7 +962,7 @@ function MessageBody({
           ) : (
             <MediaChip icon={ImageIcon} label="Image unavailable" outbound={outbound} />
           )}
-          {caption && <p className="whitespace-pre-wrap break-words text-sm">{caption}</p>}
+          {caption && <p className="whitespace-pre-wrap wrap-anywhere text-sm">{caption}</p>}
         </div>
       );
 
@@ -959,7 +978,7 @@ function MessageBody({
           ) : (
             <MediaChip icon={ImageIcon} label="Video unavailable" outbound={outbound} />
           )}
-          {caption && <p className="whitespace-pre-wrap break-words text-sm">{caption}</p>}
+          {caption && <p className="whitespace-pre-wrap wrap-anywhere text-sm">{caption}</p>}
         </div>
       );
 
@@ -1029,7 +1048,7 @@ function MessageBody({
           (interactive.action as { buttons?: Array<{ reply?: { title?: string } }> } | undefined)?.buttons ?? [];
         return (
           <div className="space-y-2">
-            {bodyText && <p className="whitespace-pre-wrap break-words text-sm">{bodyText}</p>}
+            {bodyText && <p className="whitespace-pre-wrap wrap-anywhere text-sm">{bodyText}</p>}
             <div className="flex flex-wrap gap-1.5">
               {buttons.map((btn, i) => (
                 <span
@@ -1054,7 +1073,7 @@ function MessageBody({
           (interactive.action as { button?: string } | undefined)?.button ?? "View options";
         return (
           <div className="space-y-2">
-            {bodyText && <p className="whitespace-pre-wrap break-words text-sm">{bodyText}</p>}
+            {bodyText && <p className="whitespace-pre-wrap wrap-anywhere text-sm">{bodyText}</p>}
             <span
               className={cn(
                 "inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-medium ring-1 ring-inset",
@@ -1071,7 +1090,7 @@ function MessageBody({
       }
 
       return (
-        <p className="whitespace-pre-wrap break-words text-sm">
+        <p className="whitespace-pre-wrap wrap-anywhere text-sm">
           {bodyText || <span className="italic opacity-70">Interactive message</span>}
         </p>
       );
@@ -1079,7 +1098,7 @@ function MessageBody({
 
     default:
       return (
-        <p className="whitespace-pre-wrap break-words text-sm">
+        <p className="whitespace-pre-wrap wrap-anywhere text-sm">
           {caption || <span className="italic opacity-70">Empty message</span>}
         </p>
       );
@@ -1166,7 +1185,7 @@ function Lightbox({ src, alt, onClose }: { src: string; alt: string; onClose: ()
         src={src}
         alt={alt}
         onClick={(e) => e.stopPropagation()}
-        className="max-h-[90vh] max-w-full rounded-lg object-contain shadow-2xl"
+        className="max-h-[90dvh] max-w-full rounded-lg object-contain shadow-2xl"
       />
     </div>
   );

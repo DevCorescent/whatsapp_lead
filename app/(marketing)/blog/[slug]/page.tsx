@@ -141,7 +141,7 @@ export default async function ArticlePage({ params }: Params) {
       {/* ── Body + contents ─────────────────────────────────────────────── */}
       <section className="py-12 sm:py-16">
         <Container>
-          <div className="grid gap-10 lg:grid-cols-[minmax(0,1fr)_15rem] lg:gap-12">
+          <div className="grid grid-cols-1 gap-10 lg:grid-cols-[minmax(0,1fr)_15rem] lg:gap-12">
             <article className="mx-auto min-w-0 max-w-3xl lg:mx-0">
               {post.sections.map((section, i) => (
                 <Reveal key={section.heading} delay={i * 40} className="scroll-mt-24">

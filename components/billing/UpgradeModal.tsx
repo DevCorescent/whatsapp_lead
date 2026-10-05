@@ -71,7 +71,7 @@ export function UpgradeModal({
 
         <p className="text-sm leading-relaxed text-slate-600">{hint}</p>
 
-        <div className="flex justify-end gap-2 border-t border-slate-100 pt-4">
+        <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end max-sm:[&>button]:h-10 max-sm:[&>button]:w-full border-t border-slate-100 pt-4">
           <Button type="button" variant="secondary" onClick={onClose}>
             Not now
           </Button>

@@ -67,7 +67,7 @@ export default function ResellerOverviewPage() {
         />
       </div>
 
-      <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_360px]">
+      <div className="grid grid-cols-1 gap-5 lg:grid-cols-[minmax(0,1fr)_360px]">
         <Card className="p-5">
           <h2 className="flex items-center gap-2 text-sm font-semibold text-slate-900">
             <Link2 className="h-4 w-4 text-emerald-600" /> Your referral link

@@ -59,7 +59,7 @@ export async function POST(req: NextRequest, { params }: Params) {
     });
     await prisma.auditLog.create({
       data: {
-        tenantId: session!.user.tenantId,
+        tenantId: (session!.user.viewAs?.homeTenantId ?? session!.user.tenantId),
         userId: session!.user.id,
         action: "WALLET_ADJUSTED",
         resource: "wallet",

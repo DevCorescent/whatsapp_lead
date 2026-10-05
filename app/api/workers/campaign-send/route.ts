@@ -376,6 +376,15 @@ export async function POST(req: NextRequest) {
             parameters: [{ type: "text" as const, text: job.bodyParams[0] }],
           });
         }
+        // Dynamic URL buttons — each gets this recipient's value for the link's {{1}}.
+        for (const button of job.urlButtons ?? []) {
+          components.push({
+            type: "button",
+            sub_type: "url" as const,
+            index: String(button.index),
+            parameters: [{ type: "text" as const, text: button.param }],
+          });
+        }
         console.log("[WORKER CAMPAIGN-SEND] Sending template", {
           phone: job.phone,
           templateName: job.templateName,

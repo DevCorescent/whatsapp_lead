@@ -25,6 +25,10 @@ export interface CampaignSendConfig {
   headerMediaUrl?: string;
   hasOtpButton: boolean;
   templateBody?: string;
+  /** Positions of the template's dynamic URL buttons, matched by `urlButtonMapping`. */
+  urlButtonIndexes: number[];
+  /** One mapping entry per dynamic URL button — same forms as `bodyVarMapping`. */
+  urlButtonMapping: string[];
 }
 
 const str = (v: unknown) => (typeof v === "string" && v ? v : undefined);
@@ -41,6 +45,8 @@ export function sendConfigFromMetadata(metadata: unknown): CampaignSendConfig {
     headerMediaUrl: str(m.headerMediaUrl),
     hasOtpButton: m.hasOtpButton === true,
     templateBody: str(m.templateBody),
+    urlButtonIndexes: Array.isArray(m.urlButtonIndexes) ? (m.urlButtonIndexes as unknown[]).map(Number).filter(Number.isInteger) : [],
+    urlButtonMapping: Array.isArray(m.urlButtonMapping) ? (m.urlButtonMapping as unknown[]).map(String) : [],
   };
 }
 
@@ -88,14 +94,18 @@ export async function queuePendingRecipients(
 
   const jobs: CampaignSendJob[] = campaign.contacts.map((row) => {
     const fields = fieldsOf(row.variables);
-    const bodyParams = resolveBodyParams(cfg.bodyVarMapping, {
+    const recipient = {
       phone: row.phone,
       // A saved contact's name, else the imported sheet's Name column — the same order the
       // dry-run preview uses (POST /api/campaigns), so the preview matches what is sent.
       name: row.contact?.name ?? fields?.Name ?? fields?.name ?? null,
       company: row.contact?.company ?? null,
       fields,
-    });
+    };
+    const bodyParams = resolveBodyParams(cfg.bodyVarMapping, recipient);
+    // A URL suffix can't contain spaces; encode it so a value like "AB 12" stays one link.
+    const urlParams = resolveBodyParams(cfg.urlButtonMapping, recipient).map((v) => encodeURIComponent(v));
+    const urlButtons = cfg.urlButtonIndexes.map((index, i) => ({ index, param: urlParams[i] ?? "-" }));
     return {
       campaignId: campaign.id,
       recipientId: row.id, // CampaignContact.id — the worker looks up by it
@@ -112,6 +122,7 @@ export async function queuePendingRecipients(
       headerMediaUrl: cfg.headerMediaUrl,
       hasOtpButton: cfg.hasOtpButton,
       templateBody: cfg.templateBody,
+      urlButtons: urlButtons.length ? urlButtons : undefined,
     };
   });
 

@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useRef, useState, type ReactNode } from "react";
+import { useId, useMemo, useState, type ReactNode } from "react";
 import {
   AlertTriangle,
   ArrowLeft,
@@ -56,7 +56,21 @@ type Step = "upload" | "map" | "preview" | "importing" | "done";
 
 /** Batch size for the client → server import loop; drives the real progress bar. */
 const CLIENT_BATCH = 500;
-const ACCEPT = ".xlsx,.xls,.csv";
+// Extensions alone leave files greyed out in some phone pickers (iOS Files, Android
+// Drive), which match on MIME type — so list both.
+const ACCEPT = [
+  ".xlsx",
+  ".xls",
+  ".csv",
+  "text/csv",
+  "text/comma-separated-values",
+  "application/csv",
+  "application/vnd.ms-excel",
+  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+].join(",");
+
+/** Footer row: stacked full-width buttons on phones, a split row from `sm` up. */
+const FOOTER = "flex flex-col-reverse gap-2 border-t border-slate-200 pt-4 sm:flex-row sm:items-center sm:justify-between [&>button]:w-full sm:[&>button]:w-auto";
 
 export function ImportWizard<T>({
   open,
@@ -85,7 +99,7 @@ function ImportFlow<T>({ onClose, config }: { onClose: () => void; config: Impor
   const [parsing, setParsing] = useState(false);
   const [running, setRunning] = useState(false);
 
-  const fileRef = useRef<HTMLInputElement>(null);
+  const fileInputId = useId();
 
   // Validation is derived from the file + mapping, so it updates live as columns are remapped.
   const validation = useMemo(
@@ -183,25 +197,27 @@ function ImportFlow<T>({ onClose, config }: { onClose: () => void; config: Impor
 
       {step === "upload" && (
         <div>
+          {/* A <label> for the input rather than a button calling input.click(): the
+              native tap-to-pick works on every phone browser, including in-app ones. */}
           <input
-            ref={fileRef}
+            id={fileInputId}
             type="file"
             accept={ACCEPT}
-            className="hidden"
+            className="sr-only"
+            disabled={parsing}
             onChange={(e) => {
               handleFile(e.target.files?.[0]);
               e.target.value = "";
             }}
           />
-          <button
-            type="button"
-            onClick={() => fileRef.current?.click()}
+          <label
+            htmlFor={fileInputId}
             onDragOver={(e) => e.preventDefault()}
             onDrop={(e) => {
               e.preventDefault();
               handleFile(e.dataTransfer.files?.[0]);
             }}
-            className="flex w-full flex-col items-center justify-center gap-3 rounded-xl border-2 border-dashed border-slate-300 bg-slate-50 px-6 py-12 text-center transition hover:border-emerald-400 hover:bg-emerald-50/40 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-600"
+            className="flex w-full cursor-pointer flex-col items-center justify-center gap-3 rounded-xl border-2 border-dashed border-slate-300 bg-slate-50 px-4 py-8 text-center transition hover:border-emerald-400 hover:bg-emerald-50/40 sm:px-6 sm:py-12 [input:focus-visible+&]:outline-2 [input:focus-visible+&]:outline-offset-2 [input:focus-visible+&]:outline-emerald-600"
           >
             {parsing ? (
               <Loader2 className="h-8 w-8 animate-spin text-emerald-600" />
@@ -211,14 +227,21 @@ function ImportFlow<T>({ onClose, config }: { onClose: () => void; config: Impor
               </span>
             )}
             <span className="text-sm font-medium text-slate-800">
-              {parsing ? "Reading file…" : "Click to choose a file, or drag it here"}
+              {parsing ? (
+                "Reading file…"
+              ) : (
+                <>
+                  <span className="sm:hidden">Tap to choose a file</span>
+                  <span className="hidden sm:inline">Click to choose a file, or drag it here</span>
+                </>
+              )}
             </span>
             <span className="text-xs text-slate-500">Excel (.xlsx, .xls) or CSV · up to {IMPORT_MAX_ROWS.toLocaleString()} rows</span>
-          </button>
+          </label>
           {/* Column format guide */}
           {config.columnGuide && config.columnGuide.length > 0 && (
             <div className="mt-4 rounded-xl border border-slate-200 bg-white">
-              <div className="flex items-center justify-between border-b border-slate-100 px-3 py-2">
+              <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 px-3 py-2">
                 <p className="text-xs font-semibold text-slate-700">
                   Expected column format
                   <span className="ml-1.5 font-normal text-slate-400">
@@ -293,10 +316,10 @@ function ImportFlow<T>({ onClose, config }: { onClose: () => void; config: Impor
 
       {step === "map" && mapping && validation && (
         <div className="space-y-4">
-          <div className="flex items-center gap-2 text-xs text-slate-500">
-            <FileSpreadsheet className="h-4 w-4 text-slate-400" />
-            <span className="truncate font-medium text-slate-700">{fileName}</span>
-            <span>· {rows.length.toLocaleString()} rows</span>
+          <div className="flex min-w-0 items-center gap-2 text-xs text-slate-500">
+            <FileSpreadsheet className="h-4 w-4 shrink-0 text-slate-400" />
+            <span className="min-w-0 truncate font-medium text-slate-700">{fileName}</span>
+            <span className="shrink-0">· {rows.length.toLocaleString()} rows</span>
           </div>
 
           <p className="text-sm text-slate-600">
@@ -305,8 +328,8 @@ function ImportFlow<T>({ onClose, config }: { onClose: () => void; config: Impor
 
           <div className="grid gap-3 sm:grid-cols-2">
             {config.fields.map((field) => (
-              <label key={field.key} className="flex items-center gap-3">
-                <span className="w-28 shrink-0 text-sm font-medium text-slate-700">
+              <label key={field.key} className="flex flex-col gap-1 sm:flex-row sm:items-center sm:gap-3">
+                <span className="text-sm font-medium text-slate-700 sm:w-28 sm:shrink-0">
                   {field.label}
                   {field.required && <span className="ml-0.5 text-rose-500">*</span>}
                 </span>
@@ -314,7 +337,7 @@ function ImportFlow<T>({ onClose, config }: { onClose: () => void; config: Impor
                   value={mapping[field.key] ?? ""}
                   onChange={(e) => setField(field.key, e.target.value)}
                   aria-label={`Column for ${field.label}`}
-                  className="min-w-0 flex-1 rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-sm text-slate-900 focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-500/20"
+                  className="w-full min-w-0 flex-1 rounded-lg border border-slate-200 bg-white px-2.5 py-2 text-base sm:py-1.5 sm:text-sm text-slate-900 focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-500/20"
                 >
                   <option value="">— Not mapped —</option>
                   {headers.map((h) => (
@@ -333,7 +356,7 @@ function ImportFlow<T>({ onClose, config }: { onClose: () => void; config: Impor
 
           <SummaryTiles validation={validation} />
 
-          <div className="flex items-center justify-between border-t border-slate-200 pt-4">
+          <div className={FOOTER}>
             <Button variant="ghost" onClick={() => setStep("upload")}>
               <ArrowLeft className="h-4 w-4" />
               Choose another file
@@ -378,7 +401,7 @@ function ImportFlow<T>({ onClose, config }: { onClose: () => void; config: Impor
 
           <IssuesTable rows={validation.rows} />
 
-          <div className="flex items-center justify-between border-t border-slate-200 pt-4">
+          <div className={FOOTER}>
             <Button variant="ghost" onClick={() => setStep("map")}>
               <ArrowLeft className="h-4 w-4" />
               Back to mapping
@@ -432,7 +455,7 @@ function ImportFlow<T>({ onClose, config }: { onClose: () => void; config: Impor
               </p>
               <ul className="scrollbar-slim max-h-40 divide-y divide-slate-100 overflow-y-auto text-xs">
                 {result.errors.map((err, i) => (
-                  <li key={i} className="flex items-center gap-2 px-3 py-1.5 text-slate-600">
+                  <li key={i} className="flex flex-wrap items-center gap-x-2 px-3 py-1.5 text-slate-600">
                     <span className="font-mono text-slate-400">{err.ref ?? "—"}</span>
                     <span className="text-rose-600">{err.reason}</span>
                   </li>
@@ -442,7 +465,7 @@ function ImportFlow<T>({ onClose, config }: { onClose: () => void; config: Impor
           )}
 
           <div className="flex justify-end border-t border-slate-200 pt-4">
-            <Button onClick={onClose}>Done</Button>
+            <Button onClick={onClose} className="w-full sm:w-auto">Done</Button>
           </div>
         </div>
       )}
@@ -521,8 +544,8 @@ function IssuesTable<T>({ rows }: { rows: ValidatedRow<T>[] }) {
         {problems.length.toLocaleString()} row{problems.length === 1 ? "" : "s"} with issues
         {problems.length > shown.length ? ` (showing first ${shown.length})` : ""} — these are skipped
       </p>
-      <div className="scrollbar-slim max-h-56 overflow-y-auto">
-        <table className="w-full text-left text-xs">
+      <div className="scrollbar-slim max-h-56 overflow-auto">
+        <table className="w-full min-w-[28rem] text-left text-xs">
           <thead className="sticky top-0 bg-slate-50 text-slate-500">
             <tr>
               <th className="px-3 py-1.5 font-medium">Row</th>

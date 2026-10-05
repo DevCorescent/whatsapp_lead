@@ -56,7 +56,7 @@ export default function OnboardingPage() {
   }
 
   return (
-    <div className="mx-auto max-w-2xl px-4 py-10">
+    <div className="mx-auto max-w-2xl py-4 sm:px-4 sm:py-10">
       {/* Progress bar */}
       <div className="mb-8">
         <div className="flex items-center justify-between mb-3">
@@ -98,7 +98,7 @@ export default function OnboardingPage() {
 
 function WelcomeStep({ onNext }: { onNext: () => void }) {
   return (
-    <div className="rounded-2xl border border-slate-200 bg-white p-8 shadow-sm text-center">
+    <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm text-center sm:p-8">
       <div className="mx-auto mb-5 flex h-16 w-16 items-center justify-center rounded-2xl bg-emerald-50">
         <Rocket className="h-8 w-8 text-emerald-600" />
       </div>
@@ -176,7 +176,7 @@ function WhatsAppStep({ onNext, onSkip }: { onNext: () => void; onSkip: () => vo
   }
 
   return (
-    <div className="rounded-2xl border border-slate-200 bg-white p-8 shadow-sm">
+    <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm sm:p-8">
       <div className="flex items-center gap-3 mb-6">
         <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-green-50">
           <Smartphone className="h-5 w-5 text-green-600" />
@@ -215,7 +215,7 @@ function WhatsAppStep({ onNext, onSkip }: { onNext: () => void; onSkip: () => vo
         )}
       </div>
 
-      <div className="mt-6 flex flex-wrap gap-3">
+      <div className="mt-6 flex flex-wrap gap-3 max-sm:[&>button]:h-10">
         <Button onClick={save} disabled={saving}>
           {saving ? <><Loader2 className="h-4 w-4 animate-spin" /> Saving…</> : <>Save & continue <ArrowRight className="ml-2 h-4 w-4" /></>}
         </Button>
@@ -232,7 +232,7 @@ function WhatsAppStep({ onNext, onSkip }: { onNext: () => void; onSkip: () => vo
 
 function DoneStep({ onFinish }: { onFinish: () => void }) {
   return (
-    <div className="rounded-2xl border border-slate-200 bg-white p-8 shadow-sm text-center">
+    <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm text-center sm:p-8">
       <div className="mx-auto mb-5 flex h-16 w-16 items-center justify-center rounded-full bg-emerald-50">
         <CheckCircle2 className="h-9 w-9 text-emerald-600" />
       </div>
