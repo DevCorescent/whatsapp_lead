@@ -113,36 +113,67 @@ export default function PlansPage() {
     setBusyId(plan.id);
     setPlanError(null);
     setPlanSuccess(null);
+
+    console.log("[PLANS choose] START", {
+      targetPlan: { id: plan.id, name: plan.displayName, priceMonthly: plan.priceMonthly },
+      currentPlanId,
+      currentPlan: currentPlan ? { id: currentPlan.id, name: currentPlan.displayName, priceMonthly: currentPlan.priceMonthly } : null,
+      subscriptionStatus: data?.status ?? null,
+    });
+
     try {
       // For paid plans always try proration first — the server knows whether an
       // active subscription exists. Fall through to full checkout only when the
       // server explicitly says there is nothing to prorate from.
       if (plan.priceMonthly > 0) {
+        console.log("[PLANS choose] paid plan → fetching proration quote from /api/billing/change");
         try {
-          setQuote(await fetchPlanChangeQuote(plan.id));
+          const q = await fetchPlanChangeQuote(plan.id);
+          console.log("[PLANS choose] PRORATION QUOTE received", {
+            kind: q.kind,
+            amountDue: q.amountDue,
+            credit: q.credit,
+            requiresPayment: q.requiresPayment,
+            periodEnd: q.periodEnd,
+            currentPlan: q.currentPlan,
+            targetPlan: q.targetPlan,
+          });
+          setQuote(q);
           return;
         } catch (e) {
           if (e instanceof QuoteRefusalError) {
-            // "not-active" and "no-subscription" mean no paid period to carry
-            // over — full checkout is the right path.
-            // "expired" means the period ended — also needs a fresh purchase.
-            // All other refusals ("same-plan", "target-free") are user errors
-            // that should be surfaced, not silently swallowed.
             const fallthrough = ["not-active", "no-subscription", "expired"];
+            console.log("[PLANS choose] QuoteRefusalError", {
+              refusalReason: e.refusalReason,
+              message: e.message,
+              willFallthrough: fallthrough.includes(e.refusalReason),
+            });
             if (!fallthrough.includes(e.refusalReason)) throw e;
           } else {
-            throw e; // network / server error — surface it
+            console.error("[PLANS choose] unexpected quote error (not a QuoteRefusalError)", e);
+            throw e;
           }
         }
       }
 
       // Full checkout: new subscription, trial upgrade, or free plan.
+      console.log("[PLANS choose] → falling through to FULL CHECKOUT (new subscription / trial / free)", {
+        planId: plan.id, priceMonthly: plan.priceMonthly,
+      });
       const res = await checkout.mutateAsync(plan.id);
+      console.log("[PLANS choose] checkout response", res);
       if (res?.orderId) {
+        console.log("[PLANS choose] opening Razorpay modal", {
+          orderId: res.orderId,
+          amount: res.amount,
+          amountInRupees: (res.amount as number) / 100,
+          currency: res.currency,
+        });
         await openRazorpayModal(res as RazorpayOrderData, plan.id);
       }
       setPlanSuccess("Your plan is now active.");
     } catch (e) {
+      console.error("[PLANS choose] ERROR", e);
       setPlanError((e as Error).message);
     } finally {
       setBusyId(null);

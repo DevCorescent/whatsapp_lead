@@ -125,17 +125,46 @@ export async function GET(req: NextRequest) {
   if ("error" in ctx) return ctx.error;
   const { targetPlan, sub } = ctx;
 
+  const now = new Date();
+  console.log("[BILLING CHANGE GET] quote request", {
+    tenantId,
+    targetPlanId: planId,
+    subscription: sub ? {
+      planId: sub.planId,
+      status: sub.status,
+      billingCycle: sub.billingCycle,
+      currentPeriodStart: sub.currentPeriodStart,
+      currentPeriodEnd: sub.currentPeriodEnd,
+      daysUsed: Math.round((now.getTime() - sub.currentPeriodStart.getTime()) / 86400000),
+      daysLeft: Math.round((sub.currentPeriodEnd.getTime() - now.getTime()) / 86400000),
+    } : null,
+    currentPlan: { id: sub.plan.id, name: sub.plan.displayName, priceMonthly: sub.plan.priceMonthly },
+    targetPlan: { id: targetPlan.id, name: targetPlan.displayName, priceMonthly: targetPlan.priceMonthly },
+  });
+
   const result = quoteChange({
     subscription: sub,
     currentPlan: sub.plan,
     targetPlan,
-    now: new Date(),
+    now,
   });
 
   if (!result.ok) {
+    console.log("[BILLING CHANGE GET] REFUSED", { reason: result.refusal.reason });
     const { message, status } = REFUSAL_MESSAGE[result.refusal.reason];
     return NextResponse.json({ success: false, error: message, refusalReason: result.refusal.reason }, { status });
   }
+
+  console.log("[BILLING CHANGE GET] QUOTE computed", {
+    kind: result.kind,
+    amountDueMinor: result.quote.amountDueMinor,
+    amountDueRupees: result.quote.amountDueMinor / 100,
+    creditMinor: result.quote.creditMinor,
+    creditRupees: result.quote.creditMinor / 100,
+    unusedFraction: result.quote.kind === "UPGRADE" ? result.quote.unusedFraction : null,
+    grossMinor: result.quote.kind === "UPGRADE" ? result.quote.grossMinor : null,
+    requiresPayment: result.quote.amountDueMinor > 0,
+  });
 
   const overage = result.kind === "DOWNGRADE" ? await overageError(tenantId, targetPlan) : null;
   if (overage) return NextResponse.json({ success: false, error: overage }, { status: 400 });
@@ -192,11 +221,27 @@ export async function POST(req: NextRequest) {
     const { targetPlan, sub } = ctx;
 
     const now = new Date();
+    console.log("[BILLING CHANGE POST] executing change", {
+      tenantId,
+      targetPlanId: parsed.data.planId,
+      currentPlanId: sub.planId,
+      subscriptionStatus: sub.status,
+      currentPeriodStart: sub.currentPeriodStart,
+      currentPeriodEnd: sub.currentPeriodEnd,
+      daysLeft: Math.round((sub.currentPeriodEnd.getTime() - now.getTime()) / 86400000),
+    });
     const result = quoteChange({ subscription: sub, currentPlan: sub.plan, targetPlan, now });
     if (!result.ok) {
+      console.log("[BILLING CHANGE POST] REFUSED", { reason: result.refusal.reason });
       const { message, status } = REFUSAL_MESSAGE[result.refusal.reason];
       return NextResponse.json({ success: false, error: message }, { status });
     }
+    console.log("[BILLING CHANGE POST] quote", {
+      kind: result.kind,
+      amountDueMinor: result.quote.amountDueMinor,
+      amountDueRupees: result.quote.amountDueMinor / 100,
+      creditRupees: result.quote.creditMinor / 100,
+    });
 
     if (result.kind === "DOWNGRADE") {
       const overage = await overageError(tenantId, targetPlan);

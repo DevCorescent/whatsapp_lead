@@ -33,8 +33,32 @@ export async function POST(req: NextRequest) {
 
     const current = await prisma.subscription.findUnique({ where: { tenantId } });
 
+    console.log("[BILLING CHECKOUT] subscription state", {
+      tenantId,
+      targetPlanId: plan.id,
+      targetPriceMonthly: plan.priceMonthly,
+      currentSubscription: current ? {
+        planId: current.planId,
+        status: current.status,
+        currentPeriodStart: current.currentPeriodStart,
+        currentPeriodEnd: current.currentPeriodEnd,
+      } : null,
+    });
+
     if (current && current.planId === plan.id && current.status === "ACTIVE") {
       return NextResponse.json({ success: false, error: "You are already on this plan." }, { status: 400 });
+    }
+
+    // ⚠️ If the tenant already has an ACTIVE paid subscription and is choosing
+    // a different paid plan, they should be using /api/billing/change (proration)
+    // not this checkout endpoint (full price). Log a warning so we can trace it.
+    if (current?.status === "ACTIVE" && (current.planId !== plan.id) && plan.priceMonthly > 0) {
+      console.warn("[BILLING CHECKOUT] ⚠️ PRORATION BYPASSED — active paid sub is changing plan via checkout (full price)", {
+        tenantId,
+        fromPlanId: current.planId,
+        toPlanId: plan.id,
+        toPriceMonthly: plan.priceMonthly,
+      });
     }
 
     // Free plan — assign directly without payment.
