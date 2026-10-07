@@ -134,7 +134,7 @@ export async function GET(req: NextRequest) {
 
   if (!result.ok) {
     const { message, status } = REFUSAL_MESSAGE[result.refusal.reason];
-    return NextResponse.json({ success: false, error: message }, { status });
+    return NextResponse.json({ success: false, error: message, refusalReason: result.refusal.reason }, { status });
   }
 
   const overage = result.kind === "DOWNGRADE" ? await overageError(tenantId, targetPlan) : null;

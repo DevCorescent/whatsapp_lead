@@ -12,6 +12,7 @@ import {
   useCheckout,
   useChangePlan,
   useVerifyPayment,
+  QuoteRefusalError,
   type PlanChangeQuote,
   type PlanDTO,
   type RazorpayOrderData,
@@ -53,9 +54,6 @@ export default function PlansPage() {
   const plans = data?.plans ?? [];
   const currentPlanId = data?.currentPlanId ?? null;
   const currentPlan = plans.find((p) => p.id === currentPlanId) ?? null;
-  const hasActivePaid = Boolean(
-    currentPlan && currentPlan.priceMonthly > 0 && data?.status === "ACTIVE",
-  );
 
   /** Open the Razorpay checkout modal and verify the payment on success. */
   const openRazorpayModal = useCallback(
@@ -116,24 +114,33 @@ export default function PlansPage() {
     setPlanError(null);
     setPlanSuccess(null);
     try {
-      if (hasActivePaid && plan.priceMonthly > 0) {
-        setQuote(await fetchPlanChangeQuote(plan.id));
-        return;
+      // For paid plans always try proration first — the server knows whether an
+      // active subscription exists. Fall through to full checkout only when the
+      // server explicitly says there is nothing to prorate from.
+      if (plan.priceMonthly > 0) {
+        try {
+          setQuote(await fetchPlanChangeQuote(plan.id));
+          return;
+        } catch (e) {
+          if (e instanceof QuoteRefusalError) {
+            // "not-active" and "no-subscription" mean no paid period to carry
+            // over — full checkout is the right path.
+            // "expired" means the period ended — also needs a fresh purchase.
+            // All other refusals ("same-plan", "target-free") are user errors
+            // that should be surfaced, not silently swallowed.
+            const fallthrough = ["not-active", "no-subscription", "expired"];
+            if (!fallthrough.includes(e.refusalReason)) throw e;
+          } else {
+            throw e; // network / server error — surface it
+          }
+        }
       }
+
+      // Full checkout: new subscription, trial upgrade, or free plan.
       const res = await checkout.mutateAsync(plan.id);
-      console.log("[CHECKOUT] server response:", res);
       if (res?.orderId) {
-        console.log("[CHECKOUT] opening Razorpay modal", {
-          orderId: res.orderId,
-          amount: res.amount,
-          currency: res.currency,
-          keyId: res.keyId,
-        });
         await openRazorpayModal(res as RazorpayOrderData, plan.id);
-        setPlanSuccess("Your plan is now active.");
-        return;
       }
-      // Free plan assigned directly.
       setPlanSuccess("Your plan is now active.");
     } catch (e) {
       setPlanError((e as Error).message);

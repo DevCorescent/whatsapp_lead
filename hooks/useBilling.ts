@@ -108,12 +108,15 @@ async function post(url: string, body?: unknown) {
   return json.data ?? json;
 }
 
-/** Start checkout (paid → returns Stripe URL to redirect to; free → assigned). */
+/** Start checkout (paid → returns Razorpay order; free → assigned directly). */
 export function useCheckout() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: (planId: string) => post("/api/billing/checkout", { planId }),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["billing"] }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["billing"] });
+      queryClient.invalidateQueries({ queryKey: ["billing-plans"] });
+    },
   });
 }
 
@@ -142,12 +145,23 @@ export interface PlanChangeQuote {
   requiresPayment: boolean;
 }
 
+/** Error thrown when the server refuses to quote a plan change (not a network error). */
+export class QuoteRefusalError extends Error {
+  constructor(msg: string, public readonly refusalReason: string) {
+    super(msg);
+    this.name = "QuoteRefusalError";
+  }
+}
+
 /** Ask the server to price a move onto `planId`. Read-only — changes nothing. */
 export async function fetchPlanChangeQuote(planId: string): Promise<PlanChangeQuote> {
   const res = await fetch(`/api/billing/change?planId=${encodeURIComponent(planId)}`);
   const json = await res.json().catch(() => ({}));
   if (!res.ok || json.success === false) {
-    throw new Error((json as { error?: string }).error ?? "Could not price this change");
+    const reason = (json as { refusalReason?: string }).refusalReason;
+    const msg = (json as { error?: string }).error ?? "Could not price this change";
+    if (reason) throw new QuoteRefusalError(msg, reason);
+    throw new Error(msg);
   }
   return json.data as PlanChangeQuote;
 }
