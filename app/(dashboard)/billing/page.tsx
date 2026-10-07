@@ -21,6 +21,7 @@ import {
   PageHeader,
   Skeleton,
 } from "@/components/ui";
+import { useToast } from "@/components/ui/toast";
 import { cn, formatCompact, formatCurrency, formatDate } from "@/lib/utils";
 import {
   useBilling,
@@ -71,35 +72,32 @@ export default function BillingPage() {
   const portal = useBillingPortal();
   const cancel = useCancelSubscription();
   const resume = useResumeSubscription();
-  const [actionError, setActionError] = useState<string | null>(null);
+  const { showToast } = useToast();
   const [cancelConfirm, setCancelConfirm] = useState(false);
 
   const openPortal = async () => {
-    setActionError(null);
     try {
       const res = await portal.mutateAsync();
       if (res?.url) window.location.assign(res.url);
     } catch (e) {
-      setActionError((e as Error).message);
+      showToast((e as Error).message, "error");
     }
   };
 
   const handleResume = async () => {
-    setActionError(null);
     try {
       await resume.mutateAsync();
     } catch (e) {
-      setActionError((e as Error).message);
+      showToast((e as Error).message, "error");
     }
   };
 
   const handleCancel = async () => {
-    setActionError(null);
     try {
       await cancel.mutateAsync();
       setCancelConfirm(false);
     } catch (e) {
-      setActionError((e as Error).message);
+      showToast((e as Error).message, "error");
     }
   };
 
@@ -125,10 +123,6 @@ export default function BillingPage() {
           </div>
         }
       />
-
-      {actionError && (
-        <div className="mb-4 rounded-lg bg-rose-50 px-4 py-3 text-sm text-rose-700">{actionError}</div>
-      )}
 
       {isLoading ? (
         <div className="space-y-5">
@@ -276,9 +270,6 @@ export default function BillingPage() {
         title="Cancel subscription?"
         description="Your plan stays active until the end of the current billing period. You can resume any time before then."
       >
-        {actionError && (
-          <p className="mb-3 rounded-lg bg-rose-50 px-3 py-2 text-sm text-rose-700">{actionError}</p>
-        )}
         <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end max-sm:[&>button]:h-10 max-sm:[&>button]:w-full">
           <Button variant="secondary" onClick={() => setCancelConfirm(false)} disabled={cancel.isPending}>
             Keep plan

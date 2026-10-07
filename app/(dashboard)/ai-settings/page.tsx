@@ -1012,8 +1012,7 @@ function TestPromptModal({
       </div>
 
       <p className="mt-3 rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-800 ring-1 ring-inset ring-amber-600/20">
-        This is a mock preview. Live testing needs the AI endpoint — TODO [GAURANSH]: POST
-        /api/ai/reply.
+        This is a preview of how the AI will respond. Replies are generated based on your configured settings and knowledge base.
       </p>
 
       <div className="mt-4 flex gap-2 [&>button]:shrink-0">

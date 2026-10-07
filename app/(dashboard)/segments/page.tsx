@@ -16,6 +16,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Filter, Loader2, Megaphone, Plus, Save, Trash2, Users, X } from "lucide-react";
 import { Badge, Button, Card, EmptyState, Field, PageHeader, SkeletonRows, inputClass } from "@/components/ui";
 import { cn } from "@/lib/utils";
+import { useToast } from "@/components/ui/toast";
 import {
   FIELD_LABEL,
   STATUS_LABEL,
@@ -126,11 +127,11 @@ function SegmentsPageInner() {
   const queryClient = useQueryClient();
   const searchParams = useSearchParams();
 
+  const { showToast } = useToast();
   const [editingId, setEditingId] = useState<string | null>(null);
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
   const [rules, setRules] = useState<DraftRule[]>(() => rulesFromQuery(searchParams) ?? [newRule("location")]);
-  const [error, setError] = useState<string | null>(null);
   // What the builder held when last loaded or saved — anything else is unsaved work.
   const [snapshot, setSnapshot] = useState(() => draftKey("", "", [newRule("location")]));
   const dirty = draftKey(name, description, rules) !== snapshot;
@@ -179,7 +180,6 @@ function SegmentsPageInner() {
     setDescription("");
     setRules(fresh);
     setSnapshot(draftKey("", "", fresh));
-    setError(null);
   };
 
   const load = (s: SavedSegment) => {
@@ -191,7 +191,6 @@ function SegmentsPageInner() {
     setDescription(s.description ?? "");
     setRules(loaded);
     setSnapshot(draftKey(s.name, s.description ?? "", loaded));
-    setError(null);
   };
 
   const save = useMutation({
@@ -205,10 +204,9 @@ function SegmentsPageInner() {
     onSuccess: (saved) => {
       setEditingId(saved.id);
       setSnapshot(draftKey(name, description, rules));
-      setError(null);
       queryClient.invalidateQueries({ queryKey: ["segments"] });
     },
-    onError: (e: Error) => setError(e.message),
+    onError: (e: Error) => showToast(e.message, "error"),
   });
 
   const remove = useMutation({
@@ -224,7 +222,7 @@ function SegmentsPageInner() {
       }
       queryClient.invalidateQueries({ queryKey: ["segments"] });
     },
-    onError: (e: Error) => setError(e.message),
+    onError: (e: Error) => showToast(e.message, "error"),
   });
 
   const updateRule = (i: number, patch: Partial<DraftRule>) =>
@@ -325,8 +323,6 @@ function SegmentsPageInner() {
               )}
               {rules.length === 0 && <p className="text-xs text-slate-500">No filters — every active, unblocked contact matches.</p>}
             </div>
-
-            {error && <p className="rounded-lg bg-rose-50 px-3 py-2 text-sm text-rose-700">{error}</p>}
 
             <div className="flex flex-col gap-4 border-t border-slate-100 pt-5 sm:flex-row sm:items-center sm:justify-between">
               <div>

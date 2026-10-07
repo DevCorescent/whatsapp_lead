@@ -16,6 +16,7 @@ import {
   SkeletonRows,
   inputClass,
 } from "@/components/ui";
+import { useToast } from "@/components/ui/toast";
 import {
   cn,
   formatDate,
@@ -480,17 +481,17 @@ function ContactPicker({
 
 function NewTicketModal({ open, onClose }: { open: boolean; onClose: () => void }) {
   const queryClient = useQueryClient();
+  const { showToast } = useToast();
   const [subject, setSubject] = useState("");
   const [selectedContact, setSelectedContact] = useState<ContactOption | null>(null);
   const [priority, setPriority] = useState<TicketPriority>("MEDIUM");
   const [department, setDepartment] = useState(DEPARTMENTS[0]);
   const [sla, setSla] = useState("");
   const [details, setDetails] = useState("");
-  const [error, setError] = useState<string | null>(null);
 
   const reset = () => {
     setSubject(""); setSelectedContact(null); setPriority("MEDIUM");
-    setDepartment(DEPARTMENTS[0]); setSla(""); setDetails(""); setError(null);
+    setDepartment(DEPARTMENTS[0]); setSla(""); setDetails("");
   };
 
   const create = useMutation({
@@ -516,7 +517,7 @@ function NewTicketModal({ open, onClose }: { open: boolean; onClose: () => void 
       reset();
       onClose();
     },
-    onError: (err: Error) => setError(err.message),
+    onError: (err: Error) => showToast(err.message, "error"),
   });
 
   return (
@@ -530,13 +531,12 @@ function NewTicketModal({ open, onClose }: { open: boolean; onClose: () => void 
         className="space-y-4"
         onSubmit={(e) => {
           e.preventDefault();
-          setError(null);
           // datetime-local is "YYYY-MM-DDTHH:mm" (local). Convert to ISO for the API.
           let slaDeadline: string | undefined;
           if (sla) {
             const parsed = new Date(sla);
             if (Number.isNaN(parsed.getTime())) {
-              setError("Invalid SLA deadline");
+              showToast("Invalid SLA deadline", "error");
               return;
             }
             slaDeadline = parsed.toISOString();
@@ -618,8 +618,6 @@ function NewTicketModal({ open, onClose }: { open: boolean; onClose: () => void 
           />
         </Field>
 
-        {error && <p className="rounded-lg bg-rose-50 px-3 py-2 text-xs text-rose-700">{error}</p>}
-
         <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end [&>button]:h-10 [&>button]:w-full sm:[&>button]:h-9 sm:[&>button]:w-auto pt-2">
           <Button type="button" variant="secondary" onClick={() => { reset(); onClose(); }}>
             Cancel
@@ -643,8 +641,8 @@ function TicketDetailModal({ ticket, onClose }: { ticket: TicketRow | null; onCl
   // The same minute-resolution clock the table uses, so the countdown here ticks
   // with it instead of freezing at the value of the render that opened the modal.
   const now = useNow();
+  const { showToast } = useToast();
   const [newStatus, setNewStatus] = useState<TicketStatus>(ticket?.status ?? "OPEN");
-  const [error, setError] = useState<string | null>(null);
 
   // Re-seeded during render when a different ticket is opened, rather than in an
   // effect — an effect shows the previous ticket's status for one frame. Keyed on
@@ -671,7 +669,7 @@ function TicketDetailModal({ ticket, onClose }: { ticket: TicketRow | null; onCl
       queryClient.invalidateQueries({ queryKey: ["tickets"] });
       onClose();
     },
-    onError: (err: Error) => setError(err.message),
+    onError: (err: Error) => showToast(err.message, "error"),
   });
 
   const contact = ticket?.contact ?? ticket?.conversation?.contact ?? null;
@@ -732,8 +730,6 @@ function TicketDetailModal({ ticket, onClose }: { ticket: TicketRow | null; onCl
             ))}
           </select>
         </Field>
-
-        {error && <p className="rounded-lg bg-rose-50 px-3 py-2 text-xs text-rose-700">{error}</p>}
 
         <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end [&>button]:h-10 [&>button]:w-full sm:[&>button]:h-9 sm:[&>button]:w-auto pt-2">
           <Button variant="secondary" onClick={onClose}>Close</Button>

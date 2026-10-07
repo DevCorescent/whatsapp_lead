@@ -32,6 +32,7 @@ import {
   SkeletonRows,
   inputClass,
 } from "@/components/ui";
+import { useToast } from "@/components/ui/toast";
 import { ExportButton } from "@/components/ExportButton";
 import { HeaderMediaInput, type MediaHeaderType } from "@/components/campaigns/HeaderMediaInput";
 import {
@@ -549,6 +550,7 @@ function CreateCampaignModal({
   initialSegmentId?: string | null;
 }) {
   const queryClient = useQueryClient();
+  const { showToast } = useToast();
 
   const [name, setName] = useState("");
   const [templateId, setTemplateId] = useState("");
@@ -564,7 +566,6 @@ function CreateCampaignModal({
   const [showPreview, setShowPreview] = useState(false);
   const [headerMediaUrl, setHeaderMediaUrl] = useState("");
   const [headerMediaId, setHeaderMediaId] = useState("");
-  const [error, setError] = useState<string | null>(null);
 
   const { data: templatesData, isLoading: tplLoading } = useTemplates(open);
   const { data: contactsData, isLoading: contactsLoading } = useCampaignContacts(
@@ -640,7 +641,7 @@ function CreateCampaignModal({
       setReviewRemoved(new Set());
       setReviewData(data);
     },
-    onError: (err: Error) => setError(err.message),
+    onError: (err: Error) => showToast(err.message, "error"),
   });
 
   const create = useMutation({
@@ -659,7 +660,7 @@ function CreateCampaignModal({
       resetForm();
       onClose();
     },
-    onError: (err: Error) => { setReviewData(null); setError(err.message); },
+    onError: (err: Error) => { setReviewData(null); showToast(err.message, "error"); },
   });
 
   function resetForm() {
@@ -674,7 +675,6 @@ function CreateCampaignModal({
     setShowPreview(false);
     setHeaderMediaUrl("");
     setHeaderMediaId("");
-    setError(null);
     setReviewData(null);
     setReviewRemoved(new Set());
   }
@@ -703,14 +703,13 @@ function CreateCampaignModal({
 
   function submit(e: React.FormEvent) {
     e.preventDefault();
-    setError(null);
 
     if (audienceMode === "selected" && selectedIds.length === 0) {
-      setError("Select at least one contact, or choose Select all.");
+      showToast("Select at least one contact, or choose Select all.", "error");
       return;
     }
     if (audienceMode === "segment" && !segmentId) {
-      setError("Choose a segment.");
+      showToast("Choose a segment.", "error");
       return;
     }
 
@@ -883,7 +882,7 @@ function CreateCampaignModal({
             headerType={selectedTemplate.headerType as MediaHeaderType}
             value={{ mediaId: headerMediaId, mediaUrl: headerMediaUrl }}
             onChange={(v) => { setHeaderMediaId(v.mediaId); setHeaderMediaUrl(v.mediaUrl); }}
-            onError={setError}
+            onError={(msg) => showToast(msg, "error")}
           />
         )}
 
@@ -1112,18 +1111,6 @@ function CreateCampaignModal({
           />
           <p className="mt-1.5 text-xs text-slate-500">Leave empty to send immediately.</p>
         </Field>
-
-        {error && (
-          <p className="flex items-center gap-1.5 rounded-lg bg-rose-50 px-3 py-2 text-xs text-rose-700">
-            <AlertCircle className="h-3.5 w-3.5 shrink-0" />
-            <span>
-              {error}
-              {/upgrade/i.test(error) && (
-                <> <Link href="/billing/plans" className="font-medium underline underline-offset-2">View plans →</Link></>
-              )}
-            </span>
-          </p>
-        )}
 
         <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end [&>button]:h-10 [&>button]:w-full sm:[&>button]:h-9 sm:[&>button]:w-auto pt-2">
           <Button

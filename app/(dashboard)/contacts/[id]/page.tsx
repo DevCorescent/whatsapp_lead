@@ -136,7 +136,7 @@ export default function ContactDetailPage() {
         <EmptyState
           icon={UserX}
           title="Contact not found"
-          description="This contact could not be loaded — GET /api/contacts/[id] is not implemented yet."
+          description="This contact could not be loaded. It may have been deleted or the link is invalid."
           action={
             <Link href="/contacts">
               <Button variant="secondary">

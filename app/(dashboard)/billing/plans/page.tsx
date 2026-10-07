@@ -4,6 +4,7 @@ import { useState, useCallback } from "react";
 import Link from "next/link";
 import { Check, Sparkles, ArrowLeft } from "lucide-react";
 import { Badge, Button, Card, PageHeader, Skeleton } from "@/components/ui";
+import { useToast } from "@/components/ui/toast";
 import { cn, formatCurrency } from "@/lib/utils";
 import { useBrand } from "@/components/BrandProvider";
 import {
@@ -45,9 +46,8 @@ export default function PlansPage() {
   const checkout = useCheckout();
   const change = useChangePlan();
   const verifyPayment = useVerifyPayment();
+  const { showToast } = useToast();
   const [busyId, setBusyId] = useState<string | null>(null);
-  const [planError, setPlanError] = useState<string | null>(null);
-  const [planSuccess, setPlanSuccess] = useState<string | null>(null);
   const [quote, setQuote] = useState<PlanChangeQuote | null>(null);
   const [confirming, setConfirming] = useState(false);
 
@@ -79,23 +79,16 @@ export default function PlansPage() {
             razorpay_order_id: string;
             razorpay_signature: string;
           }) => {
-            console.log("[CHECKOUT] payment success from Razorpay", {
-              payment_id: response.razorpay_payment_id,
-              order_id: response.razorpay_order_id,
-              signature_length: response.razorpay_signature?.length,
-            });
             try {
-              const verifyRes = await verifyPayment.mutateAsync({
+              await verifyPayment.mutateAsync({
                 razorpay_order_id: response.razorpay_order_id,
                 razorpay_payment_id: response.razorpay_payment_id,
                 razorpay_signature: response.razorpay_signature,
                 planId,
                 planChangeId: orderData.planChangeId,
               });
-              console.log("[CHECKOUT] verify-payment response:", verifyRes);
               resolve();
             } catch (e) {
-              console.error("[CHECKOUT] verify-payment failed:", e);
               reject(e);
             }
           },
@@ -111,70 +104,34 @@ export default function PlansPage() {
 
   const choose = async (plan: PlanDTO) => {
     setBusyId(plan.id);
-    setPlanError(null);
-    setPlanSuccess(null);
-
-    console.log("[PLANS choose] START", {
-      targetPlan: { id: plan.id, name: plan.displayName, priceMonthly: plan.priceMonthly },
-      currentPlanId,
-      currentPlan: currentPlan ? { id: currentPlan.id, name: currentPlan.displayName, priceMonthly: currentPlan.priceMonthly } : null,
-      subscriptionStatus: data?.status ?? null,
-    });
 
     try {
       // For paid plans always try proration first — the server knows whether an
       // active subscription exists. Fall through to full checkout only when the
       // server explicitly says there is nothing to prorate from.
       if (plan.priceMonthly > 0) {
-        console.log("[PLANS choose] paid plan → fetching proration quote from /api/billing/change");
         try {
           const q = await fetchPlanChangeQuote(plan.id);
-          console.log("[PLANS choose] PRORATION QUOTE received", {
-            kind: q.kind,
-            amountDue: q.amountDue,
-            credit: q.credit,
-            requiresPayment: q.requiresPayment,
-            periodEnd: q.periodEnd,
-            currentPlan: q.currentPlan,
-            targetPlan: q.targetPlan,
-          });
           setQuote(q);
           return;
         } catch (e) {
           if (e instanceof QuoteRefusalError) {
             const fallthrough = ["not-active", "no-subscription", "expired"];
-            console.log("[PLANS choose] QuoteRefusalError", {
-              refusalReason: e.refusalReason,
-              message: e.message,
-              willFallthrough: fallthrough.includes(e.refusalReason),
-            });
             if (!fallthrough.includes(e.refusalReason)) throw e;
           } else {
-            console.error("[PLANS choose] unexpected quote error (not a QuoteRefusalError)", e);
             throw e;
           }
         }
       }
 
       // Full checkout: new subscription, trial upgrade, or free plan.
-      console.log("[PLANS choose] → falling through to FULL CHECKOUT (new subscription / trial / free)", {
-        planId: plan.id, priceMonthly: plan.priceMonthly,
-      });
       const res = await checkout.mutateAsync(plan.id);
-      console.log("[PLANS choose] checkout response", res);
       if (res?.orderId) {
-        console.log("[PLANS choose] opening Razorpay modal", {
-          orderId: res.orderId,
-          amount: res.amount,
-          amountInRupees: (res.amount as number) / 100,
-          currency: res.currency,
-        });
         await openRazorpayModal(res as RazorpayOrderData, plan.id);
       }
-      setPlanSuccess("Your plan is now active.");
+      showToast("Your plan is now active.", "success");
     } catch (e) {
-      console.error("[PLANS choose] ERROR", e);
-      setPlanError((e as Error).message);
+      showToast((e as Error).message, "error");
     } finally {
       setBusyId(null);
     }
@@ -183,7 +140,6 @@ export default function PlansPage() {
   const confirmChange = async () => {
     if (!quote) return;
     setConfirming(true);
-    setPlanError(null);
     try {
       const res = await change.mutateAsync(quote.targetPlan.id);
       if (res?.orderId) {
@@ -192,17 +148,18 @@ export default function PlansPage() {
           quote.targetPlan.id,
         );
         setQuote(null);
-        setPlanSuccess(`You're now on ${quote.targetPlan.displayName}.`);
+        showToast(`You're now on ${quote.targetPlan.displayName}.`, "success");
         return;
       }
       setQuote(null);
-      setPlanSuccess(
+      showToast(
         res?.grantedDays
           ? `You're on ${quote.targetPlan.displayName}. Your remaining balance covers ${res.grantedDays} days, through ${new Date(res.periodEnd).toLocaleDateString()}.`
           : `You're now on ${quote.targetPlan.displayName}.`,
+        "success",
       );
     } catch (e) {
-      setPlanError((e as Error).message);
+      showToast((e as Error).message, "error");
     } finally {
       setConfirming(false);
     }
@@ -227,13 +184,6 @@ export default function PlansPage() {
         <div className="mb-4 rounded-lg bg-amber-50 px-4 py-3 text-sm text-amber-800">
           Payments are not configured on this deployment. Free plans can still be selected; paid checkout is disabled until Razorpay is connected.
         </div>
-      )}
-
-      {planError && (
-        <div className="mb-4 rounded-lg bg-rose-50 px-4 py-3 text-sm text-rose-700">{planError}</div>
-      )}
-      {planSuccess && (
-        <div className="mb-4 rounded-lg bg-emerald-50 px-4 py-3 text-sm text-emerald-700">{planSuccess}</div>
       )}
 
       {quote && (

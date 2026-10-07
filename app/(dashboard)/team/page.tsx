@@ -30,6 +30,7 @@ import {
   inputClass,
 } from "@/components/ui";
 import { cn, formatCompact, timeAgo } from "@/lib/utils";
+import { useToast } from "@/components/ui/toast";
 
 // TODO [SHALMON]: GET /api/team + POST /api/team/invite (currently 501).
 
@@ -96,11 +97,11 @@ function StatTile({
 export default function TeamPage() {
   const queryClient = useQueryClient();
   const { data, isLoading, isError } = useTeam();
+  const { showToast } = useToast();
   const [open, setOpen] = useState(false);
   const [editingMember, setEditingMember] = useState<Member | null>(null);
   const [permsMember, setPermsMember] = useState<Member | null>(null);
   const [confirmToggle, setConfirmToggle] = useState<Member | null>(null);
-  const [toggleError, setToggleError] = useState<string | null>(null);
 
   const toggleMutation = useMutation({
     mutationFn: async (member: Member) => {
@@ -116,9 +117,8 @@ export default function TeamPage() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["team"] });
       setConfirmToggle(null);
-      setToggleError(null);
     },
-    onError: (err: Error) => setToggleError(err.message),
+    onError: (err: Error) => showToast(err.message, "error"),
   });
 
   const members = data ?? [];
@@ -211,7 +211,7 @@ export default function TeamPage() {
                   <Button
                     variant="secondary"
                     className={cn("h-10", m.isActive && "text-rose-600 hover:bg-rose-50")}
-                    onClick={() => { setToggleError(null); setConfirmToggle(m); }}
+                    onClick={() => setConfirmToggle(m)}
                   >
                     {m.isActive ? (
                       <>
@@ -301,7 +301,7 @@ export default function TeamPage() {
                           variant="ghost"
                           size="sm"
                           className={m.isActive ? "text-rose-600 hover:bg-rose-50" : ""}
-                          onClick={() => { setToggleError(null); setConfirmToggle(m); }}
+                          onClick={() => setConfirmToggle(m)}
                         >
                           {m.isActive ? (
                             <>
@@ -333,7 +333,7 @@ export default function TeamPage() {
       {/* Activate / Deactivate confirmation */}
       <Modal
         open={!!confirmToggle}
-        onClose={() => { if (!toggleMutation.isPending) { setConfirmToggle(null); setToggleError(null); } }}
+        onClose={() => { if (!toggleMutation.isPending) setConfirmToggle(null); }}
         title={confirmToggle?.isActive ? "Deactivate member?" : "Activate member?"}
         description={
           confirmToggle?.isActive
@@ -341,13 +341,10 @@ export default function TeamPage() {
             : `${confirmToggle?.name} will regain access to this workspace.`
         }
       >
-        {toggleError && (
-          <p className="mb-3 rounded-lg bg-rose-50 px-3 py-2 text-sm text-rose-700">{toggleError}</p>
-        )}
         <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end max-sm:[&>button]:h-10 max-sm:[&>button]:w-full">
           <Button
             variant="secondary"
-            onClick={() => { setConfirmToggle(null); setToggleError(null); }}
+            onClick={() => setConfirmToggle(null)}
             disabled={toggleMutation.isPending}
           >
             Cancel
@@ -369,11 +366,10 @@ export default function TeamPage() {
 
 function InviteModal({ open, onClose }: { open: boolean; onClose: () => void }) {
   const queryClient = useQueryClient();
+  const { showToast } = useToast();
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [role, setRole] = useState<UserRole>("AGENT");
-  const [error, setError] = useState<string | null>(null);
-  const [success, setSuccess] = useState<string | null>(null);
 
   const invite = useMutation({
     mutationFn: async (data: { name: string; email: string; role: UserRole }) => {
@@ -392,20 +388,21 @@ function InviteModal({ open, onClose }: { open: boolean; onClose: () => void }) 
       const emailSent = json.data?.emailSent === true;
       const emailError = json.data?.emailError as string | undefined;
       if (pwd && emailSent) {
-        setSuccess(`Invited! Email sent. Temporary password (shown once): ${pwd}`);
+        showToast(`Invited! Email sent. Temporary password (shown once): ${pwd}`, "success");
       } else if (pwd) {
-        setSuccess(
+        showToast(
           `Member created, but invite email failed${emailError ? `: ${emailError}` : ""}. Share this temporary password now (shown once): ${pwd}`,
+          "success",
         );
       } else {
-        setSuccess(emailSent ? "Member invited successfully." : "Member created, but invite email failed.");
+        showToast(emailSent ? "Member invited successfully." : "Member created, but invite email failed.", "success");
       }
       setName(""); setEmail(""); setRole("AGENT");
     },
-    onError: (err: Error) => setError(err.message),
+    onError: (err: Error) => showToast(err.message, "error"),
   });
 
-  const close = () => { setName(""); setEmail(""); setError(null); setSuccess(null); onClose(); };
+  const close = () => { setName(""); setEmail(""); onClose(); };
 
   return (
     <Modal
@@ -418,7 +415,6 @@ function InviteModal({ open, onClose }: { open: boolean; onClose: () => void }) 
         className="space-y-4"
         onSubmit={(e) => {
           e.preventDefault();
-          setError(null);
           invite.mutate({ name, email, role });
         }}
       >
@@ -465,9 +461,6 @@ function InviteModal({ open, onClose }: { open: boolean; onClose: () => void }) 
           </p>
         </Field>
 
-        {error && <p className="rounded-lg bg-rose-50 px-3 py-2 text-xs text-rose-700">{error}</p>}
-        {success && <p className="rounded-lg bg-emerald-50 px-3 py-2 text-xs text-emerald-700">{success}</p>}
-
         <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end max-sm:[&>button]:h-10 max-sm:[&>button]:w-full pt-2">
           <Button type="button" variant="secondary" onClick={close}>
             Cancel
@@ -484,11 +477,11 @@ function InviteModal({ open, onClose }: { open: boolean; onClose: () => void }) 
 
 function ChangeRoleModal({ member, onClose }: { member: Member | null; onClose: () => void }) {
   const queryClient = useQueryClient();
+  const { showToast } = useToast();
   const [role, setRole] = useState<UserRole>(member?.role ?? "AGENT");
   // Held as a string so the field can be empty, which is what "no cap" means.
   // A number state would force 0 to stand for both "unlimited" and "none".
   const [creditLimit, setCreditLimit] = useState("");
-  const [error, setError] = useState<string | null>(null);
 
   // Re-seeded during render when a different member is opened, rather than in an
   // effect. An effect would paint the previous member's values for one frame and
@@ -514,7 +507,7 @@ function ChangeRoleModal({ member, onClose }: { member: Member | null; onClose: 
       return json;
     },
     onSuccess: () => { queryClient.invalidateQueries({ queryKey: ["team"] }); onClose(); },
-    onError: (err: Error) => setError(err.message),
+    onError: (err: Error) => showToast(err.message, "error"),
   });
 
   return (
@@ -552,7 +545,6 @@ function ChangeRoleModal({ member, onClose }: { member: Member | null; onClose: 
           </p>
         </Field>
 
-        {error && <p className="rounded-lg bg-rose-50 px-3 py-2 text-xs text-rose-700">{error}</p>}
         <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end max-sm:[&>button]:h-10 max-sm:[&>button]:w-full">
           <Button variant="secondary" onClick={onClose}>Cancel</Button>
           <Button onClick={() => save.mutate()} disabled={save.isPending}>{save.isPending ? "Saving…" : "Save"}</Button>
@@ -637,9 +629,8 @@ type PermMap  = Record<string, PermData>;
 
 function UserPermissionsModal({ member, onClose }: { member: Member | null; onClose: () => void }) {
   const queryClient = useQueryClient();
+  const { showToast } = useToast();
   const [localOverrides, setLocalOverrides] = useState<Record<string, boolean | null>>({});
-  const [saveError, setSaveError] = useState<string | null>(null);
-  const [saved, setSaved] = useState(false);
 
   const { data, isLoading, isError } = useQuery<PermMap>({
     queryKey: ["team-permissions", member?.id],
@@ -659,8 +650,6 @@ function UserPermissionsModal({ member, onClose }: { member: Member | null; onCl
     const initial: Record<string, boolean | null> = {};
     for (const perm of Object.keys(data)) initial[perm] = data[perm].override;
     setLocalOverrides(initial);
-    setSaveError(null);
-    setSaved(false);
   }
 
   const save = useMutation({
@@ -675,22 +664,18 @@ function UserPermissionsModal({ member, onClose }: { member: Member | null; onCl
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["team-permissions", member?.id] });
-      setSaved(true);
-      setSaveError(null);
+      showToast("Permissions saved.", "success");
     },
-    onError: (err: Error) => setSaveError(err.message),
+    onError: (err: Error) => showToast(err.message, "error"),
   });
 
   const setOverride = (perm: string, val: boolean | null) => {
-    setSaved(false);
     setLocalOverrides((prev) => ({ ...prev, [perm]: val }));
   };
 
   const close = () => {
     setSeenPermId(null);
     setLocalOverrides({});
-    setSaveError(null);
-    setSaved(false);
     onClose();
   };
 
@@ -785,13 +770,6 @@ function UserPermissionsModal({ member, onClose }: { member: Member | null; onCl
             </div>
           ))}
         </div>
-      )}
-
-      {saveError && (
-        <p className="mt-3 rounded-lg bg-rose-50 px-3 py-2 text-sm text-rose-700">{saveError}</p>
-      )}
-      {saved && (
-        <p className="mt-3 rounded-lg bg-emerald-50 px-3 py-2 text-sm text-emerald-700">Permissions saved.</p>
       )}
 
       <div className="mt-4 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end max-sm:[&>button]:h-10 max-sm:[&>button]:w-full">

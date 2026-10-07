@@ -38,6 +38,7 @@ import { readFaqState } from "@/lib/knowledgeFaq";
 import { UploadModal } from "@/components/knowledge/UploadModal";
 import { RetrievalTester } from "@/components/knowledge/RetrievalTester";
 import { cn, formatDate } from "@/lib/utils";
+import { useToast } from "@/components/ui/toast";
 
 /**
  * Indexing status, as the upload route and the worker record it on `metadata`.
@@ -96,6 +97,7 @@ function readSize(doc: KnowledgeDoc): string {
 
 export default function KnowledgeBasePage() {
   const queryClient = useQueryClient();
+  const { showToast } = useToast();
   const { data, isLoading, isError } = useKnowledgeDocs();
   const [open, setOpen] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState<KnowledgeDoc | null>(null);
@@ -125,6 +127,7 @@ export default function KnowledgeBasePage() {
       queryClient.invalidateQueries({ queryKey: ["knowledge"] });
       setRenameDoc(null);
     },
+    onError: (e: Error) => showToast(e.message, "error"),
   });
 
   const deleteMutation = useMutation({
@@ -139,6 +142,7 @@ export default function KnowledgeBasePage() {
       queryClient.invalidateQueries({ queryKey: ["knowledge"] });
       setConfirmDelete(null);
     },
+    onError: (e: Error) => showToast(e.message, "error"),
   });
 
   const reindexMutation = useMutation({
@@ -272,11 +276,6 @@ export default function KnowledgeBasePage() {
               autoFocus
             />
           </Field>
-          {renameMutation.isError && (
-            <p role="alert" className="mt-2 text-sm text-rose-600">
-              {(renameMutation.error as Error).message}
-            </p>
-          )}
           <div className="mt-4 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end max-sm:[&>button]:h-10 max-sm:[&>button]:w-full">
             <Button
               type="button"
@@ -299,11 +298,6 @@ export default function KnowledgeBasePage() {
         title="Delete document?"
         description={confirmDelete ? `"${confirmDelete.name}" will be removed from the knowledge base and the AI will no longer have access to it.` : ""}
       >
-        {deleteMutation.isError && (
-          <p className="mb-3 rounded-lg bg-rose-50 px-3 py-2 text-sm text-rose-700">
-            {(deleteMutation.error as Error).message}
-          </p>
-        )}
         <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end max-sm:[&>button]:h-10 max-sm:[&>button]:w-full">
           <Button
             variant="secondary"

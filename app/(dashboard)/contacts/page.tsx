@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useQuery } from "@tanstack/react-query";
-import { Filter, Megaphone, Search, Upload, UserPlus, X } from "lucide-react";
+import { Filter, Megaphone, Search, Upload, UserPlus } from "lucide-react";
 import {
   useBulkContactAction,
   useContactSources,
@@ -23,6 +23,7 @@ import {
   type RowAction,
 } from "@/components/contacts/ContactTable";
 import { cn } from "@/lib/utils";
+import { useToast } from "@/components/ui/toast";
 
 const PAGE_SIZE = 20;
 
@@ -69,9 +70,8 @@ export default function ContactsPage() {
   const [editContact, setEditContact] = useState<ContactRow | null>(null);
   const [pending, setPending] = useState<PendingAction | null>(null);
   const [actionText, setActionText] = useState("");
-  const [actionError, setActionError] = useState<string | null>(null);
-  const [notice, setNotice] = useState<string | null>(null);
   const bulk = useBulkContactAction();
+  const { showToast } = useToast();
 
   // Debounce the search box so we don't fire a request per keystroke.
   useEffect(() => {
@@ -135,7 +135,6 @@ export default function ContactsPage() {
   const selectClass = cn(inputClass, "cursor-pointer bg-white sm:w-44");
 
   function run(action: ContactBulkAction, contacts: ContactRow[], extra?: { reason?: string; tag?: string }) {
-    setActionError(null);
     bulk.mutate(
       { action, ids: contacts.map((c) => c.id), ...extra },
       {
@@ -158,12 +157,10 @@ export default function ContactsPage() {
           if (r.platformBlocked) {
             message += ` ${r.platformBlocked} ${r.platformBlocked === 1 ? "is" : "are"} also blocked platform-wide; only the platform admin can lift that.`;
           }
-          setNotice(message);
+          showToast(message, "success");
         },
         onError: (err) => {
-          // Confirmed actions show the error in their dialog; instant ones on the page.
-          if (pending) setActionError(err.message);
-          else setNotice(err.message);
+          showToast(err.message, "error");
         },
       },
     );
@@ -171,13 +168,11 @@ export default function ContactsPage() {
 
   function onAction(action: RowAction, contacts: ContactRow[]) {
     if (contacts.length === 0) return;
-    setNotice(null);
     if (action === "restore" || action === "unblock") {
       run(action, contacts);
       return;
     }
     setActionText("");
-    setActionError(null);
     setPending({ action, contacts });
   }
 
@@ -326,18 +321,6 @@ export default function ContactsPage() {
         )}
       </Card>
 
-      {notice && (
-        <div
-          role="status"
-          className="mb-4 flex items-start justify-between gap-3 rounded-lg bg-sky-50 px-3 py-2.5 text-sm text-sky-900 ring-1 ring-inset ring-sky-600/15"
-        >
-          <span>{notice}</span>
-          <button type="button" aria-label="Dismiss" onClick={() => setNotice(null)} className="shrink-0 text-sky-700/70 hover:text-sky-900">
-            <X className="h-4 w-4" />
-          </button>
-        </div>
-      )}
-
       <ContactTable
         contacts={rows}
         isLoading={isLoading}
@@ -423,11 +406,6 @@ export default function ContactsPage() {
               ))}
             </datalist>
           </div>
-        )}
-        {actionError && (
-          <p role="alert" className="mb-3 text-sm text-rose-600">
-            {actionError}
-          </p>
         )}
         <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
           <Button variant="secondary" onClick={() => setPending(null)} disabled={bulk.isPending}>

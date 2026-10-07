@@ -35,6 +35,7 @@ import {
 } from "@/hooks/useFlows";
 import { FlowBuilder } from "@/components/chatbot/FlowBuilder";
 import { ExportButton } from "@/components/ExportButton";
+import { useToast } from "@/components/ui/toast";
 
 export default function ChatbotPage() {
   const { data, isLoading, isError } = useFlows();
@@ -336,17 +337,16 @@ function NewFlowModal({
   onLocalDraft: (input: { name: string; description?: string; trigger: string; keywords: string[] }) => void;
 }) {
   const create = useCreateFlow();
+  const { showToast } = useToast();
   const [name, setName] = useState("");
   const [trigger, setTrigger] = useState("KEYWORD");
   const [keywords, setKeywords] = useState("");
   const [description, setDescription] = useState("");
-  const [error, setError] = useState<string | null>(null);
 
-  function reset() { setName(""); setTrigger("KEYWORD"); setKeywords(""); setDescription(""); setError(null); }
+  function reset() { setName(""); setTrigger("KEYWORD"); setKeywords(""); setDescription(""); }
 
   function submit(e: React.FormEvent) {
     e.preventDefault();
-    setError(null);
     const input = {
       name: name.trim(),
       description: description.trim() || undefined,
@@ -358,7 +358,7 @@ function NewFlowModal({
       input,
       {
         onSuccess: (flow) => { reset(); onCreated(flow.id); },
-        onError: () => { reset(); onLocalDraft(input); },
+        onError: (err: Error) => { showToast(err.message, "error"); reset(); onLocalDraft(input); },
       },
     );
   }
@@ -399,8 +399,6 @@ function NewFlowModal({
         <Field label="Description" htmlFor="flow-description">
           <textarea id="flow-description" value={description} onChange={(e) => setDescription(e.target.value)} rows={2} className={cn(inputClass, "resize-y")} placeholder="What this flow does…" />
         </Field>
-
-        {error && <p className="rounded-lg bg-rose-50 px-3 py-2 text-sm text-rose-600">{error}</p>}
 
         <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end max-sm:[&>button]:h-10 max-sm:[&>button]:w-full pt-2">
           <Button type="button" variant="secondary" onClick={onClose}>Cancel</Button>

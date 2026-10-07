@@ -13,7 +13,6 @@ import {
   AlertCircle,
   RotateCw,
   Loader2,
-  Info,
 } from "lucide-react";
 import {
   Badge,
@@ -26,6 +25,7 @@ import {
   SkeletonRows,
   inputClass,
 } from "@/components/ui";
+import { useToast } from "@/components/ui/toast";
 import { cn, formatDate } from "@/lib/utils";
 import {
   useTemplates,
@@ -89,13 +89,7 @@ export default function TemplatesPage() {
   const [modal, setModal] = useState<{ open: boolean; editing: TemplateDTO | null }>({ open: false, editing: null });
   const [rejection, setRejection] = useState<TemplateDTO | null>(null);
   const [confirmDeleteTemplate, setConfirmDeleteTemplate] = useState<TemplateDTO | null>(null);
-  type Toast = { id: number; message: string; kind: "success" | "error" | "info" };
-  const [toasts, setToasts] = useState<Toast[]>([]);
-  const showToast = (message: string, kind: Toast["kind"] = "info") => {
-    const id = Date.now() + Math.random();
-    setToasts((prev) => [...prev, { id, message, kind }]);
-    setTimeout(() => setToasts((prev) => prev.filter((t) => t.id !== id)), 4500);
-  };
+  const { showToast } = useToast();
 
   const del = useDeleteTemplate();
   const duplicate = useDuplicateTemplate();
@@ -424,25 +418,6 @@ export default function TemplatesPage() {
         </div>
       </Modal>
 
-      {/* Toast notifications */}
-      <div className="pointer-events-none fixed right-4 top-4 z-[100] flex flex-col gap-2">
-        {toasts.map((t) => (
-          <div
-            key={t.id}
-            className={cn(
-              "pointer-events-auto flex items-center gap-2.5 rounded-xl px-4 py-3 text-sm font-medium shadow-lg",
-              t.kind === "success" && "bg-emerald-600 text-white",
-              t.kind === "error" && "bg-rose-600 text-white",
-              t.kind === "info" && "bg-slate-800 text-white",
-            )}
-          >
-            {t.kind === "success" && <span className="text-base">✓</span>}
-            {t.kind === "error" && <AlertCircle className="h-4 w-4 shrink-0" />}
-            {t.kind === "info" && <Info className="h-4 w-4 shrink-0" />}
-            <span>{t.message}</span>
-          </div>
-        ))}
-      </div>
     </div>
   );
 }

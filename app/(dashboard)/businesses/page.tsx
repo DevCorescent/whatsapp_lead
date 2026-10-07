@@ -26,6 +26,7 @@ import {
   type BusinessDTO,
   type BusinessInput,
 } from "@/hooks/useBusinesses";
+import { useToast } from "@/components/ui/toast";
 
 type FormState = BusinessInput;
 
@@ -63,13 +64,12 @@ export default function BusinessesPage() {
   const createBusiness = useCreateBusiness();
   const updateBusiness = useUpdateBusiness();
   const deleteBusiness = useDeleteBusiness();
+  const { showToast } = useToast();
 
   const [editing, setEditing] = useState<BusinessDTO | null>(null);
   const [showForm, setShowForm] = useState(false);
   const [form, setForm] = useState<FormState>(EMPTY_FORM);
-  const [error, setError] = useState<string | null>(null);
   const [confirmDelete, setConfirmDelete] = useState<BusinessDTO | null>(null);
-  const [deleteError, setDeleteError] = useState<string | null>(null);
   const [upgrade, setUpgrade] = useState<UpgradeReason | null>(null);
   // Which business the Meta onboarding dialog is acting on. Null while closed —
   // the card reads its own state per business, so it must not be mounted for all of them.
@@ -81,14 +81,12 @@ export default function BusinessesPage() {
   const openCreate = () => {
     setEditing(null);
     setForm(EMPTY_FORM);
-    setError(null);
     setShowForm(true);
   };
 
   const openEdit = (b: BusinessDTO) => {
     setEditing(b);
     setForm(toForm(b));
-    setError(null);
     setShowForm(true);
   };
 
@@ -97,7 +95,6 @@ export default function BusinessesPage() {
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
-    setError(null);
     // No WhatsApp credentials are collected here, so the form state is the payload.
     // Existing stored credentials are untouched by a save: the fields are simply absent.
     const payload: BusinessInput = { ...form };
@@ -118,18 +115,17 @@ export default function BusinessesPage() {
         setUpgrade(reason);
         return;
       }
-      setError(err instanceof Error ? err.message : "Something went wrong");
+      showToast(err instanceof Error ? err.message : "Something went wrong", "error");
     }
   };
 
   const onDelete = async () => {
     if (!confirmDelete) return;
-    setDeleteError(null);
     try {
       await deleteBusiness.mutateAsync(confirmDelete.id);
       setConfirmDelete(null);
     } catch (err) {
-      setDeleteError(err instanceof Error ? err.message : "Failed to delete");
+      showToast(err instanceof Error ? err.message : "Failed to delete", "error");
     }
   };
 
@@ -376,8 +372,6 @@ export default function BusinessesPage() {
             </div>
           </div>
 
-          {error && <p className="text-sm text-rose-600">{error}</p>}
-
           <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end max-sm:[&>button]:h-10 max-sm:[&>button]:w-full">
             <Button type="button" variant="secondary" onClick={() => setShowForm(false)}>
               Cancel
@@ -392,7 +386,7 @@ export default function BusinessesPage() {
       {/* Delete confirmation */}
       <Modal
         open={!!confirmDelete}
-        onClose={() => { if (!deleteBusiness.isPending) { setConfirmDelete(null); setDeleteError(null); } }}
+        onClose={() => { if (!deleteBusiness.isPending) setConfirmDelete(null); }}
         title="Delete business?"
         description={
           confirmDelete
@@ -400,11 +394,8 @@ export default function BusinessesPage() {
             : ""
         }
       >
-        {deleteError && (
-          <p className="mb-3 rounded-lg bg-rose-50 px-3 py-2 text-sm text-rose-700">{deleteError}</p>
-        )}
         <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end max-sm:[&>button]:h-10 max-sm:[&>button]:w-full">
-          <Button variant="secondary" onClick={() => { setConfirmDelete(null); setDeleteError(null); }} disabled={deleteBusiness.isPending}>
+          <Button variant="secondary" onClick={() => setConfirmDelete(null)} disabled={deleteBusiness.isPending}>
             Cancel
           </Button>
           <Button variant="danger" onClick={onDelete} disabled={deleteBusiness.isPending}>

@@ -8,6 +8,7 @@ import { ViewAsBanner } from "@/components/dashboard/ViewAsBanner";
 import { OnboardingWrapper } from "@/components/onboarding/OnboardingWrapper";
 import { brandStyle, getBrandForTenant } from "@/lib/branding";
 import { BrandProvider } from "@/components/BrandProvider";
+import { ToastProvider } from "@/components/ui/toast";
 
 /**
  * The plan badge lives in the sidebar but isn't on the JWT, so it's read here.
@@ -52,6 +53,7 @@ export default async function DashboardLayout({ children }: { children: ReactNod
         isWhiteLabel: brand.isWhiteLabel,
       }}
     >
+    <ToastProvider>
     <div className="flex h-dvh overflow-hidden bg-[#f6f7f9]" style={brandStyle(brand)}>
       <Sidebar
         user={{
@@ -75,6 +77,7 @@ export default async function DashboardLayout({ children }: { children: ReactNod
       {/* WhatsApp onboarding is for client accounts; resellers never connect a number. */}
       {!isReseller && !viewing && <OnboardingWrapper tenantId={session.user.tenantId} tenantName={session.user.tenantName} />}
     </div>
+    </ToastProvider>
     </BrandProvider>
   );
 }

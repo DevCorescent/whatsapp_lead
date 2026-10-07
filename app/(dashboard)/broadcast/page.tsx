@@ -35,6 +35,7 @@ import {
 } from "lucide-react";
 import type { CampaignStatus } from "@prisma/client";
 import { Badge, Button, Card, Field, Modal, PageHeader, inputClass } from "@/components/ui";
+import { useToast } from "@/components/ui/toast";
 import { HeaderMediaInput, type MediaHeaderType } from "@/components/campaigns/HeaderMediaInput";
 import {
   ExcludedSummary,
@@ -234,12 +235,13 @@ export default function BroadcastPage() {
   const [urlText, setUrlText] = useState<string[]>([]);
   const [media, setMedia] = useState({ mediaId: "", mediaUrl: "" });
 
+  const { showToast } = useToast();
+
   // 4. Send
   const [scheduling, setScheduling] = useState(false);
   const [schedule, setSchedule] = useState("");
   const [confirm, setConfirm] = useState<{ payload: BroadcastPayload; review: DryRunResult } | null>(null);
   const [launch, setLaunch] = useState<LaunchResult | null>(null);
-  const [error, setError] = useState<string | null>(null);
 
   // Analysis runs on every keystroke; deferring it keeps typing smooth on a
   // paste of several thousand lines.
@@ -345,7 +347,7 @@ export default function BroadcastPage() {
   const review = useMutation({
     mutationFn: (payload: BroadcastPayload) => postBroadcast<DryRunResult>({ ...payload, dryRun: true }),
     onSuccess: (data, payload) => setConfirm({ payload, review: data }),
-    onError: (err: Error) => setError(err.message),
+    onError: (err: Error) => showToast(err.message, "error"),
   });
 
   const send = useMutation({
@@ -355,7 +357,7 @@ export default function BroadcastPage() {
       setConfirm(null);
       setLaunch(data);
     },
-    onError: (err: Error) => { setConfirm(null); setError(err.message); },
+    onError: (err: Error) => { setConfirm(null); showToast(err.message, "error"); },
   });
 
   /** Only the columns the template uses (plus Name, the server's name fallback) travel. */
@@ -371,11 +373,10 @@ export default function BroadcastPage() {
   }
 
   function startReview(asSchedule: boolean) {
-    setError(null);
     if (asSchedule && !scheduling) { setScheduling(true); return; }
-    if (blockers.length > 0 || !template) { setError(blockers[0] ?? "Complete the form first"); return; }
+    if (blockers.length > 0 || !template) { showToast(blockers[0] ?? "Complete the form first", "error"); return; }
     if (asSchedule && scheduleDate && isPast(scheduleDate)) {
-      setError("That time has already passed — pick a future date and time, or use Send now.");
+      showToast("That time has already passed — pick a future date and time, or use Send now.", "error");
       return;
     }
     const recipientFields = recipientFieldsFor(finalNumbers);
@@ -447,7 +448,6 @@ export default function BroadcastPage() {
     setTemplateId("");
     setScheduling(false);
     setSchedule("");
-    setError(null);
   }
 
   if (launch) return <BroadcastProgress launch={launch} onNew={reset} />;
@@ -676,7 +676,7 @@ export default function BroadcastPage() {
               headerType={mediaHeader}
               value={media}
               onChange={setMedia}
-              onError={setError}
+              onError={(msg) => showToast(msg, "error")}
             />
           )}
 
@@ -822,19 +822,7 @@ export default function BroadcastPage() {
             </div>
           )}
 
-          {error && (
-            <p className="mb-3 flex items-start gap-1.5 rounded-lg bg-rose-50 px-3 py-2 text-xs text-rose-700">
-              <AlertCircle className="mt-px h-3.5 w-3.5 shrink-0" />
-              <span>
-                {error}
-                {/upgrade/i.test(error) && (
-                  <> <Link href="/billing/plans" className="font-medium underline underline-offset-2">View plans →</Link></>
-                )}
-              </span>
-            </p>
-          )}
-
-          {blockers.length > 0 && !error && (
+          {blockers.length > 0 && (
             <p className="mb-3 flex items-center gap-1.5 text-xs text-slate-500">
               <Info className="h-3.5 w-3.5 shrink-0" />
               {blockers[0]}
