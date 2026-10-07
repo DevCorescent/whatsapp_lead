@@ -11,6 +11,10 @@ import {
   ShieldCheck,
   ShieldOff,
   MessagesSquare,
+  KeyRound,
+  Check,
+  X,
+  Minus,
 } from "lucide-react";
 import type { User, UserRole } from "@prisma/client";
 import {
@@ -94,6 +98,7 @@ export default function TeamPage() {
   const { data, isLoading, isError } = useTeam();
   const [open, setOpen] = useState(false);
   const [editingMember, setEditingMember] = useState<Member | null>(null);
+  const [permsMember, setPermsMember] = useState<Member | null>(null);
   const [confirmToggle, setConfirmToggle] = useState<Member | null>(null);
   const [toggleError, setToggleError] = useState<string | null>(null);
 
@@ -220,6 +225,12 @@ export default function TeamPage() {
                       </>
                     )}
                   </Button>
+                  {m.role !== "TENANT_OWNER" && (
+                    <Button variant="secondary" className="col-span-2 h-10" onClick={() => setPermsMember(m)}>
+                      <KeyRound className="h-4 w-4" />
+                      Customize permissions
+                    </Button>
+                  )}
                 </div>
               </li>
             ))}
@@ -276,6 +287,12 @@ export default function TeamPage() {
                     </td>
                     <td className="px-4 py-3">
                       <div className="flex items-center justify-end gap-1">
+                        {m.role !== "TENANT_OWNER" && (
+                          <Button variant="ghost" size="sm" onClick={() => setPermsMember(m)}>
+                            <KeyRound className="h-4 w-4" />
+                            Permissions
+                          </Button>
+                        )}
                         <Button variant="ghost" size="sm" onClick={() => setEditingMember(m)}>
                           <UserCog className="h-4 w-4" />
                           Change role
@@ -311,6 +328,7 @@ export default function TeamPage() {
 
       <InviteModal open={open} onClose={() => setOpen(false)} />
       <ChangeRoleModal member={editingMember} onClose={() => setEditingMember(null)} />
+      <UserPermissionsModal member={permsMember} onClose={() => setPermsMember(null)} />
 
       {/* Activate / Deactivate confirmation */}
       <Modal
@@ -575,5 +593,215 @@ function AiAllowance({ limit, used }: { limit: number | null; used: number }) {
         />
       </span>
     </span>
+  );
+}
+
+// ─── Per-user permission overrides ───────────────────────────────────────────
+
+const PERM_LABEL: Record<string, string> = {
+  "contacts.view": "View contacts",
+  "contacts.manage": "Edit contacts",
+  "contacts.delete": "Delete contacts",
+  "contacts.import": "Import contacts",
+  "contacts.export": "Export contacts",
+  "conversations.view": "View conversations",
+  "messages.send": "Send messages",
+  "campaigns.view": "View campaigns",
+  "campaigns.send": "Send campaigns",
+  "templates.manage": "Manage templates",
+  "blacklist.view": "View blacklist",
+  "blacklist.manage": "Manage blacklist",
+  "reports.view": "View reports",
+  "users.manage": "Manage team",
+  "billing.manage": "Manage billing",
+  "settings.manage": "Manage settings",
+  "reseller.clients.view": "View clients",
+  "reseller.clients.manage": "Manage clients",
+  "reseller.plans.manage": "Manage plans",
+  "reseller.commissions.view": "View commissions",
+  "whitelabel.manage": "White-label settings",
+};
+
+const PERM_GROUPS = [
+  { label: "Contacts",      perms: ["contacts.view","contacts.manage","contacts.delete","contacts.import","contacts.export"] },
+  { label: "Conversations", perms: ["conversations.view","messages.send"] },
+  { label: "Campaigns",     perms: ["campaigns.view","campaigns.send","templates.manage"] },
+  { label: "Blacklist",     perms: ["blacklist.view","blacklist.manage"] },
+  { label: "Reports",       perms: ["reports.view"] },
+  { label: "Settings",      perms: ["users.manage","billing.manage","settings.manage"] },
+  { label: "Reseller",      perms: ["reseller.clients.view","reseller.clients.manage","reseller.plans.manage","reseller.commissions.view","whitelabel.manage"] },
+];
+
+type PermData = { roleDefault: boolean; override: boolean | null; effective: boolean };
+type PermMap  = Record<string, PermData>;
+
+function UserPermissionsModal({ member, onClose }: { member: Member | null; onClose: () => void }) {
+  const queryClient = useQueryClient();
+  const [localOverrides, setLocalOverrides] = useState<Record<string, boolean | null>>({});
+  const [saveError, setSaveError] = useState<string | null>(null);
+  const [saved, setSaved] = useState(false);
+
+  const { data, isLoading, isError } = useQuery<PermMap>({
+    queryKey: ["team-permissions", member?.id],
+    enabled: !!member,
+    queryFn: async () => {
+      const res = await fetch(`/api/team/${member!.id}/permissions`);
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error ?? "Failed to load permissions");
+      return json.data as PermMap;
+    },
+  });
+
+  // Seed local state when data arrives (or when member changes)
+  const [seenPermId, setSeenPermId] = useState<string | null>(null);
+  if (data && member && member.id !== seenPermId) {
+    setSeenPermId(member.id);
+    const initial: Record<string, boolean | null> = {};
+    for (const perm of Object.keys(data)) initial[perm] = data[perm].override;
+    setLocalOverrides(initial);
+    setSaveError(null);
+    setSaved(false);
+  }
+
+  const save = useMutation({
+    mutationFn: async () => {
+      const res = await fetch(`/api/team/${member!.id}/permissions`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ overrides: localOverrides }),
+      });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error ?? "Failed to save");
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["team-permissions", member?.id] });
+      setSaved(true);
+      setSaveError(null);
+    },
+    onError: (err: Error) => setSaveError(err.message),
+  });
+
+  const setOverride = (perm: string, val: boolean | null) => {
+    setSaved(false);
+    setLocalOverrides((prev) => ({ ...prev, [perm]: val }));
+  };
+
+  const close = () => {
+    setSeenPermId(null);
+    setLocalOverrides({});
+    setSaveError(null);
+    setSaved(false);
+    onClose();
+  };
+
+  // Only show groups that have at least one permission in the data (ceiling filter)
+  const visibleGroups = PERM_GROUPS.map((g) => ({
+    ...g,
+    perms: g.perms.filter((p) => data && p in data),
+  })).filter((g) => g.perms.length > 0);
+
+  return (
+    <Modal
+      open={!!member}
+      onClose={close}
+      title={`Permissions — ${member?.name ?? ""}`}
+      description={`Override what ${member?.name ?? "this member"} can do. "Default" follows the ${member ? ROLE_LABEL[member.role] : ""} role.`}
+    >
+      {isLoading && (
+        <div className="py-8 text-center text-sm text-slate-400">Loading permissions…</div>
+      )}
+      {isError && (
+        <div className="rounded-lg bg-rose-50 px-3 py-2 text-sm text-rose-700">Failed to load permissions.</div>
+      )}
+      {data && (
+        <div className="space-y-5 max-h-[60vh] overflow-y-auto pr-1">
+          {/* Legend */}
+          <div className="flex flex-wrap items-center gap-3 text-xs text-slate-500 border-b border-slate-100 pb-3">
+            <span className="flex items-center gap-1"><span className="inline-flex h-5 w-5 items-center justify-center rounded bg-slate-100 text-slate-500"><Minus className="h-3 w-3" /></span> Default (role)</span>
+            <span className="flex items-center gap-1"><span className="inline-flex h-5 w-5 items-center justify-center rounded bg-emerald-100 text-emerald-700"><Check className="h-3 w-3" /></span> Always allow</span>
+            <span className="flex items-center gap-1"><span className="inline-flex h-5 w-5 items-center justify-center rounded bg-rose-100 text-rose-700"><X className="h-3 w-3" /></span> Always deny</span>
+          </div>
+
+          {visibleGroups.map((group) => (
+            <div key={group.label}>
+              <p className="mb-1.5 text-xs font-semibold uppercase tracking-wide text-slate-400">{group.label}</p>
+              <div className="divide-y divide-slate-100 rounded-xl border border-slate-200 overflow-hidden">
+                {group.perms.map((perm) => {
+                  const info = data[perm];
+                  const cur = localOverrides[perm] ?? null;
+                  return (
+                    <div key={perm} className="flex items-center justify-between gap-3 px-3 py-2.5 bg-white hover:bg-slate-50">
+                      <div className="min-w-0">
+                        <p className="text-sm font-medium text-slate-800">{PERM_LABEL[perm] ?? perm}</p>
+                        <p className="text-xs text-slate-400">
+                          Role default: {info.roleDefault ? <span className="text-emerald-600 font-medium">allowed</span> : <span className="text-slate-400">denied</span>}
+                        </p>
+                      </div>
+                      <div className="flex shrink-0 gap-1">
+                        <button
+                          type="button"
+                          onClick={() => setOverride(perm, null)}
+                          className={cn(
+                            "flex h-7 w-7 items-center justify-center rounded transition",
+                            cur === null
+                              ? "bg-slate-200 text-slate-700 ring-1 ring-slate-400"
+                              : "bg-slate-100 text-slate-400 hover:bg-slate-200",
+                          )}
+                          title="Use role default"
+                        >
+                          <Minus className="h-3.5 w-3.5" />
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setOverride(perm, true)}
+                          className={cn(
+                            "flex h-7 w-7 items-center justify-center rounded transition",
+                            cur === true
+                              ? "bg-emerald-500 text-white ring-1 ring-emerald-600"
+                              : "bg-slate-100 text-slate-400 hover:bg-emerald-100 hover:text-emerald-600",
+                          )}
+                          title="Always allow"
+                        >
+                          <Check className="h-3.5 w-3.5" />
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setOverride(perm, false)}
+                          className={cn(
+                            "flex h-7 w-7 items-center justify-center rounded transition",
+                            cur === false
+                              ? "bg-rose-500 text-white ring-1 ring-rose-600"
+                              : "bg-slate-100 text-slate-400 hover:bg-rose-100 hover:text-rose-600",
+                          )}
+                          title="Always deny"
+                        >
+                          <X className="h-3.5 w-3.5" />
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {saveError && (
+        <p className="mt-3 rounded-lg bg-rose-50 px-3 py-2 text-sm text-rose-700">{saveError}</p>
+      )}
+      {saved && (
+        <p className="mt-3 rounded-lg bg-emerald-50 px-3 py-2 text-sm text-emerald-700">Permissions saved.</p>
+      )}
+
+      <div className="mt-4 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end max-sm:[&>button]:h-10 max-sm:[&>button]:w-full">
+        <Button variant="secondary" onClick={close}>Close</Button>
+        {data && (
+          <Button onClick={() => save.mutate()} disabled={save.isPending}>
+            {save.isPending ? "Saving…" : "Save changes"}
+          </Button>
+        )}
+      </div>
+    </Modal>
   );
 }

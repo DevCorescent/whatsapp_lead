@@ -9,6 +9,7 @@
  */
 
 import { useRef, useState } from "react";
+import Link from "next/link";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { FileText, Link2, Trash2, UploadCloud } from "lucide-react";
 import { Button, Field, Modal, inputClass } from "@/components/ui";
@@ -22,6 +23,7 @@ export function UploadModal({ open, onClose }: { open: boolean; onClose: () => v
   const [url, setUrl] = useState("");
   const [urls, setUrls] = useState<string[]>([]);
   const [error, setError] = useState<string | null>(null);
+  const [isPlanError, setIsPlanError] = useState(false);
 
   const close = () => {
     setFiles([]);
@@ -29,6 +31,7 @@ export function UploadModal({ open, onClose }: { open: boolean; onClose: () => v
     setUrls([]);
     setDragging(false);
     setError(null);
+    setIsPlanError(false);
     onClose();
   };
 
@@ -42,10 +45,16 @@ export function UploadModal({ open, onClose }: { open: boolean; onClose: () => v
           : { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) },
       );
       const json = await res.json();
-      if (!res.ok) throw new Error(json.error ?? "Upload failed");
+      if (!res.ok) {
+        const err = Object.assign(new Error(json.error ?? "Upload failed"), { code: json.code as string | undefined });
+        throw err;
+      }
       return json;
     },
-    onError: (err: Error) => setError(err.message),
+    onError: (err: Error & { code?: string }) => {
+      setError(err.message);
+      setIsPlanError(err.code === "PLAN_FEATURE" || err.code === "PLAN_LIMIT");
+    },
   });
 
   const addFiles = (list: FileList | null) => {
@@ -200,7 +209,16 @@ export function UploadModal({ open, onClose }: { open: boolean; onClose: () => v
           </div>
         </Field>
 
-        {error && <p className="rounded-lg bg-rose-50 px-3 py-2 text-xs text-rose-700">{error}</p>}
+        {error && (
+          <p className="rounded-lg bg-rose-50 px-3 py-2 text-xs text-rose-700">
+            {error}
+            {isPlanError && (
+              <Link href="/billing/plans" className="ml-1 font-semibold underline underline-offset-2">
+                View plans →
+              </Link>
+            )}
+          </p>
+        )}
 
         <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end max-sm:[&>button]:h-10 max-sm:[&>button]:w-full pt-2">
           <Button type="button" variant="secondary" onClick={close}>

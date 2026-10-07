@@ -1116,7 +1116,12 @@ function CreateCampaignModal({
         {error && (
           <p className="flex items-center gap-1.5 rounded-lg bg-rose-50 px-3 py-2 text-xs text-rose-700">
             <AlertCircle className="h-3.5 w-3.5 shrink-0" />
-            {error}
+            <span>
+              {error}
+              {/upgrade/i.test(error) && (
+                <> <Link href="/billing/plans" className="font-medium underline underline-offset-2">View plans →</Link></>
+              )}
+            </span>
           </p>
         )}
 

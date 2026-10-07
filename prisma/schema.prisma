@@ -433,6 +433,7 @@ model User {
   auditLogs       AuditLog[]
   resetTokens     PasswordResetToken[]
   blacklistAdded  BlacklistEntry[]     @relation("BlacklistCreatedBy")
+  userPermissions UserPermission[]     @relation("UserPermissions")
 
   @@unique([email, tenantId])
   @@map("users")
@@ -961,6 +962,24 @@ model RolePermission {
 
   @@unique([accountType, role, permission])
   @@map("role_permissions")
+}
+
+/// Per-user permission overrides — layer 4 on top of account ceiling + role defaults + role overrides.
+/// A row here grants or denies that specific permission for that user, regardless of their role.
+/// Still bounded by the account ceiling (a reseller user cannot hold messages.send, for example).
+model UserPermission {
+  id         String   @id @default(cuid())
+  userId     String
+  permission String
+  allowed    Boolean
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  user User @relation("UserPermissions", fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, permission])
+  @@index([userId])
+  @@map("user_permissions")
 }
 
 // ─── WALLET ───────────────────────────────────────────────────────────────────

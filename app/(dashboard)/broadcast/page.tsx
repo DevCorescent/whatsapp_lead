@@ -827,8 +827,8 @@ export default function BroadcastPage() {
               <AlertCircle className="mt-px h-3.5 w-3.5 shrink-0" />
               <span>
                 {error}
-                {/balance/i.test(error) && (
-                  <> <Link href="/wallet" className="font-medium underline">Top up →</Link></>
+                {/upgrade/i.test(error) && (
+                  <> <Link href="/billing/plans" className="font-medium underline underline-offset-2">View plans →</Link></>
                 )}
               </span>
             </p>

@@ -88,10 +88,14 @@ export default function TemplatesPage() {
   const { data, isLoading, isError } = useTemplates();
   const [modal, setModal] = useState<{ open: boolean; editing: TemplateDTO | null }>({ open: false, editing: null });
   const [rejection, setRejection] = useState<TemplateDTO | null>(null);
-  const [syncError, setSyncError] = useState<string | null>(null);
-  const [actionError, setActionError] = useState<string | null>(null);
   const [confirmDeleteTemplate, setConfirmDeleteTemplate] = useState<TemplateDTO | null>(null);
-  const [deleteError, setDeleteError] = useState<string | null>(null);
+  type Toast = { id: number; message: string; kind: "success" | "error" | "info" };
+  const [toasts, setToasts] = useState<Toast[]>([]);
+  const showToast = (message: string, kind: Toast["kind"] = "info") => {
+    const id = Date.now() + Math.random();
+    setToasts((prev) => [...prev, { id, message, kind }]);
+    setTimeout(() => setToasts((prev) => prev.filter((t) => t.id !== id)), 4500);
+  };
 
   const del = useDeleteTemplate();
   const duplicate = useDuplicateTemplate();
@@ -111,40 +115,44 @@ export default function TemplatesPage() {
   );
 
   const handleSyncAll = async () => {
-    setSyncError(null);
-    try { await syncAll.mutateAsync(); }
-    catch (e) { setSyncError((e as Error).message); }
+    try {
+      await syncAll.mutateAsync();
+      showToast("Template statuses synced.", "success");
+    }
+    catch (e) { showToast((e as Error).message, "error"); }
   };
 
   const handleImport = async () => {
-    setSyncError(null);
     try {
       const result = await importFromMeta.mutateAsync();
       if (result.created === 0 && result.updated === 0) {
-        setSyncError("No new templates found on Meta.");
+        showToast("No new templates found on Meta.", "info");
+      } else {
+        showToast(`Imported ${result.created} new, updated ${result.updated} template(s).`, "success");
       }
     } catch (e) {
-      setSyncError((e as Error).message);
+      showToast((e as Error).message, "error");
     }
   };
 
-  const handleAction = async (p: Promise<unknown>) => {
-    setActionError(null);
-    try { await p; }
+  const handleAction = async (p: Promise<unknown>, successMsg?: string) => {
+    try {
+      await p;
+      if (successMsg) showToast(successMsg, "success");
+    }
     catch (e) {
-      const err = e as Error & { debug?: Record<string, unknown> | null };
-      setActionError(err.message);
+      showToast((e as Error).message, "error");
     }
   };
 
   const handleDeleteConfirmed = async () => {
     if (!confirmDeleteTemplate) return;
-    setDeleteError(null);
     try {
       await del.mutateAsync(confirmDeleteTemplate.id);
       setConfirmDeleteTemplate(null);
+      showToast("Template deleted.", "success");
     } catch (e) {
-      setDeleteError((e as Error).message);
+      showToast((e as Error).message, "error");
     }
   };
 
@@ -175,7 +183,7 @@ export default function TemplatesPage() {
           title="Submit to Meta"
           aria-label="Submit to Meta"
           disabled={submit.isPending && submit.variables === t.id}
-          onClick={() => handleAction(submit.mutateAsync(t.id))}
+          onClick={() => handleAction(submit.mutateAsync(t.id), "Submitted to Meta for review.")}
         >
           <Send className="h-4 w-4" />
         </Button>
@@ -187,7 +195,7 @@ export default function TemplatesPage() {
           title="Refresh status"
           aria-label="Refresh status"
           disabled={refresh.isPending && refresh.variables === t.id}
-          onClick={() => handleAction(refresh.mutateAsync(t.id))}
+          onClick={() => handleAction(refresh.mutateAsync(t.id), "Status refreshed.")}
         >
           <RotateCw className="h-4 w-4" />
         </Button>
@@ -209,7 +217,7 @@ export default function TemplatesPage() {
         title="Duplicate"
         aria-label="Duplicate template"
         disabled={duplicate.isPending && duplicate.variables === t.id}
-        onClick={() => handleAction(duplicate.mutateAsync(t.id))}
+        onClick={() => handleAction(duplicate.mutateAsync(t.id), "Template duplicated.")}
       >
         <Copy className="h-4 w-4" />
       </Button>
@@ -220,7 +228,7 @@ export default function TemplatesPage() {
         aria-label="Delete template"
         className="text-rose-600 hover:bg-rose-50"
         disabled={!DELETABLE.has(t.status) || (del.isPending && confirmDeleteTemplate?.id === t.id)}
-        onClick={() => { setDeleteError(null); setConfirmDeleteTemplate(t); }}
+        onClick={() => setConfirmDeleteTemplate(t)}
       >
         <Trash2 className="h-4 w-4" />
       </Button>
@@ -254,24 +262,6 @@ export default function TemplatesPage() {
           </div>
         }
       />
-
-      {syncError && (
-        <div className="mb-3 rounded-lg bg-rose-50 px-3 py-2 text-sm text-rose-700">{syncError}</div>
-      )}
-      {actionError && (
-        <div className="mb-3 flex items-start gap-3 rounded-lg border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-800">
-          <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-rose-500" aria-hidden />
-          <p className="flex-1">{actionError}</p>
-          <button
-            type="button"
-            onClick={() => setActionError(null)}
-            className="shrink-0 text-rose-400 hover:text-rose-600 text-xs"
-            aria-label="Dismiss"
-          >
-            ✕
-          </button>
-        </div>
-      )}
 
       <div className="scrollbar-slim mb-4 flex gap-1 overflow-x-auto border-b border-slate-200">
         {TABS.map((t) => (
@@ -399,6 +389,7 @@ export default function TemplatesPage() {
         open={modal.open}
         editing={modal.editing}
         onClose={() => setModal({ open: false, editing: null })}
+        showToast={showToast}
       />
 
       <Modal
@@ -419,15 +410,12 @@ export default function TemplatesPage() {
 
       <Modal
         open={!!confirmDeleteTemplate}
-        onClose={() => { if (!del.isPending) { setConfirmDeleteTemplate(null); setDeleteError(null); } }}
+        onClose={() => { if (!del.isPending) setConfirmDeleteTemplate(null); }}
         title="Delete template?"
         description={confirmDeleteTemplate ? `"${confirmDeleteTemplate.name}" will be permanently removed and cannot be recovered.` : ""}
       >
-        {deleteError && (
-          <p className="mb-3 rounded-lg bg-rose-50 px-3 py-2 text-sm text-rose-700">{deleteError}</p>
-        )}
         <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end [&>button]:h-10 [&>button]:w-full sm:[&>button]:h-9 sm:[&>button]:w-auto">
-          <Button variant="secondary" onClick={() => { setConfirmDeleteTemplate(null); setDeleteError(null); }} disabled={del.isPending}>
+          <Button variant="secondary" onClick={() => setConfirmDeleteTemplate(null)} disabled={del.isPending}>
             Cancel
           </Button>
           <Button variant="danger" onClick={handleDeleteConfirmed} disabled={del.isPending}>
@@ -435,6 +423,26 @@ export default function TemplatesPage() {
           </Button>
         </div>
       </Modal>
+
+      {/* Toast notifications */}
+      <div className="pointer-events-none fixed right-4 top-4 z-[100] flex flex-col gap-2">
+        {toasts.map((t) => (
+          <div
+            key={t.id}
+            className={cn(
+              "pointer-events-auto flex items-center gap-2.5 rounded-xl px-4 py-3 text-sm font-medium shadow-lg",
+              t.kind === "success" && "bg-emerald-600 text-white",
+              t.kind === "error" && "bg-rose-600 text-white",
+              t.kind === "info" && "bg-slate-800 text-white",
+            )}
+          >
+            {t.kind === "success" && <span className="text-base">✓</span>}
+            {t.kind === "error" && <AlertCircle className="h-4 w-4 shrink-0" />}
+            {t.kind === "info" && <Info className="h-4 w-4 shrink-0" />}
+            <span>{t.message}</span>
+          </div>
+        ))}
+      </div>
     </div>
   );
 }
@@ -514,14 +522,15 @@ function TemplateModal({
   open,
   editing,
   onClose,
+  showToast,
 }: {
   open: boolean;
   editing: TemplateDTO | null;
   onClose: () => void;
+  showToast: (msg: string, kind: "success" | "error" | "info") => void;
 }) {
   const create = useCreateTemplate();
   const update = useUpdateTemplate();
-  const [error, setError] = useState<string | null>(null);
 
   const [name, setName] = useState(editing?.name ?? "");
   const [category, setCategory] = useState<(typeof CATEGORIES)[number]>(
@@ -550,7 +559,7 @@ function TemplateModal({
   const [buttons, setButtons] = useState<TemplateButton[]>(editing?.buttons ?? []);
 
   // User-selected variable format. Seeded from the editing template's body on open.
-  const [paramFormat, setParamFormat] = useState<"POSITIONAL" | "NAMED">(() => {
+  const [paramFormat] = useState<"POSITIONAL" | "NAMED">(() => {
     const b = editing?.body ?? "";
     return /\{\{[a-z_][a-z0-9_]*\}\}/.test(b) && !/\{\{\d+\}\}/.test(b) ? "NAMED" : "POSITIONAL";
   });
@@ -711,18 +720,17 @@ function TemplateModal({
       setHeaderUploadState("done");
     } catch (err) {
       setHeaderUploadState("error");
-      setError(err instanceof Error ? err.message : "Upload failed");
+      showToast(err instanceof Error ? err.message : "Upload failed", "error");
     }
   }
 
   const submit = () => {
-    if (!name.trim()) { setError("Template name is required."); return; }
-    if (!body.trim()) { setError("Message body is required."); return; }
+    if (!name.trim()) { showToast("Template name is required.", "error"); return; }
+    if (!body.trim()) { showToast("Message body is required.", "error"); return; }
     const firstDraftError =
       bodyError ?? headerError ?? languageError ?? mediaHeaderError ??
       varExampleErrors.find(Boolean) ?? buttonErrors.find(Boolean) ?? null;
-    if (firstDraftError) { setError(firstDraftError); return; }
-    setError(null);
+    if (firstDraftError) { showToast(firstDraftError, "error"); return; }
     const varList = varExamples.map((v) => v.trim()).filter(Boolean);
     const payload: TemplateInput = {
       name: name.trim(),
@@ -740,7 +748,12 @@ function TemplateModal({
     const req = editing
       ? update.mutateAsync({ id: editing.id, ...payload })
       : create.mutateAsync(payload);
-    req.then(onClose).catch((e: Error) => setError(e.message));
+    req
+      .then(() => {
+        showToast(editing ? "Template saved." : "Draft created.", "success");
+        onClose();
+      })
+      .catch((e: Error) => showToast(e.message, "error"));
   };
 
   const updateButton = (i: number, patch: Partial<TemplateButton>) =>
@@ -977,46 +990,6 @@ function TemplateModal({
           )}
         </div>
 
-        {/* Variable type — user picks the format; examples section updates accordingly */}
-        <div className="rounded-lg border border-slate-200 bg-slate-50 p-3 text-xs text-slate-600 space-y-2">
-          <p className="text-xs font-medium text-slate-700">Variable type</p>
-          <div className="flex flex-col gap-1.5 sm:flex-row sm:gap-4">
-            <label className="flex cursor-pointer items-center gap-2">
-              <input
-                type="radio"
-                name="tpl-param-fmt"
-                checked={paramFormat === "POSITIONAL"}
-                onChange={() => setParamFormat("POSITIONAL")}
-                className="accent-emerald-600"
-              />
-              <span>
-                <code className="rounded bg-slate-100 px-1">{"{{1}}"}</code>,{" "}
-                <code className="rounded bg-slate-100 px-1">{"{{2}}"}</code>… —{" "}
-                <span className="font-medium text-slate-800">Number</span>
-              </span>
-            </label>
-            <label className="flex cursor-pointer items-center gap-2">
-              <input
-                type="radio"
-                name="tpl-param-fmt"
-                checked={paramFormat === "NAMED"}
-                onChange={() => setParamFormat("NAMED")}
-                className="accent-emerald-600"
-              />
-              <span>
-                <code className="rounded bg-slate-100 px-1">{"{{first_name}}"}</code>,{" "}
-                <code className="rounded bg-slate-100 px-1">{"{{order_id}}"}</code>… —{" "}
-                <span className="font-medium text-slate-800">Name</span>
-              </span>
-            </label>
-          </div>
-          <p className="text-slate-400">
-            {paramFormat === "NAMED"
-              ? "Use lowercase letters and underscores: {{first_name}}, {{order_id}}. Each unique name is one variable."
-              : "Use numbers in order from 1: {{1}}, {{2}}, {{3}}…"}
-          </p>
-        </div>
-
         <Field label="Body" htmlFor="tpl-body" required>
           <textarea
             id="tpl-body"
@@ -1029,11 +1002,7 @@ function TemplateModal({
               : "Hi {{1}}, your order {{2}} has shipped."}
           />
           <div className="mt-1 flex items-start justify-between gap-2">
-            <p className="text-xs text-slate-500">
-              {isNamedParams
-                ? "Named variables: lowercase letters and underscores only, e.g. {{first_name}}, {{order_id}}."
-                : 'Numbered variables {{1}}, {{2}} in order. Provide an example for each below.'}
-            </p>
+            <p className="text-xs text-slate-500">Use {"{{1}}"}, {"{{2}}"}… for personalisation.</p>
             <span className={cn("shrink-0 text-[11px] tabular-nums", body.length > 1024 ? "text-rose-600 font-medium" : "text-slate-400")}>
               {body.length}/1024
             </span>
@@ -1048,10 +1017,7 @@ function TemplateModal({
 
         {bodyVarCount > 0 && (
           <div>
-            <p className="mb-2 text-sm font-medium text-slate-700">
-              Variable examples
-              <span className="ml-1.5 text-xs font-normal text-slate-400">(required for Meta review)</span>
-            </p>
+            <p className="mb-2 text-sm font-medium text-slate-700">Variable examples</p>
             <div className="space-y-2">
               {Array.from({ length: bodyVarCount }, (_, i) => {
                 const exVal = varExamples[i] ?? "";
@@ -1090,9 +1056,7 @@ function TemplateModal({
                 );
               })}
             </div>
-            <p className="mt-1.5 text-[11px] text-slate-400">
-              These examples are shown to Meta reviewers only — not sent to customers.
-            </p>
+            <p className="mt-1.5 text-[11px] text-slate-400">Shown to Meta reviewers only, not sent to customers.</p>
           </div>
         )}
 
@@ -1122,12 +1086,6 @@ function TemplateModal({
             <p className="mb-2 flex items-start gap-1.5 rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-700">
               <AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
               Quick reply buttons cannot be mixed with call-to-action buttons (URL, phone, etc.).
-            </p>
-          ) : buttons.length > 0 ? (
-            <p className="mb-2 text-[11px] text-slate-400">
-              {buttons.some((b) => b.type === "QUICK_REPLY")
-                ? `Quick reply — max 10. Cannot mix with URL / phone buttons.`
-                : `CTA limits: URL ×2, Phone ×1, WhatsApp call ×1, Offer code ×1. Cannot mix with quick reply.`}
             </p>
           ) : null}
 
@@ -1291,8 +1249,6 @@ function TemplateModal({
             );
           })()}
         </div>
-
-        {error && <p className="rounded-lg bg-rose-50 px-3 py-2 text-xs text-rose-700">{error}</p>}
 
         <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end [&>button]:h-10 [&>button]:w-full sm:[&>button]:h-9 sm:[&>button]:w-auto pt-2">
           <Button type="button" variant="secondary" onClick={onClose}>

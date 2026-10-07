@@ -56,6 +56,7 @@ export type AccountKind = "PLATFORM" | "RESELLER" | "CLIENT";
 
 /** Who is asking. `accountType` missing means a client account (the default). */
 export interface Principal {
+  id?: string;
   role: string;
   accountType?: string | null;
   resellerType?: string | null;
@@ -137,9 +138,27 @@ async function overrides(): Promise<Map<string, boolean>> {
   return map;
 }
 
-/** Drop the cached overrides — call after editing RolePermission rows. */
-export function invalidatePermissionCache() {
+// ─── User-level overrides (UserPermission table) ──────────────────────────────
+
+const userPermCache = new Map<string, { at: number; map: Map<string, boolean> }>();
+
+async function userOverrides(userId: string): Promise<Map<string, boolean>> {
+  const cached = userPermCache.get(userId);
+  if (cached && Date.now() - cached.at < OVERRIDE_TTL_MS) return cached.map;
+  const rows = await prisma.userPermission.findMany({
+    where: { userId },
+    select: { permission: true, allowed: true },
+  });
+  const map = new Map(rows.map((r) => [r.permission, r.allowed]));
+  userPermCache.set(userId, { at: Date.now(), map });
+  return map;
+}
+
+/** Drop the cached overrides — call after editing RolePermission or UserPermission rows. */
+export function invalidatePermissionCache(userId?: string) {
   overrideCache = null;
+  if (userId) userPermCache.delete(userId);
+  else userPermCache.clear();
 }
 
 /**
@@ -165,6 +184,17 @@ export function resolvePermission(
 export async function can(principal: Principal | null | undefined, permission: Permission): Promise<boolean> {
   if (!principal?.role) return false;
   if (principal.role === "SUPER_ADMIN") return true;
+
+  // User-specific override (4th layer) — checked before the role result
+  if (principal.id) {
+    const uMap = await userOverrides(principal.id);
+    const uOverride = uMap.get(permission);
+    if (uOverride !== undefined) {
+      // Still bounded by the account ceiling — a user can never exceed what the account allows
+      return accountCeiling(principal.accountType, principal.resellerType).includes(permission) && uOverride;
+    }
+  }
+
   return resolvePermission(principal, permission, await overrides());
 }
 
@@ -183,6 +213,13 @@ export async function requirePermission(
 /** Every permission the principal holds — for the client, to hide what it can't use. */
 export async function permissionsFor(principal: Principal | null | undefined): Promise<Permission[]> {
   if (!principal?.role) return [];
-  const map = principal.role === "SUPER_ADMIN" ? new Map<string, boolean>() : await overrides();
-  return PERMISSIONS.filter((p) => resolvePermission(principal, p, map));
+  const roleMap = principal.role === "SUPER_ADMIN" ? new Map<string, boolean>() : await overrides();
+  const uMap = principal.id ? await userOverrides(principal.id) : new Map<string, boolean>();
+  const ceiling = accountCeiling(principal.accountType, principal.resellerType);
+  return PERMISSIONS.filter((p) => {
+    if (!ceiling.includes(p)) return false;
+    const uOverride = uMap.get(p);
+    if (uOverride !== undefined) return uOverride;
+    return resolvePermission(principal, p, roleMap);
+  });
 }

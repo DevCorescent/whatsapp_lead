@@ -27,17 +27,16 @@ export async function DELETE(req: NextRequest, { params }: Params) {
   const isSuperAdmin = session.user.role === "SUPER_ADMIN";
 
   const entry = await prisma.blacklistEntry.findFirst({
-    // Tenant-scoped in the query: an id from another account is indistinguishable from a
-    // missing one. Super admins can also reach platform-wide (tenantId null) entries.
-    where: {
-      id,
-      OR: [{ tenantId: session.user.tenantId }, ...(isSuperAdmin ? [{ tenantId: null }] : [])],
-    },
+    // Super admins can reach any entry (any tenant or platform-wide).
+    // Other users are restricted to their own tenant's entries.
+    where: isSuperAdmin
+      ? { id }
+      : { id, tenantId: session.user.tenantId },
     select: { id: true, phone: true, tenantId: true, reason: true },
   });
   if (!entry) return NextResponse.json({ success: false, error: "Entry not found" }, { status: 404 });
 
-  if (entry.tenantId !== null) {
+  if (entry.tenantId !== null && !isSuperAdmin) {
     const denied = await requirePermission(session.user, "blacklist.manage");
     if (denied) return denied;
   }

@@ -15,7 +15,7 @@ import { Button, Card, EmptyState, Modal, SkeletonRows, inputClass } from "@/com
 import { splitNumberInput } from "@/lib/broadcast";
 import { cn, formatDate } from "@/lib/utils";
 
-type Scope = "account" | "platform";
+type Scope = "account" | "platform" | "all";
 
 interface Entry {
   id: string;
@@ -24,6 +24,7 @@ interface Entry {
   createdAt: string;
   createdBy: { id: string; name: string } | null;
   contactName: string | null;
+  tenantName?: string | null;
 }
 
 interface ListResponse {
@@ -65,7 +66,7 @@ export function BlacklistManager({ scope, initialSearch = "" }: { scope: Scope; 
   const [removeNote, setRemoveNote] = useState("");
   const [error, setError] = useState<string | null>(null);
 
-  const scopeParam = scope === "platform" ? "&scope=platform" : "";
+  const scopeParam = scope === "platform" ? "&scope=platform" : scope === "all" ? "&scope=all" : "";
 
   const list = useQuery<ListResponse>({
     queryKey: ["blacklist", scope, search.trim(), page],
@@ -128,12 +129,12 @@ export function BlacklistManager({ scope, initialSearch = "" }: { scope: Scope; 
   const pagination = list.data?.pagination;
 
   return (
-    <div className="grid items-start gap-5 lg:grid-cols-[minmax(0,1fr)_340px]">
+    <div className={cn("grid items-start gap-5", scope !== "all" && "lg:grid-cols-[minmax(0,1fr)_340px]")}>
       {/* ── List / history ── */}
       <Card className="min-w-0 overflow-hidden">
         <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 p-4">
           <div className="flex max-w-full overflow-x-auto rounded-lg bg-slate-100 p-0.5 text-sm">
-            {(["list", "history"] as const).map((v) => (
+            {(scope === "all" ? (["list"] as const) : (["list", "history"] as const)).map((v) => (
               <button
                 key={v}
                 type="button"
@@ -183,7 +184,9 @@ export function BlacklistManager({ scope, initialSearch = "" }: { scope: Scope; 
                   ? "Nothing on the blacklist matches that search."
                   : scope === "platform"
                     ? "Numbers added here can't be messaged by any account on the platform."
-                    : "Numbers added here never receive a campaign, broadcast or reply from this account."
+                    : scope === "all"
+                      ? "No account has blocked any numbers yet."
+                      : "Numbers added here never receive a campaign, broadcast or reply from this account."
               }
             />
           ) : (
@@ -195,6 +198,9 @@ export function BlacklistManager({ scope, initialSearch = "" }: { scope: Scope; 
                     <div className="min-w-0 flex-1">
                       <p className="font-mono text-[13px] text-slate-900">{formatPhone(e.phone)}</p>
                       {e.contactName && <p className="text-xs text-slate-500">{e.contactName}</p>}
+                      {scope === "all" && e.tenantName && (
+                        <p className="mt-0.5 text-xs font-medium text-slate-700">{e.tenantName}</p>
+                      )}
                       {e.reason && <p className="mt-1 line-clamp-2 text-sm text-slate-600">{e.reason}</p>}
                       <p className="mt-1 text-xs text-slate-400">
                         {formatDate(e.createdAt)}
@@ -215,6 +221,7 @@ export function BlacklistManager({ scope, initialSearch = "" }: { scope: Scope; 
                   <thead className="border-b border-slate-200 bg-slate-50 text-xs uppercase tracking-wide text-slate-500">
                     <tr>
                       <th className="px-4 py-2.5 font-medium">Number</th>
+                      {scope === "all" && <th className="px-4 py-2.5 font-medium">Account</th>}
                       <th className="px-4 py-2.5 font-medium">Reason</th>
                       <th className="px-4 py-2.5 font-medium">Added</th>
                       {canManage && <th className="px-4 py-2.5" />}
@@ -227,6 +234,11 @@ export function BlacklistManager({ scope, initialSearch = "" }: { scope: Scope; 
                           <p className="font-mono text-[13px] text-slate-900">{formatPhone(e.phone)}</p>
                           {e.contactName && <p className="text-xs text-slate-500">{e.contactName}</p>}
                         </td>
+                        {scope === "all" && (
+                          <td className="px-4 py-2.5 text-xs text-slate-600">
+                            {e.tenantName ?? <span className="text-slate-400">—</span>}
+                          </td>
+                        )}
                         <td className="max-w-xs px-4 py-2.5 text-slate-600">
                           <span className="line-clamp-2">{e.reason ?? <span className="text-slate-400">—</span>}</span>
                         </td>
@@ -296,8 +308,8 @@ export function BlacklistManager({ scope, initialSearch = "" }: { scope: Scope; 
         )}
       </Card>
 
-      {/* ── Add ── */}
-      <div className="space-y-4 lg:sticky lg:top-0">
+      {/* ── Add (hidden for all-accounts view) ── */}
+      {scope !== "all" && <div className="space-y-4 lg:sticky lg:top-0">
         {canManage ? (
           <Card className="p-4 sm:p-5">
             <h2 className="mb-1 text-sm font-semibold text-slate-900">Block numbers</h2>
@@ -349,7 +361,7 @@ export function BlacklistManager({ scope, initialSearch = "" }: { scope: Scope; 
           {scope === "account" && " Numbers blocked by the platform administrator are also refused."}
           {" "}Every block and unblock is kept in History.
         </Card>
-      </div>
+      </div>}
 
       <Modal
         open={!!removing}

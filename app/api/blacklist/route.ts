@@ -35,9 +35,12 @@ export async function GET(req: NextRequest) {
   if (!session?.user) return NextResponse.json({ success: false, error: "Unauthorized" }, { status: 401 });
 
   const { searchParams } = new URL(req.url);
-  const platform = searchParams.get("scope") === "platform";
-  if (platform && session.user.role !== "SUPER_ADMIN") return forbidden();
-  if (!platform) {
+  const scopeParam = searchParams.get("scope");
+  const platform = scopeParam === "platform";
+  const allAccounts = scopeParam === "all";
+
+  if ((platform || allAccounts) && session.user.role !== "SUPER_ADMIN") return forbidden();
+  if (!platform && !allAccounts) {
     const denied = await requirePermission(session.user, "blacklist.view");
     if (denied) return denied;
   }
@@ -46,6 +49,56 @@ export async function GET(req: NextRequest) {
   const limit = Math.min(100, Math.max(1, parseInt(searchParams.get("limit") ?? "50") || 50));
   const search = (searchParams.get("search") ?? "").trim();
   const digits = search.replace(/\D/g, "");
+
+  // ── All-accounts view: every tenant's entries in one list ─────────────────
+  if (allAccounts) {
+    const where = {
+      tenantId: { not: null as string | null },
+      ...(search && {
+        OR: [
+          ...(digits ? [{ phone: { contains: digits } }] : []),
+          { reason: { contains: search, mode: "insensitive" as const } },
+          { tenant: { name: { contains: search, mode: "insensitive" as const } } },
+        ],
+      }),
+    };
+    try {
+      const [total, entries] = await Promise.all([
+        prisma.blacklistEntry.count({ where }),
+        prisma.blacklistEntry.findMany({
+          where,
+          select: {
+            id: true,
+            phone: true,
+            reason: true,
+            createdAt: true,
+            createdBy: { select: { id: true, name: true } },
+            tenant: { select: { id: true, name: true } },
+          },
+          orderBy: { createdAt: "desc" },
+          skip: (page - 1) * limit,
+          take: limit,
+        }),
+      ]);
+      return NextResponse.json({
+        success: true,
+        data: entries.map((e) => ({
+          id: e.id,
+          phone: e.phone,
+          reason: e.reason,
+          createdAt: e.createdAt,
+          createdBy: e.createdBy,
+          contactName: null,
+          tenantName: e.tenant?.name ?? null,
+        })),
+        pagination: { page, limit, total, totalPages: Math.ceil(total / limit) },
+        canManage: true,
+      });
+    } catch (error) {
+      console.error("[BLACKLIST GET ALL]", error);
+      return NextResponse.json({ success: false, error: "Failed to load the blacklist" }, { status: 500 });
+    }
+  }
 
   const where = {
     tenantId: platform ? null : session.user.tenantId,

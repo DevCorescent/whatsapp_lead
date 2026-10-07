@@ -27,8 +27,8 @@ import {
   CreditCard,
   IndianRupee,
   Palette,
-  Wallet,
   Filter,
+  ChevronRight,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Avatar } from "@/components/ui";
@@ -62,8 +62,8 @@ const NAV = [
       { href: "/tickets", label: "Tickets", icon: Ticket, roles: null },
       { href: "/analytics", label: "Analytics", icon: BarChart2, roles: ["SUPER_ADMIN", "TENANT_OWNER", "ADMIN", "MANAGER", "MARKETING_USER"] },
       { href: "/blacklist", label: "Blacklist", icon: Ban, roles: ["SUPER_ADMIN", "TENANT_OWNER", "ADMIN", "MANAGER", "MARKETING_USER"] },
-      { href: "/wallet", label: "Wallet", icon: Wallet, roles: ["SUPER_ADMIN", "TENANT_OWNER", "ADMIN", "MANAGER", "MARKETING_USER"] },
       { href: "/team", label: "Team", icon: UserCog, roles: ["SUPER_ADMIN", "TENANT_OWNER", "ADMIN", "MANAGER"] },
+      { href: "/billing", label: "Billing & Plan", icon: CreditCard, roles: ["SUPER_ADMIN", "TENANT_OWNER", "ADMIN"] },
       { href: "/settings", label: "Settings", icon: Settings, roles: ["SUPER_ADMIN", "TENANT_OWNER", "ADMIN", "MANAGER"] },
     ],
   },
@@ -81,7 +81,7 @@ const RESELLER_NAV = [
       { href: "/reseller/clients", label: "Clients", icon: Building2, roles: null },
       { href: "/reseller/plans", label: "Plans", icon: CreditCard, roles: ["SUPER_ADMIN", "TENANT_OWNER", "ADMIN"] },
       { href: "/reseller/commissions", label: "Commissions", icon: IndianRupee, roles: ["SUPER_ADMIN", "TENANT_OWNER", "ADMIN", "MANAGER"] },
-      { href: "/wallet", label: "Wallet", icon: Wallet, roles: ["SUPER_ADMIN", "TENANT_OWNER", "ADMIN"] },
+      { href: "/billing", label: "Billing & Plan", icon: CreditCard, roles: ["SUPER_ADMIN", "TENANT_OWNER", "ADMIN"] },
       { href: "/reseller/branding", label: "Branding", icon: Palette, roles: ["SUPER_ADMIN", "TENANT_OWNER", "ADMIN"], whiteLabelOnly: true },
     ],
   },
@@ -204,9 +204,21 @@ export function Sidebar({ user, brand }: { user: SidebarUser; brand: SidebarBran
         })}
       </nav>
 
-      {/* Two clean lines: who you are, then which plan. The old single-row layout
-          truncated the role to "tenant own…" and jammed the badge against it. */}
       <div className="shrink-0 border-t border-slate-100 p-3">
+        {/* Current plan chip — only for client accounts that have a plan loaded */}
+        {!isReseller && user.plan && (
+          <Link
+            href="/billing"
+            className="mb-2.5 flex items-center justify-between rounded-lg bg-slate-50 px-3 py-2 text-xs ring-1 ring-slate-200 transition hover:bg-emerald-50 hover:ring-emerald-200"
+          >
+            <div className="min-w-0">
+              <p className="text-[10px] font-semibold uppercase tracking-wide text-slate-400">Current plan</p>
+              <p className="truncate font-semibold text-slate-800">{user.plan}</p>
+            </div>
+            <ChevronRight className="h-3.5 w-3.5 shrink-0 text-slate-400" />
+          </Link>
+        )}
+
         <div className="flex items-center gap-2.5">
           <Avatar name={user.name} src={user.avatar} size="sm" />
           <div className="min-w-0 flex-1">
@@ -214,8 +226,6 @@ export function Sidebar({ user, brand }: { user: SidebarUser; brand: SidebarBran
             <p className="truncate text-xs text-slate-500">{prettyRole(user.role)}</p>
           </div>
           <button
-            // Stay on the current host: a callbackUrl is resolved against AUTH_URL, which
-            // would drop a white-label client on the platform's own login page.
             onClick={() => signOut({ redirect: false }).then(() => { window.location.href = "/login"; })}
             className="rounded-lg p-1.5 text-slate-400 transition hover:bg-rose-50 hover:text-rose-600"
             aria-label="Sign out"
