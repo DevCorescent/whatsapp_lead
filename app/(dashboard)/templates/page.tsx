@@ -13,6 +13,7 @@ import {
   AlertCircle,
   RotateCw,
   Loader2,
+  Info,
 } from "lucide-react";
 import {
   Badge,
@@ -682,6 +683,11 @@ function TemplateModal({
   );
 
   async function handleHeaderFileUpload(file: File) {
+    const MAX_BYTES = 4 * 1024 * 1024;
+    if (file.size > MAX_BYTES) {
+      showToast(`File is too large (${(file.size / 1024 / 1024).toFixed(1)} MB). Maximum allowed size is 4 MB.`, "error");
+      return;
+    }
     setHeaderUploadState("uploading");
     setHeaderUploadFileName(file.name);
     setHeaderContent("");
@@ -689,13 +695,16 @@ function TemplateModal({
     form.append("file", file);
     try {
       const res = await fetch("/api/templates/upload-media", { method: "POST", body: form });
-      const json = await res.json() as { success: boolean; data?: { handle: string }; error?: string };
-      if (!res.ok || !json.success) throw new Error(json.error ?? "Upload failed");
+      const json = await res.json().catch(() => null) as { success: boolean; data?: { handle: string }; error?: string } | null;
+      if (!res.ok || !json?.success) {
+        const msg = json?.error ?? (res.status === 413 ? "File is too large for the server. Maximum is 4 MB." : "Upload failed — please try again.");
+        throw new Error(msg);
+      }
       setHeaderContent(json.data!.handle);
       setHeaderUploadState("done");
     } catch (err) {
       setHeaderUploadState("error");
-      showToast(err instanceof Error ? err.message : "Upload failed", "error");
+      showToast(err instanceof Error ? err.message : "Upload failed — please try again.", "error");
     }
   }
 
