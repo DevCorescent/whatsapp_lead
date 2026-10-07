@@ -629,16 +629,29 @@ function TemplateModal({
   });
 
   const buttonErrors: (string | null)[] = buttons.map((b) => {
-    if ((b.type === "PHONE_NUMBER" || b.type === "VOICE_CALL") && b.phone !== undefined) {
-      if (b.phone && !/^\+\d{7,15}$/.test(b.phone.replace(/[\s\-()\s]/g, "")))
+    // Button label is required for all types except OTP / COPY_CODE (Meta fills those).
+    if (b.type !== "OTP" && b.type !== "COPY_CODE" && !b.text.trim())
+      return "Button label is required.";
+
+    if (b.type === "URL") {
+      const url = b.url?.trim() ?? "";
+      if (!url) return "Website URL is required.";
+      if (!/^https:\/\//i.test(url)) return "URL must start with https://.";
+      try { new URL(url.includes("{{") ? url.replace(/\{\{\d+\}\}/g, "placeholder") : url); }
+      catch { return "Enter a valid URL, e.g. https://example.com/page."; }
+    }
+
+    if (b.type === "PHONE_NUMBER" || b.type === "VOICE_CALL") {
+      const phone = b.phone?.trim() ?? "";
+      if (!phone) return "Phone number is required.";
+      if (!/^\+\d{7,15}$/.test(phone.replace(/[\s\-()\s]/g, "")))
         return "Must start with + and country code, e.g. +919876543210.";
     }
-    if (b.type === "URL" && b.url) {
-      if (!/^https:\/\//i.test(b.url))
-        return "URL must start with https://.";
+
+    if (b.type === "COPY_CODE") {
+      if (!b.offerCode?.trim()) return "Offer code is required.";
     }
-    if (b.type !== "OTP" && b.type !== "COPY_CODE" && !b.text.trim())
-      return "Button text is required.";
+
     return null;
   });
 
