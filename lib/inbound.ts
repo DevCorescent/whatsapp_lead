@@ -501,6 +501,11 @@ async function resolveReopen(
  * text at all — a null here is a legitimate outcome, not a parse failure.
  */
 export function extractContent(message: WAMessage): string | null {
+  // Reactions: emoji lives in message.reaction.emoji
+  if (message.type === "reaction") {
+    const emoji = (message as unknown as { reaction?: { emoji?: string } }).reaction?.emoji;
+    return emoji ? `Reacted ${emoji}` : null;
+  }
   return (
     message.text?.body ??
     message.image?.caption ??

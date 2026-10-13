@@ -121,7 +121,7 @@ export default function TeamPage() {
     onError: (err: Error) => showToast(err.message, "error"),
   });
 
-  const members = data ?? [];
+  const members = Array.isArray(data) ? data : [];
   const stats = {
     total: members.length,
     active: members.filter((m) => m.isActive).length,

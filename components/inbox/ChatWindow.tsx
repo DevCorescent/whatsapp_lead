@@ -1103,12 +1103,18 @@ function MessageBody({
       );
     }
 
-    default:
+    default: {
+      // Reactions are stored as TEXT type with the emoji in metadata.reaction.emoji
+      const reactionEmoji = str((meta as Record<string, unknown> & { reaction?: { emoji?: string } }).reaction?.emoji);
+      if (reactionEmoji) {
+        return <p className="text-2xl leading-none">{reactionEmoji}</p>;
+      }
       return (
         <p className="whitespace-pre-wrap wrap-anywhere text-sm">
-          {caption || <span className="italic opacity-70">Empty message</span>}
+          {caption || <span className="italic opacity-70">Unsupported message</span>}
         </p>
       );
+    }
   }
 }
 
