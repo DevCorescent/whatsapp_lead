@@ -338,6 +338,7 @@ model WhatsAppIntegration {
   updatedAt DateTime @updatedAt
 
   conversations Conversation[]
+  campaigns     Campaign[]
 
   @@index([tenantId])
   @@index([businessId])
@@ -768,11 +769,15 @@ model Campaign {
   createdAt      DateTime       @default(now())
   updatedAt      DateTime       @updatedAt
 
-  businessId String
-  business   Business          @relation(fields: [businessId], references: [id], onDelete: Cascade)
-  tenant     Tenant            @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  template   MessageTemplate?  @relation(fields: [templateId], references: [id])
-  contacts   CampaignContact[]
+  businessId             String
+  /// Which WhatsApp number sends this campaign. Null = use the business's default.
+  whatsappIntegrationId  String?
+
+  business            Business             @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  tenant              Tenant               @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  template            MessageTemplate?     @relation(fields: [templateId], references: [id])
+  whatsappIntegration WhatsAppIntegration? @relation(fields: [whatsappIntegrationId], references: [id], onDelete: SetNull)
+  contacts            CampaignContact[]
 
   @@index([tenantId, status])
   @@index([businessId, status])

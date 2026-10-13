@@ -141,6 +141,8 @@ const createCampaignSchema = z.object({
   /** With `dryRun`: also return the final recipient list, for the review screen. */
   includeRecipients: z.boolean().optional(),
   scheduledAt: z.string().optional(),
+  /** Which WhatsApp integration (number) to send from. Null = use the business default. */
+  whatsappIntegrationId: z.string().min(1).optional(),
 });
 
 type CreateCampaignInput = z.infer<typeof createCampaignSchema>;
@@ -394,6 +396,7 @@ async function createCampaign(
           personalised: Boolean(input.recipientFields),
           excluded: excludedCount,
         },
+        ...(input.whatsappIntegrationId ? { whatsappIntegrationId: input.whatsappIntegrationId } : {}),
         metadata: {
           ...spec.metadata,
           bodyVarMapping: input.bodyVarMapping,

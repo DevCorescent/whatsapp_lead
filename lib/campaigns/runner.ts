@@ -16,7 +16,7 @@
 import { CampaignStatus } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { sendTextMessage } from "@/lib/whatsapp";
-import { resolveWhatsAppCreds } from "@/lib/business";
+import { resolveWhatsAppCreds, resolveConversationWhatsAppCreds } from "@/lib/business";
 
 /** Statuses a campaign may be in and still be eligible to start sending. */
 const CLAIMABLE: CampaignStatus[] = ["DRAFT", "SCHEDULED", "FAILED", "CANCELLED"];
@@ -80,13 +80,18 @@ export async function runCampaign(campaignId: string): Promise<RunCampaignResult
   try {
     const campaign = await prisma.campaign.findUnique({
       where: { id: campaignId },
-      select: { id: true, tenantId: true, businessId: true, metadata: true },
+      select: { id: true, tenantId: true, businessId: true, metadata: true, whatsappIntegrationId: true },
     });
     if (!campaign) throw new Error("Campaign not found after claim");
 
-    // Credentials come from the campaign's OWN business — each business sends from
-    // its own WhatsApp number — with a fallback to the tenant's legacy settings.
-    const creds = await resolveWhatsAppCreds(campaign.businessId);
+    // Use the campaign's pinned integration if set; otherwise fall back to business default.
+    const creds = campaign.whatsappIntegrationId
+      ? await resolveConversationWhatsAppCreds({
+          businessId: campaign.businessId,
+          tenantId: campaign.tenantId,
+          whatsappIntegrationId: campaign.whatsappIntegrationId,
+        })
+      : await resolveWhatsAppCreds(campaign.businessId);
 
     if (!creds.phoneNumberId || !creds.apiKey) {
       return await markFailed(campaignId, "WhatsApp is not connected for this business. Add credentials in the business settings.");

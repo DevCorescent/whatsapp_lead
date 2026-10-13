@@ -95,6 +95,7 @@ interface BroadcastPayload {
   scheduledAt?: string;
   headerMediaId?: string;
   headerMediaUrl?: string;
+  whatsappIntegrationId?: string;
   dryRun?: boolean;
 }
 
@@ -234,6 +235,14 @@ export default function BroadcastPage() {
     queryKey: ["segments"],
     queryFn: () => fetch("/api/segments").then((r) => r.json()).then((j) => j.data ?? []),
   });
+
+  // WhatsApp number selector — which number to send this broadcast from
+  const [selectedIntegrationId, setSelectedIntegrationId] = useState<string>("");
+  const { data: integrationsData } = useQuery<{ integrations: { id: string; displayName: string | null; phoneNumber: string | null; isDefault: boolean; isActive: boolean }[] }>({
+    queryKey: ["whatsapp-integrations"],
+    queryFn: () => fetch("/api/integrations/whatsapp").then((r) => r.json()).then((j) => j.data ?? { integrations: [] }),
+  });
+  const integrations = (integrationsData?.integrations ?? []).filter((i) => i.isActive);
 
   // 2. Template
   const [name, setName] = useState("");
@@ -402,6 +411,7 @@ export default function BroadcastPage() {
       ...(asSchedule && scheduleDate && { scheduledAt: scheduleDate.toISOString() }),
       ...(media.mediaId && { headerMediaId: media.mediaId }),
       ...(!media.mediaId && media.mediaUrl.trim() && { headerMediaUrl: media.mediaUrl.trim() }),
+      ...(selectedIntegrationId && { whatsappIntegrationId: selectedIntegrationId }),
     };
     if (audienceMode === "segment") {
       review.mutate({ ...basePayload, segmentId: selectedSegmentId });
@@ -900,6 +910,25 @@ export default function BroadcastPage() {
               >
                 Cancel scheduling
               </button>
+            </div>
+          )}
+
+          {integrations.length > 1 && (
+            <div className="mb-4">
+              <label className="mb-1 block text-xs font-medium text-slate-600">Send from number</label>
+              <select
+                value={selectedIntegrationId}
+                onChange={(e) => setSelectedIntegrationId(e.target.value)}
+                className="w-full rounded-md border border-slate-200 bg-white px-2.5 py-1.5 text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+              >
+                <option value="">Default number</option>
+                {integrations.map((i) => (
+                  <option key={i.id} value={i.id}>
+                    {i.displayName ? `${i.displayName} (${i.phoneNumber ?? i.id})` : (i.phoneNumber ?? i.id)}
+                    {i.isDefault ? " ★" : ""}
+                  </option>
+                ))}
+              </select>
             </div>
           )}
 
