@@ -20,8 +20,19 @@ import { prisma } from "@/lib/prisma";
 import { toCsv, type CsvColumn } from "@/lib/csv";
 import { requirePermission, type Permission } from "@/lib/permissions";
 
-const RESOURCES = ["contacts", "leads", "campaigns", "analytics", "faq-interest", "ivr-responses"] as const;
+const RESOURCES = ["contacts", "leads", "campaigns", "analytics", "faq-interest", "ivr-responses", "conversations", "agents", "my-conversations"] as const;
 type Resource = (typeof RESOURCES)[number];
+
+const PERIOD_DAYS: Record<string, number> = { today: 1, "7d": 7, "30d": 30, "90d": 90 };
+
+function parsePeriod(period: string | null): Date | null {
+  if (!period || !(period in PERIOD_DAYS)) return null;
+  const days = PERIOD_DAYS[period];
+  const since = new Date();
+  since.setDate(since.getDate() - days);
+  since.setHours(0, 0, 0, 0);
+  return since;
+}
 
 /**
  * What each export needs. A bulk download of customer phone numbers is the most
@@ -35,6 +46,9 @@ const EXPORT_PERMISSION: Record<Resource, Permission> = {
   "ivr-responses": "contacts.export",
   campaigns: "reports.view",
   analytics: "reports.view",
+  conversations: "reports.view",
+  agents: "reports.view",
+  "my-conversations": "conversations.view",
 };
 
 /** Package a CSV string as a browser download with a dated filename. */
@@ -55,12 +69,14 @@ export async function GET(req: NextRequest) {
   if (!scope) {
     return NextResponse.json({ success: false, error: "Unauthorized" }, { status: 401 });
   }
-  const { tenantId, businessId } = scope;
+  const { tenantId, businessId, userId } = scope;
 
   const denied = await guardFeature(tenantId, "allowExport");
   if (denied) return denied;
 
-  const resource = new URL(req.url).searchParams.get("resource") as Resource | null;
+  const params = new URL(req.url).searchParams;
+  const resource = params.get("resource") as Resource | null;
+  const since = parsePeriod(params.get("period"));
   if (!resource || !RESOURCES.includes(resource)) {
     return NextResponse.json(
       { success: false, error: `resource must be one of: ${RESOURCES.join(", ")}` },
@@ -231,6 +247,88 @@ export async function GET(req: NextRequest) {
           value: (r: (typeof rows)[number]) => variableOf(r, key),
         })),
         { header: "Ended", value: (r) => r.endedAt?.toISOString() ?? "" },
+      ];
+      return csvResponse(toCsv(rows, columns), resource);
+    }
+
+    if (resource === "conversations") {
+      const rows = await prisma.conversation.findMany({
+        where: {
+          tenantId,
+          businessId,
+          ...(since && { createdAt: { gte: since } }),
+        },
+        include: {
+          contact: { select: { name: true, phone: true } },
+          assignedTo: { select: { name: true } },
+        },
+        orderBy: { createdAt: "desc" },
+        take: 10_000,
+      });
+      const columns: CsvColumn<(typeof rows)[number]>[] = [
+        { header: "Contact", value: (r) => r.contact?.name ?? "" },
+        { header: "Phone", value: (r) => r.contact?.phone ?? "" },
+        { header: "Status", value: (r) => r.status },
+        { header: "Assigned To", value: (r) => r.assignedTo?.name ?? "Unassigned" },
+        { header: "Created", value: (r) => r.createdAt.toISOString() },
+        { header: "Updated", value: (r) => r.updatedAt.toISOString() },
+      ];
+      return csvResponse(toCsv(rows, columns), resource);
+    }
+
+    if (resource === "my-conversations") {
+      const rows = await prisma.conversation.findMany({
+        where: {
+          tenantId,
+          assignedToId: userId,
+          ...(since && { createdAt: { gte: since } }),
+        },
+        include: { contact: { select: { name: true, phone: true } } },
+        orderBy: { createdAt: "desc" },
+        take: 10_000,
+      });
+      const columns: CsvColumn<(typeof rows)[number]>[] = [
+        { header: "Contact", value: (r) => r.contact?.name ?? "" },
+        { header: "Phone", value: (r) => r.contact?.phone ?? "" },
+        { header: "Status", value: (r) => r.status },
+        { header: "Created", value: (r) => r.createdAt.toISOString() },
+        { header: "Updated", value: (r) => r.updatedAt.toISOString() },
+      ];
+      return csvResponse(toCsv(rows, columns), "my-conversations");
+    }
+
+    if (resource === "agents") {
+      const agents = await prisma.user.findMany({
+        where: { tenantId, role: "AGENT", isActive: true },
+        select: {
+          name: true,
+          email: true,
+          assignedConvs: {
+            where: {
+              tenantId,
+              ...(since && { createdAt: { gte: since } }),
+            },
+            select: { id: true, status: true },
+          },
+        },
+      });
+      const rows = agents.map((a) => {
+        const total = a.assignedConvs.length;
+        const resolved = a.assignedConvs.filter((c) => c.status === "RESOLVED").length;
+        return {
+          name: a.name,
+          email: a.email ?? "",
+          conversations: total,
+          resolved,
+          resolutionRate: total > 0 ? `${Math.round((resolved / total) * 100)}%` : "0%",
+        };
+      });
+      const columns: CsvColumn<(typeof rows)[number]>[] = [
+        { header: "Agent", value: (r) => r.name },
+        { header: "Email", value: (r) => r.email },
+        { header: "Conversations", value: (r) => r.conversations },
+        { header: "Resolved", value: (r) => r.resolved },
+        { header: "Resolution Rate", value: (r) => r.resolutionRate },
       ];
       return csvResponse(toCsv(rows, columns), resource);
     }

@@ -29,6 +29,7 @@ import {
   Palette,
   Filter,
   ChevronRight,
+  FileBarChart2,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Avatar } from "@/components/ui";
@@ -61,6 +62,7 @@ const NAV = [
     items: [
       { href: "/tickets", label: "Tickets", icon: Ticket, roles: null },
       { href: "/analytics", label: "Analytics", icon: BarChart2, roles: ["SUPER_ADMIN", "TENANT_OWNER", "ADMIN", "MANAGER", "MARKETING_USER"] },
+      { href: "/reports", label: "Reports", icon: FileBarChart2, roles: null },
       { href: "/blacklist", label: "Blacklist", icon: Ban, roles: ["SUPER_ADMIN", "TENANT_OWNER", "ADMIN", "MANAGER", "MARKETING_USER"] },
       { href: "/team", label: "Team", icon: UserCog, roles: ["SUPER_ADMIN", "TENANT_OWNER", "ADMIN", "MANAGER"] },
       { href: "/billing", label: "Billing & Plan", icon: CreditCard, roles: ["SUPER_ADMIN", "TENANT_OWNER", "ADMIN"] },
