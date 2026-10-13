@@ -954,24 +954,27 @@ function MessageBody({
 
   switch (message.type) {
     case "IMAGE":
-    case "STICKER":
+    case "STICKER": {
+      const imgSrc = message.mediaUrl ?? (tone === "inbound" ? `/api/media/whatsapp-proxy?messageId=${message.id}` : null);
       return (
         <div className="space-y-1.5">
-          {message.mediaUrl ? (
-            <ImageBubble src={message.mediaUrl} alt={caption || "Attached image"} />
+          {imgSrc ? (
+            <ImageBubble src={imgSrc} alt={caption || "Attached image"} />
           ) : (
             <MediaChip icon={ImageIcon} label="Image unavailable" outbound={outbound} />
           )}
           {caption && <p className="whitespace-pre-wrap wrap-anywhere text-sm">{caption}</p>}
         </div>
       );
+    }
 
-    case "VIDEO":
+    case "VIDEO": {
+      const vidSrc = message.mediaUrl ?? (tone === "inbound" ? `/api/media/whatsapp-proxy?messageId=${message.id}` : null);
       return (
         <div className="space-y-1.5">
-          {message.mediaUrl ? (
+          {vidSrc ? (
             <video
-              src={message.mediaUrl}
+              src={vidSrc}
               controls
               className="max-h-64 w-full max-w-xs rounded-lg bg-black"
             />
@@ -981,17 +984,21 @@ function MessageBody({
           {caption && <p className="whitespace-pre-wrap wrap-anywhere text-sm">{caption}</p>}
         </div>
       );
+    }
 
-    case "AUDIO":
-      return message.mediaUrl ? (
-        <audio src={message.mediaUrl} controls className="h-9 w-56 max-w-full" />
+    case "AUDIO": {
+      const audSrc = message.mediaUrl ?? (tone === "inbound" ? `/api/media/whatsapp-proxy?messageId=${message.id}` : null);
+      return audSrc ? (
+        <audio src={audSrc} controls className="h-9 w-56 max-w-full" />
       ) : (
         <MediaChip icon={FileText} label="Voice message" outbound={outbound} />
       );
+    }
 
     case "DOCUMENT": {
       const filename = str(meta.filename) ?? caption ?? "Document";
       const size = message.mediaSize ? formatBytes(message.mediaSize) : null;
+      const docSrc = message.mediaUrl ?? (tone === "inbound" ? `/api/media/whatsapp-proxy?messageId=${message.id}` : null);
       const chip = (
         <span
           className={cn(
@@ -1010,8 +1017,8 @@ function MessageBody({
           </span>
         </span>
       );
-      return message.mediaUrl ? (
-        <a href={message.mediaUrl} target="_blank" rel="noreferrer" className="block">
+      return docSrc ? (
+        <a href={docSrc} target="_blank" rel="noreferrer" className="block">
           {chip}
         </a>
       ) : (

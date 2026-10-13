@@ -71,8 +71,9 @@ export default function InboxPage() {
   const handleSelect = useCallback((id: string) => {
     setSelectedId(id);
     setPanelOpen(false);
-    markConversationRead(id);
-  }, [markConversationRead]);
+    // Do NOT auto-mark as read on open — agents need to see the unread badge until
+    // they have actually replied. markConversationRead is called in handleSend instead.
+  }, []);
   /** Optimistically "sent" messages, per conversation, cleared when server confirms. */
   const [outbox, setOutbox] = useState<Record<string, InboxMessage[]>>({});
   // Track the last seen server message count per conversation so we can detect
@@ -84,7 +85,9 @@ export default function InboxPage() {
       ...prev,
       [conversationId]: [...(prev[conversationId] ?? []), message],
     }));
-  }, []);
+    // Sending a reply means the agent has read this conversation
+    markConversationRead(conversationId);
+  }, [markConversationRead]);
 
   const filters = useMemo(() => {
     const status = STATUS_BY_TAB[tab];
