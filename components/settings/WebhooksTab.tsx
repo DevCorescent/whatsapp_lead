@@ -489,6 +489,13 @@ export function WebhooksTab() {
               {"{"} "name": "Rahul", "phone": "+919876543210" {"}"}
             </code>
           </div>
+          <div>
+            <p className="font-medium text-slate-700">List approved templates</p>
+            <code className="mt-1 block rounded bg-slate-50 p-2 text-xs text-slate-600">
+              GET /api/v1/templates?search=order&amp;page=1<br />
+              Authorization: Bearer &lt;api_key&gt;
+            </code>
+          </div>
         </div>
       </section>
     </div>
