@@ -88,7 +88,8 @@ interface BroadcastPayload {
   templateId: string;
   bodyVarMapping: string[];
   urlButtonMapping: string[];
-  numbers: string[];
+  numbers?: string[];
+  segmentId?: string;
   recipientFields?: Record<string, Record<string, string>>;
   defaultCountryCode: string;
   scheduledAt?: string;
@@ -225,6 +226,15 @@ export default function BroadcastPage() {
   // send — the numbers' contacts (if any) are untouched.
   const [removed, setRemoved] = useState<Set<string>>(new Set());
 
+  // Audience mode: paste numbers or use a saved segment
+  const [audienceMode, setAudienceMode] = useState<"numbers" | "segment">("numbers");
+  const [selectedSegmentId, setSelectedSegmentId] = useState<string>("");
+
+  const { data: segments } = useQuery<{ id: string; name: string; count: number }[]>({
+    queryKey: ["segments"],
+    queryFn: () => fetch("/api/segments").then((r) => r.json()).then((j) => j.data ?? []),
+  });
+
   // 2. Template
   const [name, setName] = useState("");
   const [templateId, setTemplateId] = useState("");
@@ -308,9 +318,13 @@ export default function BroadcastPage() {
   const scheduleInvalid = scheduling && (!scheduleDate || Number.isNaN(scheduleDate.getTime()));
 
   const blockers: string[] = [];
-  if (analysis.valid.length === 0) blockers.push("Add at least one valid number");
-  else if (finalNumbers.length === 0) blockers.push("Every recipient has been removed — restore at least one");
-  if (overLimit) blockers.push(`Too many numbers — the limit is ${BROADCAST_MAX_NUMBERS.toLocaleString()} per broadcast`);
+  if (audienceMode === "numbers") {
+    if (analysis.valid.length === 0) blockers.push("Add at least one valid number");
+    else if (finalNumbers.length === 0) blockers.push("Every recipient has been removed — restore at least one");
+    if (overLimit) blockers.push(`Too many numbers — the limit is ${BROADCAST_MAX_NUMBERS.toLocaleString()} per broadcast`);
+  } else {
+    if (!selectedSegmentId) blockers.push("Choose a segment");
+  }
   if (!template) blockers.push("Select an approved template");
   if (mediaHeader && !media.mediaId && !media.mediaUrl.trim()) blockers.push(`Add the template's ${mediaHeader.toLowerCase()}`);
   if (missingVar) blockers.push("Fill in every template variable");
@@ -379,19 +393,26 @@ export default function BroadcastPage() {
       showToast("That time has already passed — pick a future date and time, or use Send now.", "error");
       return;
     }
-    const recipientFields = recipientFieldsFor(finalNumbers);
-    review.mutate({
+    const basePayload = {
       name: name.trim() || defaultCampaignName(),
       templateId: template.id,
       bodyVarMapping,
       urlButtonMapping,
-      numbers: finalNumbers,
-      ...(recipientFields && { recipientFields }),
       defaultCountryCode: countryCode,
       ...(asSchedule && scheduleDate && { scheduledAt: scheduleDate.toISOString() }),
       ...(media.mediaId && { headerMediaId: media.mediaId }),
       ...(!media.mediaId && media.mediaUrl.trim() && { headerMediaUrl: media.mediaUrl.trim() }),
-    });
+    };
+    if (audienceMode === "segment") {
+      review.mutate({ ...basePayload, segmentId: selectedSegmentId });
+    } else {
+      const recipientFields = recipientFieldsFor(finalNumbers);
+      review.mutate({
+        ...basePayload,
+        numbers: finalNumbers,
+        ...(recipientFields && { recipientFields }),
+      });
+    }
   }
 
   async function importFile(file: File) {
@@ -448,6 +469,8 @@ export default function BroadcastPage() {
     setTemplateId("");
     setScheduling(false);
     setSchedule("");
+    setAudienceMode("numbers");
+    setSelectedSegmentId("");
   }
 
   if (launch) return <BroadcastProgress launch={launch} onNew={reset} />;
@@ -467,25 +490,77 @@ export default function BroadcastPage() {
       {/* Compose on the left; preview and send stay in view on the right. */}
       <div className="grid items-start gap-5 lg:grid-cols-[minmax(0,1fr)_380px] xl:grid-cols-[minmax(0,1fr)_420px]">
         <div className="min-w-0 space-y-5">
-        {/* ── 1. Numbers ─────────────────────────────────────────────────── */}
+        {/* ── 1. Audience ────────────────────────────────────────────────── */}
         <Card className="p-4 sm:p-5">
           <div className="mb-3 flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
-            <SectionTitle step={1} title="Numbers" className="mb-0" />
-            <label htmlFor="bc-cc" className="flex items-center gap-2 text-xs font-medium text-slate-600">
-              Default country code
-              <span className="flex w-20 items-center rounded-lg bg-white shadow-sm ring-1 ring-inset ring-slate-200 focus-within:ring-2 focus-within:ring-emerald-500">
-                <span className="pl-2.5 text-sm text-slate-400">+</span>
-                <input
-                  id="bc-cc"
-                  inputMode="numeric"
-                  value={countryCode}
-                  onChange={(e) => setCountryCode(e.target.value.replace(/\D/g, "").slice(0, 4))}
-                  className="w-full rounded-lg bg-transparent px-1 py-1.5 text-sm text-slate-900 focus:outline-none"
-                />
-              </span>
-            </label>
+            <SectionTitle step={1} title="Audience" className="mb-0" />
+            {audienceMode === "numbers" && (
+              <label htmlFor="bc-cc" className="flex items-center gap-2 text-xs font-medium text-slate-600">
+                Default country code
+                <span className="flex w-20 items-center rounded-lg bg-white shadow-sm ring-1 ring-inset ring-slate-200 focus-within:ring-2 focus-within:ring-emerald-500">
+                  <span className="pl-2.5 text-sm text-slate-400">+</span>
+                  <input
+                    id="bc-cc"
+                    inputMode="numeric"
+                    value={countryCode}
+                    onChange={(e) => setCountryCode(e.target.value.replace(/\D/g, "").slice(0, 4))}
+                    className="w-full rounded-lg bg-transparent px-1 py-1.5 text-sm text-slate-900 focus:outline-none"
+                  />
+                </span>
+              </label>
+            )}
           </div>
 
+          {/* Audience mode toggle */}
+          <div className="mb-4 flex gap-1 rounded-lg bg-slate-100 p-1">
+            <button
+              type="button"
+              onClick={() => setAudienceMode("numbers")}
+              className={cn(
+                "flex-1 rounded-md px-3 py-1.5 text-sm font-medium transition",
+                audienceMode === "numbers"
+                  ? "bg-white text-slate-900 shadow-sm"
+                  : "text-slate-500 hover:text-slate-700",
+              )}
+            >
+              Paste Numbers
+            </button>
+            <button
+              type="button"
+              onClick={() => setAudienceMode("segment")}
+              className={cn(
+                "flex-1 rounded-md px-3 py-1.5 text-sm font-medium transition",
+                audienceMode === "segment"
+                  ? "bg-white text-slate-900 shadow-sm"
+                  : "text-slate-500 hover:text-slate-700",
+              )}
+            >
+              Use Segment
+            </button>
+          </div>
+
+          {audienceMode === "segment" ? (
+            <div className="space-y-2">
+              <select
+                value={selectedSegmentId}
+                onChange={(e) => setSelectedSegmentId(e.target.value)}
+                className={inputClass}
+                aria-label="Segment"
+              >
+                <option value="">— Choose a segment —</option>
+                {(segments ?? []).map((s) => (
+                  <option key={s.id} value={s.id}>
+                    {s.name}
+                  </option>
+                ))}
+              </select>
+              <p className="flex items-center gap-1.5 text-xs text-slate-500">
+                <Info className="h-3.5 w-3.5 shrink-0" />
+                The segment&apos;s contacts will be resolved at send time.
+              </p>
+            </div>
+          ) : (
+          <>
           <textarea
             value={numbersText}
             onChange={(e) => setNumbersText(e.target.value)}
@@ -582,6 +657,8 @@ export default function BroadcastPage() {
                 {sheet.rows.size.toLocaleString()} numbers. Map them to template variables in step 3.
               </span>
             </p>
+          )}
+          </>
           )}
         </Card>
 
@@ -792,7 +869,11 @@ export default function BroadcastPage() {
           <dl className="mb-4 space-y-1.5 rounded-lg bg-slate-50 px-3 py-2.5 text-sm">
             <div className="flex justify-between gap-3">
               <dt className="text-slate-500">Recipients</dt>
-              <dd className="font-semibold tabular-nums text-slate-900">{finalNumbers.length.toLocaleString()}</dd>
+              <dd className="font-semibold tabular-nums text-slate-900">
+                {audienceMode === "segment"
+                  ? (segments ?? []).find((s) => s.id === selectedSegmentId)?.name ?? "Segment"
+                  : finalNumbers.length.toLocaleString()}
+              </dd>
             </div>
             <div className="flex justify-between gap-3">
               <dt className="text-slate-500">WhatsApp template</dt>
@@ -837,7 +918,9 @@ export default function BroadcastPage() {
                 onClick={() => startReview(false)}
               >
                 {review.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
-                Send now{finalNumbers.length > 0 && ` to ${finalNumbers.length.toLocaleString()}`}
+                {audienceMode === "segment"
+                  ? "Send now to segment"
+                  : `Send now${finalNumbers.length > 0 ? ` to ${finalNumbers.length.toLocaleString()}` : ""}`}
               </Button>
             )}
             <Button

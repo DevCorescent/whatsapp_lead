@@ -271,6 +271,11 @@ function CampaignsPageInner() {
     const duplicating = isDuplicating(c.id);
     return (
     <>
+      <Link href={`/campaigns/${c.id}`}>
+        <Button variant="ghost" size="sm" aria-label="View campaign report">
+          <Eye className="h-4 w-4" />
+        </Button>
+      </Link>
       <Button
         variant="ghost"
         size="sm"

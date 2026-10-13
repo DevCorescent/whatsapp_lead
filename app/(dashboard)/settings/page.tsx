@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { useSession } from "next-auth/react";
-import { Building2, MessageSquare, CreditCard, Bell, KanbanSquare, UserCircle, Zap } from "lucide-react";
+import { Building2, MessageSquare, CreditCard, Bell, KanbanSquare, UserCircle, Zap, Webhook } from "lucide-react";
 import { PageHeader } from "@/components/ui";
 import { AccountTab } from "@/components/settings/AccountTab";
 import { GeneralTab } from "@/components/settings/GeneralTab";
@@ -11,6 +11,7 @@ import { BillingTab } from "@/components/settings/BillingTab";
 import { NotificationsTab } from "@/components/settings/NotificationsTab";
 import { LeadStagesTab } from "@/components/settings/LeadStagesTab";
 import { QuickRepliesTab } from "@/components/settings/QuickRepliesTab";
+import { WebhooksTab } from "@/components/settings/WebhooksTab";
 import { cn } from "@/lib/utils";
 
 /** Managing pipeline stages / billing is an admin action — same allowlist as the backend guard. */
@@ -23,6 +24,7 @@ const TABS = [
   { key: "pipeline", label: "Lead Pipeline Stages", icon: KanbanSquare, adminOnly: true },
   { key: "whatsapp", label: "WhatsApp", icon: MessageSquare, adminOnly: false },
   { key: "quick-replies", label: "Quick Replies", icon: Zap, adminOnly: false },
+  { key: "webhooks", label: "Webhooks & API", icon: Webhook, adminOnly: true },
   { key: "billing", label: "Billing", icon: CreditCard, billingOnly: true },
   { key: "notifications", label: "Notifications", icon: Bell, adminOnly: false },
 ] as const;
@@ -85,6 +87,7 @@ export default function SettingsPage() {
         {activeTab === "whatsapp" && <WhatsAppTab />}
         {activeTab === "quick-replies" && <QuickRepliesTab />}
         {activeTab === "billing" && canSeeBilling && <BillingTab />}
+        {activeTab === "webhooks" && isStageAdmin && <WebhooksTab />}
         {activeTab === "notifications" && <NotificationsTab />}
       </div>
     </div>

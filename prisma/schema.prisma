@@ -230,6 +230,7 @@ model Tenant {
   auditLogs            AuditLog[]
   quickReplies         QuickReply[]
   whatsAppIntegrations WhatsAppIntegration[]
+  webhookEndpoints     WebhookEndpoint[]
 
   @@index([parentId])
   @@index([referredById])
@@ -369,6 +370,8 @@ model TenantSettings {
   smtpFrom             String?
   waAppSecret          String?
   onboardingCompleted  Boolean  @default(false)
+  /// API key for incoming webhook / external API access. Generated per tenant.
+  apiKey               String?  @unique
   createdAt            DateTime @default(now())
   updatedAt            DateTime @updatedAt
 
@@ -1603,4 +1606,52 @@ model NewsletterSubscriber {
   createdAt DateTime @default(now())
 
   @@map("newsletter_subscribers")
+}
+
+// ─── WEBHOOKS ─────────────────────────────────────────────────────────────────
+//
+// Two-direction integration layer:
+//   Outgoing — when platform events occur (campaign completed, message received,
+//              contact created) all active endpoints subscribed to that event
+//              receive a signed POST. Deliveries are logged so failures are visible.
+//   Incoming — external CRMs call /api/v1/* with the tenant's apiKey to send
+//              messages, create contacts or trigger broadcasts. apiKey lives on
+//              TenantSettings so there is only one per tenant.
+
+model WebhookEndpoint {
+  id          String   @id @default(cuid())
+  tenantId    String
+  url         String
+  /// Random secret used to sign the X-Webhook-Signature header (HMAC-SHA256).
+  secret      String
+  /// JSON array of event names this endpoint is subscribed to.
+  events      String[]
+  isActive    Boolean  @default(true)
+  description String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  tenant     Tenant            @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  deliveries WebhookDelivery[]
+
+  @@index([tenantId])
+  @@map("webhook_endpoints")
+}
+
+model WebhookDelivery {
+  id          String    @id @default(cuid())
+  endpointId  String
+  event       String
+  payload     Json
+  statusCode  Int?
+  response    String?
+  error       String?
+  attempts    Int       @default(0)
+  deliveredAt DateTime?
+  createdAt   DateTime  @default(now())
+
+  endpoint WebhookEndpoint @relation(fields: [endpointId], references: [id], onDelete: Cascade)
+
+  @@index([endpointId, createdAt(sort: Desc)])
+  @@map("webhook_deliveries")
 }
